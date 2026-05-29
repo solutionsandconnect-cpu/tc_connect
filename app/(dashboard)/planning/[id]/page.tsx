@@ -994,7 +994,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                         </div>
                         {a.zonesCorps && a.zonesCorps.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1.5">
-                            {a.zonesCorps.map((z) => <span key={z} className="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full">{z}</span>)}
+                            {a.zonesCorps.map((z, i) => <span key={i} className="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full">{[z.cote, z.partie, z.structure].filter(Boolean).join(' · ')}</span>)}
                           </div>
                         )}
                       </div>
