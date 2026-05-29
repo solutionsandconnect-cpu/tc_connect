@@ -39,6 +39,7 @@ interface Seance {
   nb_tours: number
   nb_exercice: number
   recup_tours: number
+  type_seance?: string
 }
 
 // ── Countdown hook ─────────────────────────────────────────────────────────────
