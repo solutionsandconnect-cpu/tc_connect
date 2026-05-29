@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  collection, query, orderBy,
+  collection, query, orderBy, where,
   onSnapshot, addDoc, updateDoc, deleteDoc, doc
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
@@ -15,33 +15,18 @@ export function usePlanning() {
   useEffect(() => {
     if (!currentUser) return
 
-    const q = query(
-      collection(db, 'planning_pro'),
-      orderBy('date_planning', 'asc')
-    )
+    const isAdmin = userProfile?.role_app === 'Admin'
+
+    const q = isAdmin
+      ? query(collection(db, 'planning_pro'), orderBy('date_planning', 'asc'))
+      : query(
+          collection(db, 'planning_pro'),
+          where('ref_users', '==', doc(db, 'users', currentUser.uid)),
+          orderBy('date_planning', 'asc')
+        )
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      // LOG TEMPORAIRE
-      snapshot.docs.forEach((d) => {
-        const data = d.data()
-        console.log('DOC:', d.id)
-        console.log('  ref_users path:', data.ref_users?.path)
-        console.log('  ref_client path:', data.ref_client?.path)
-      })
-
-      const all = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      })) as PlanningPro[]
-
-      const filtered = userProfile?.role_app === 'Admin'
-        ? all
-        : all.filter((p) => {
-            const refPath: string = (p.ref_users as any)?.path || ''
-            return refPath.includes(currentUser.uid)
-          })
-
-      setPlannings(filtered)
+      setPlannings(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as PlanningPro[])
       setLoading(false)
     })
 

@@ -1,0 +1,863 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import {
+  collection, doc, getDoc, getDocs, query, where, updateDoc, addDoc, Timestamp,
+} from 'firebase/firestore'
+import { db } from '@/lib/firebase'
+import { useAuth } from '@/context/AuthContext'
+import Modal from '@/components/ui/Modal'
+import { ArrowLeftIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon, PlayIcon } from '@heroicons/react/24/outline'
+
+const TYPES_SEANCE_APERCU = ['Circuit classique','Tabata','Circuit en 30-10','Circuit varié (rep)','Circuit varié (temps)','Circuit varié']
+const PARTIES_SEANCE_APERCU = ['Échauffement','Corps de séance','Retour au calme','Séance complète']
+const TYPES_EFFORT_APERCU = ['Répétitions', 'Durée (sec)']
+const toFirestoreEffortApercu = (v: string) => v === 'Durée (sec)' ? 'Secondes' : v
+
+function getSeanceDefaultsApercu(type: string) {
+  switch (type) {
+    case 'Tabata':                return { nb_tours: 4, recup_tours: 0,  tps_recup_exo_default: 10, type_effort_exo_default: 'Durée (sec)',  tps_effort_exo_default: 20 }
+    case 'Circuit en 30-10':      return { nb_tours: 3, recup_tours: 10, tps_recup_exo_default: 10, type_effort_exo_default: 'Durée (sec)',  tps_effort_exo_default: 30 }
+    case 'Circuit varié (rep)':   return { nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,  type_effort_exo_default: 'Répétitions', tps_effort_exo_default: 10 }
+    case 'Circuit varié (temps)': return { nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,  type_effort_exo_default: 'Durée (sec)', tps_effort_exo_default: 30 }
+    case 'Circuit varié':         return { nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,  type_effort_exo_default: 'Répétitions', tps_effort_exo_default: 30 }
+    default:                      return { nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,  type_effort_exo_default: 'Durée (sec)', tps_effort_exo_default: 30 }
+  }
+}
+
+interface PlanningData {
+  id: string
+  date_planning?: any
+  type_planning?: string
+  cr_rdv_moi?: string
+  cr_rdv_client?: string
+  motivation_pdt_seance?: number
+  intensite_mise_pdt_seance?: number
+  intensite_seance?: number
+}
+
+interface ExerciceData {
+  id: string
+  nom_exercice: string
+  image_exercice?: string
+}
+
+interface ProgItem {
+  id: string
+  num_exercice: number
+  effort: number
+  type_effort: string
+  recup_effort: number
+  tempo_phase1?: number
+  tempo_phase2?: number
+  tempo_phase3?: number
+  tempo_phase4?: number
+  explication_exercice?: string
+  charge?: number
+  nb_serie_effectuee?: number
+  exercice: any
+}
+
+interface SeanceData {
+  id: string
+  type_seance: string
+  partie_seance: string
+  nb_tours: number
+  recup_tours: number
+  num_circuit?: number
+  avancement_circuit?: number
+  intensite_circuit?: number
+  satisfaction_circuit?: string
+  intensite_gen?: string
+  programme: { item: ProgItem; exo: ExerciceData | null }[]
+}
+
+// ── Labels ──────────────────────────────────────────────────────────────────────
+
+const RPE_LABELS = [
+  '0 — Repos',
+  '1 — Très très facile',
+  '2 — Très facile',
+  '3 — Facile',
+  '4 — Je sens un effort',
+  '5 — Ça commence à être dur',
+  '6 — Ça devient bien dur',
+  '7 — Dur',
+  '8 — Très dur',
+  '9 — Très très dur',
+  '10 — Tellement dur que je vais arrêter',
+]
+
+const MOTIV_LABELS = [
+  "1 — Pas motivé",
+  "2 — Peu motivé",
+  "3 — Moyennement motivé",
+  "4 — Motivé",
+  "5 — Très motivé",
+]
+
+const INTENSITE_MISE_LABELS = [
+  "1 — J'ai mis aucune intensité",
+  "2 — J'ai mis un minimum d'intensité",
+  "3 — J'ai mis 50% de l'intensité que je pouvais",
+  "4 — J'ai mis beaucoup d'intensité",
+  "5 — J'ai mis toute l'intensité que j'avais",
+]
+
+// ── Color helpers ───────────────────────────────────────────────────────────────
+
+// RPE 0-10 : low=green, mid=orange, high=red
+function rpeBg(rpe: number) {
+  if (rpe < 4) return 'bg-etat-bon border-etat-bon text-white'
+  if (rpe < 8) return 'bg-etat-moy border-etat-moy text-white'
+  return 'bg-etat-pas-bon border-etat-pas-bon text-white'
+}
+function rpeColor(rpe: number) {
+  if (rpe < 4) return 'text-etat-bon'
+  if (rpe < 8) return 'text-etat-moy'
+  return 'text-etat-pas-bon'
+}
+
+// 1-5 scale: low=red, mid=orange, high=green
+function scale5Bg(val: number) {
+  if (val <= 2) return 'bg-etat-pas-bon border-etat-pas-bon text-white'
+  if (val === 3) return 'bg-etat-moy border-etat-moy text-white'
+  return 'bg-etat-bon border-etat-bon text-white'
+}
+function scale5Color(val: number) {
+  if (val <= 2) return 'text-etat-pas-bon'
+  if (val === 3) return 'text-etat-moy'
+  return 'text-etat-bon'
+}
+
+export default function OverviewSeancePage() {
+  const { planningId } = useParams<{ planningId: string }>()
+  const router = useRouter()
+  const { userProfile, currentUser } = useAuth()
+  const isAdmin = userProfile?.role_app === 'Admin'
+  const droits = userProfile?.droits
+
+  useEffect(() => {
+    if (userProfile && !isAdmin && userProfile.droits?.seances === false) {
+      router.replace('/accueil')
+    }
+  }, [userProfile, isAdmin, router])
+
+  const [loading, setLoading] = useState(true)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  // Add circuit modal
+  const [showAddCircuit, setShowAddCircuit] = useState(false)
+  const [savingCircuit, setSavingCircuit] = useState(false)
+  const [addCircuitForm, setAddCircuitForm] = useState({
+    type_seance: 'Circuit classique',
+    partie_seance: 'Corps de séance',
+    observations_seance: '',
+    nb_tours: 3,
+    recup_tours: 30,
+    tps_recup_exo_default: 5,
+    type_effort_exo_default: 'Durée (sec)' as string,
+    tps_effort_exo_default: 30,
+  })
+  const [planning, setPlanning] = useState<PlanningData | null>(null)
+  const [seances, setSeances] = useState<SeanceData[]>([])
+
+  // Per-circuit UI state
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [bilanOpen, setBilanOpen] = useState<Record<string, boolean>>({})
+  const [adminNotesOpen, setAdminNotesOpen] = useState<Record<string, boolean>>({})
+  const [rpeValues, setRpeValues] = useState<Record<string, number>>({})
+  const [satValues, setSatValues] = useState<Record<string, string>>({})
+  const [intensiteGenValues, setIntensiteGenValues] = useState<Record<string, string>>({})
+  const [savingRpe, setSavingRpe] = useState<Record<string, boolean>>({})
+  const [savedRpe, setSavedRpe] = useState<Record<string, boolean>>({})
+  const [savingAdmin, setSavingAdmin] = useState<Record<string, boolean>>({})
+  const [savedAdmin, setSavedAdmin] = useState<Record<string, boolean>>({})
+
+  // Bilan de fin de séance (saved to planning_pro)
+  const [bilanFinOpen, setBilanFinOpen] = useState(false)
+  const [motivSeance, setMotivSeance] = useState(1)
+  const [intensiteMise, setIntensiteMise] = useState(1)
+  const [intensiteSeance, setIntensiteSeance] = useState(0)
+  const [savingBilanFin, setSavingBilanFin] = useState(false)
+  const [savedBilanFin, setSavedBilanFin] = useState(false)
+
+  // Commentaires de séance (saved to planning_pro, filled AFTER bilan)
+  const [commentairesOpen, setCommentairesOpen] = useState(false)
+  const [crCoach, setCrCoach] = useState('')
+  const [crClient, setCrClient] = useState('')
+  const [savingCommentaires, setSavingCommentaires] = useState(false)
+  const [savedCommentaires, setSavedCommentaires] = useState(false)
+
+  useEffect(() => {
+    if (!planningId) return
+    ;(async () => {
+      setLoading(true)
+      try {
+        const pSnap = await getDoc(doc(db, 'planning_pro', planningId))
+        if (pSnap.exists()) {
+          const pData = pSnap.data() as any
+          setPlanning({ id: pSnap.id, ...pData } as PlanningData)
+          setMotivSeance(pData.motivation_pdt_seance || 1)
+          setIntensiteMise(pData.intensite_mise_pdt_seance || 1)
+          setIntensiteSeance(pData.intensite_seance ?? 0)
+          setCrCoach(pData.cr_rdv_moi || '')
+          setCrClient(pData.cr_rdv_client || '')
+        }
+
+        const sq = query(collection(db, 'seance'), where('ref_planning', '==', doc(db, 'planning_pro', planningId)))
+        const sSnap = await getDocs(sq)
+        const raw = sSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[]
+        raw.sort((a, b) => (a.num_circuit ?? 0) - (b.num_circuit ?? 0))
+
+        const initRpe: Record<string, number> = {}
+        const initSat: Record<string, string> = {}
+        const initChoix: Record<string, string> = {}
+
+        const enriched: SeanceData[] = await Promise.all(raw.map(async (s) => {
+          initRpe[s.id] = s.intensite_circuit ?? 0
+          initSat[s.id] = s.satisfaction_circuit ?? ''
+          initChoix[s.id] = s.intensite_gen || '🟡'
+
+          const pq = query(collection(db, 'programme_seance'), where('ref_seance', '==', doc(db, 'seance', s.id)))
+          const pSnap2 = await getDocs(pq)
+          const items = pSnap2.docs.map(d => ({ id: d.id, ...d.data() } as ProgItem))
+          items.sort((a, b) => (a.num_exercice ?? 0) - (b.num_exercice ?? 0))
+
+          const programme = await Promise.all(items.map(async (item) => {
+            let exo: ExerciceData | null = null
+            if (item.exercice) {
+              try {
+                const eSnap = await getDoc(item.exercice)
+                if (eSnap.exists()) exo = { id: eSnap.id, ...(eSnap.data() as object) } as ExerciceData
+              } catch {}
+            }
+            return { item, exo }
+          }))
+
+          return { ...s, programme } as SeanceData
+        }))
+
+        setSeances(enriched)
+        setRpeValues(initRpe)
+        setSatValues(initSat)
+        setIntensiteGenValues(initChoix)
+
+        const first = enriched.find(s => (s.avancement_circuit ?? 0) < 1) ?? enriched[0]
+        if (first) setExpanded({ [first.id]: true })
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [planningId, refreshKey])
+
+  const handleAddCircuit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!currentUser) return
+    setSavingCircuit(true)
+    try {
+      await addDoc(collection(db, 'seance'), {
+        ...addCircuitForm,
+        nb_tours: Number(addCircuitForm.nb_tours),
+        recup_tours: Number(addCircuitForm.recup_tours),
+        tps_recup_exo_default: Number(addCircuitForm.tps_recup_exo_default),
+        type_effort_exo_default: toFirestoreEffortApercu(addCircuitForm.type_effort_exo_default),
+        tps_effort_exo_default: Number(addCircuitForm.tps_effort_exo_default),
+        ref_planning: doc(db, 'planning_pro', planningId),
+        ref_users: doc(db, 'users', currentUser.uid),
+        num_circuit: seances.length + 1,
+        avancement_circuit: 0,
+        nb_exercice: 0,
+        date_create: Timestamp.now(),
+      })
+      setShowAddCircuit(false)
+      setAddCircuitForm({
+        type_seance: 'Circuit classique', partie_seance: 'Corps de séance',
+        observations_seance: '', nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,
+        type_effort_exo_default: 'Durée (sec)', tps_effort_exo_default: 30,
+      })
+      setRefreshKey(k => k + 1)
+    } finally {
+      setSavingCircuit(false)
+    }
+  }
+
+  const saveRpe = async (seanceId: string) => {
+    setSavingRpe(s => ({ ...s, [seanceId]: true }))
+    try {
+      await updateDoc(doc(db, 'seance', seanceId), {
+        intensite_circuit: rpeValues[seanceId] ?? 0,
+      })
+      setSavedRpe(s => ({ ...s, [seanceId]: true }))
+      setTimeout(() => setSavedRpe(s => ({ ...s, [seanceId]: false })), 2000)
+    } finally {
+      setSavingRpe(s => ({ ...s, [seanceId]: false }))
+    }
+  }
+
+  const saveAdminNotes = async (seanceId: string) => {
+    setSavingAdmin(s => ({ ...s, [seanceId]: true }))
+    try {
+      await updateDoc(doc(db, 'seance', seanceId), {
+        satisfaction_circuit: satValues[seanceId] ?? '',
+        intensite_gen: intensiteGenValues[seanceId] ?? '',
+      })
+      setSavedAdmin(s => ({ ...s, [seanceId]: true }))
+      setTimeout(() => setSavedAdmin(s => ({ ...s, [seanceId]: false })), 2000)
+    } finally {
+      setSavingAdmin(s => ({ ...s, [seanceId]: false }))
+    }
+  }
+
+  const saveBilanFin = async () => {
+    setSavingBilanFin(true)
+    try {
+      await updateDoc(doc(db, 'planning_pro', planningId), {
+        motivation_pdt_seance: motivSeance,
+        intensite_mise_pdt_seance: intensiteMise,
+        intensite_seance: intensiteSeance,
+      })
+      setSavedBilanFin(true)
+      setTimeout(() => setSavedBilanFin(false), 2000)
+    } finally {
+      setSavingBilanFin(false)
+    }
+  }
+
+  const saveCommentaires = async () => {
+    setSavingCommentaires(true)
+    try {
+      await updateDoc(doc(db, 'planning_pro', planningId), {
+        cr_rdv_moi: crCoach,
+        cr_rdv_client: crClient,
+      })
+      setSavedCommentaires(true)
+      setTimeout(() => setSavedCommentaires(false), 2000)
+    } finally {
+      setSavingCommentaires(false)
+    }
+  }
+
+  const launchUrl = (s: SeanceData) => {
+    const base = `/seances/lancement/${s.id}?exo=1&planningId=${planningId}&returnTo=planning`
+    return (s.avancement_circuit ?? 0) >= 1 ? `${base}&replay=1` : base
+  }
+
+  const dateStr = (() => {
+    const d = planning?.date_planning?.toDate?.()
+    if (!d) return '—'
+    return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  })()
+
+  const bilanFinFilled = (planning?.motivation_pdt_seance ?? 0) > 0
+
+  if (loading) return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="w-8 h-8 border-4 border-gray-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+
+  return (
+    <div className="pb-10">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-6">
+        <button onClick={() => router.push(`/planning/${planningId}`)} className="p-2 rounded-lg hover:bg-gray-100 transition">
+          <ArrowLeftIcon className="w-5 h-5 text-gray-600" />
+        </button>
+        <div className="flex-1">
+          <h1 className="text-xl font-bold text-gray-800 capitalize">{dateStr}</h1>
+          <p className="text-sm text-gray-500">{planning?.type_planning} · {seances.length} circuit(s)</p>
+        </div>
+        {isAdmin && (
+          <button
+            onClick={() => setShowAddCircuit(true)}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-xl transition"
+          >
+            <PlusIcon className="w-4 h-4" />
+            Circuit
+          </button>
+        )}
+      </div>
+
+      {seances.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
+          <p className="text-gray-400 text-sm">Aucun circuit dans cette séance</p>
+          <button onClick={() => router.push(`/planning/${planningId}`)} className="mt-3 text-gray-600 text-sm hover:underline">
+            Retour au RDV
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+
+          {/* ── Circuits ── */}
+          {seances.map((seance) => {
+            const isOpen = !!expanded[seance.id]
+            const isBilanVisible = !!bilanOpen[seance.id]
+            const isAdminNotesVisible = !!adminNotesOpen[seance.id]
+            const isDone = (seance.avancement_circuit ?? 0) >= 1
+            const rpe = rpeValues[seance.id] ?? 0
+
+            return (
+              <div key={seance.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+
+                {/* Circuit header */}
+                <button
+                  className="w-full flex items-center justify-between p-4 text-left"
+                  onClick={() => setExpanded(e => ({ ...e, [seance.id]: !e[seance.id] }))}
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      {seance.num_circuit != null && (
+                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">Circuit {seance.num_circuit}</span>
+                      )}
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        isDone ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600'
+                      }`}>
+                        {isDone ? '✓ Terminé' : '● À faire'}
+                      </span>
+                    </div>
+                    <p className="font-semibold text-gray-800">{seance.type_seance}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {seance.partie_seance} · {seance.nb_tours} tour(s) · Récup {seance.recup_tours}s
+                      {seance.programme.length > 0 && ` · ${seance.programme.length} exercice(s)`}
+                    </p>
+                    {isDone && rpe > 0 && (
+                      <p className={`text-xs font-bold mt-1 ${rpeColor(rpe)}`}>RPE circuit : {rpe}/10</p>
+                    )}
+                  </div>
+                  {isOpen
+                    ? <ChevronUpIcon className="w-5 h-5 text-gray-400 shrink-0 ml-2" />
+                    : <ChevronDownIcon className="w-5 h-5 text-gray-400 shrink-0 ml-2" />
+                  }
+                </button>
+
+                {isOpen && (
+                  <div>
+                    {/* Exercise list */}
+                    {seance.programme.length === 0 ? (
+                      <div className="border-t border-gray-50 px-4 py-6 text-center">
+                        <p className="text-sm text-gray-400">Aucun exercice dans ce circuit</p>
+                      </div>
+                    ) : (
+                      <div className="border-t border-gray-50 divide-y divide-gray-50">
+                        {seance.programme.map(({ item, exo }, idx) => (
+                          <div key={item.id} className="flex items-start gap-3 px-4 py-3">
+                            <div className="shrink-0">
+                              {exo?.image_exercice ? (
+                                <img src={exo.image_exercice} alt="" className="w-12 h-12 rounded-lg object-cover" />
+                              ) : (
+                                <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-sm font-bold text-gray-400">
+                                  {idx + 1}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-gray-800">{exo?.nom_exercice || `Exercice ${idx + 1}`}</p>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                {item.effort} {item.type_effort === 'Répétitions' ? 'rép' : item.type_effort === 'Durée (sec)' ? 'sec' : 'm'}
+                                {(item.recup_effort ?? 0) > 0 && ` · récup ${item.recup_effort}s`}
+                              </p>
+                              {item.tempo_phase1 != null && (
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  Tempo : {item.tempo_phase1}-{item.tempo_phase2 ?? 0}-{item.tempo_phase3 ?? 0}{item.tempo_phase4 != null ? `-${item.tempo_phase4}` : ''}
+                                </p>
+                              )}
+                              {item.explication_exercice ? (
+                                <p className="text-xs text-gray-500 italic mt-1 bg-amber-50 rounded-lg px-2 py-1">
+                                  {item.explication_exercice}
+                                </p>
+                              ) : null}
+                              {((item.charge ?? 0) > 0 || (item.nb_serie_effectuee ?? 0) > 0) && (
+                                <p className="text-xs text-gray-600 font-medium mt-1">
+                                  {(item.charge ?? 0) > 0 && `${item.charge} kg`}
+                                  {(item.nb_serie_effectuee ?? 0) > 0 && ` · ${item.nb_serie_effectuee} tour(s) effectué(s)`}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Intensité ressentie circuit (RPE) */}
+                    {(isAdmin || droits?.questionnaire !== false) && <div className="border-t border-gray-100">
+                      <button
+                        onClick={() => setBilanOpen(b => ({ ...b, [seance.id]: !b[seance.id] }))}
+                        className="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition"
+                      >
+                        {isBilanVisible ? <ChevronUpIcon className="w-4 h-4 text-gray-500" /> : <ChevronDownIcon className="w-4 h-4 text-gray-500" />}
+                        Intensité ressentie (circuit)
+                        {rpe > 0 && <span className={`ml-auto text-xs font-bold ${rpeColor(rpe)}`}>RPE {rpe}/10</span>}
+                      </button>
+
+                      {isBilanVisible && (
+                        <div className="px-4 pb-4 space-y-2">
+                          <div className="space-y-1.5">
+                            {RPE_LABELS.map((label, i) => (
+                              <button
+                                key={i}
+                                onClick={() => setRpeValues(r => ({ ...r, [seance.id]: i }))}
+                                className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
+                                  i === rpe ? rpeBg(i) : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => saveRpe(seance.id)}
+                            disabled={savingRpe[seance.id]}
+                            className={`w-full text-sm font-semibold py-2.5 rounded-xl transition mt-1 ${
+                              savedRpe[seance.id]
+                                ? 'bg-green-500 text-white'
+                                : 'bg-gray-600 hover:bg-gray-700 disabled:opacity-60 text-white'
+                            }`}
+                          >
+                            {savedRpe[seance.id] ? '✓ Enregistré' : savingRpe[seance.id] ? 'Sauvegarde...' : 'Enregistrer'}
+                          </button>
+                        </div>
+                      )}
+                    </div>}
+
+                    {/* Notes admin (satisfaction + évaluation — admin uniquement) */}
+                    {isAdmin && (
+                      <div className="border-t border-gray-100">
+                        <button
+                          onClick={() => setAdminNotesOpen(a => ({ ...a, [seance.id]: !a[seance.id] }))}
+                          className="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition"
+                        >
+                          {isAdminNotesVisible ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
+                          Indications circuit
+                          {(satValues[seance.id] || intensiteGenValues[seance.id]) && (
+                            <span className="ml-auto text-xs text-green-600">✓</span>
+                          )}
+                        </button>
+
+                        {isAdminNotesVisible && (
+                          <div className="px-4 pb-4 space-y-4">
+                            <div>
+                              <label className="text-xs font-semibold text-gray-600 block mb-1">Satisfaction / Ressenti</label>
+                              <textarea
+                                value={satValues[seance.id] ?? ''}
+                                onChange={e => setSatValues(s => ({ ...s, [seance.id]: e.target.value }))}
+                                rows={2}
+                                placeholder="Comment s'est passé ce circuit ?"
+                                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-gray-500 resize-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold text-gray-600 block mb-2">Évaluation</label>
+                              <div className="flex gap-4">
+                                {[
+                                  { value: '🔵', color: '#93c5fd', shadow: '0 0 0 4px #bfdbfe', label: 'Léger' },
+                                  { value: '🟡', color: '#facc15', shadow: '0 0 0 4px #fef08a', label: 'Modéré' },
+                                  { value: '⚫', color: '#ef4444', shadow: '0 0 0 4px #fca5a5', label: 'Intense' },
+                                ].map(({ value, color, shadow, label }) => {
+                                  const selected = intensiteGenValues[seance.id] === value
+                                  return (
+                                    <button key={value}
+                                      onClick={() => setIntensiteGenValues(c => ({ ...c, [seance.id]: selected ? '' : value }))}
+                                      className="flex flex-col items-center gap-1"
+                                    >
+                                      <span className="w-9 h-9 rounded-full transition-all"
+                                        style={{
+                                          backgroundColor: color,
+                                          boxShadow: selected ? shadow : 'none',
+                                          transform: selected ? 'scale(1.1)' : 'scale(1)',
+                                          opacity: selected ? 1 : 0.4,
+                                        }}
+                                      />
+                                      <span className="text-[10px] text-gray-500">{label}</span>
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => saveAdminNotes(seance.id)}
+                              disabled={savingAdmin[seance.id]}
+                              className={`w-full text-sm font-semibold py-2.5 rounded-xl transition ${
+                                savedAdmin[seance.id]
+                                  ? 'bg-green-500 text-white'
+                                  : 'bg-gray-600 hover:bg-gray-700 disabled:opacity-60 text-white'
+                              }`}
+                            >
+                              {savedAdmin[seance.id] ? '✓ Enregistré' : savingAdmin[seance.id] ? 'Sauvegarde...' : 'Enregistrer les notes'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Lancer */}
+                    <div className="px-4 pb-4 border-t border-gray-50 pt-3">
+                      <button
+                        onClick={() => router.push(launchUrl(seance))}
+
+                        className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl transition"
+                      >
+                        <PlayIcon className="w-4 h-4" />
+                        {isDone ? 'Relancer ce circuit' : 'Lancer ce circuit'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {/* ── Bilan de fin de séance ── */}
+          {(isAdmin || droits?.questionnaire !== false) && <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <button
+              onClick={() => setBilanFinOpen(b => !b)}
+              className="w-full flex items-center gap-3 px-4 py-4 text-left"
+            >
+              {bilanFinOpen
+                ? <ChevronUpIcon className="w-5 h-5 text-gray-400 shrink-0" />
+                : <ChevronDownIcon className="w-5 h-5 text-gray-400 shrink-0" />
+              }
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-700">Bilan de fin de séance</p>
+                {bilanFinFilled
+                  ? <p className={`text-xs font-medium mt-0.5 ${scale5Color(motivSeance)}`}>
+                      Motivation : {MOTIV_LABELS[motivSeance - 1]?.split('— ')[1]}
+                    </p>
+                  : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full mt-1">✗ Non rempli</span>
+                }
+              </div>
+            </button>
+
+            {bilanFinOpen && (
+              <div className="px-4 pb-5 space-y-6 border-t border-gray-100 pt-4">
+
+                {/* Motivation */}
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-3">
+                    Motivation pendant la séance :
+                    {motivSeance > 0 && (
+                      <span className={`ml-2 font-bold ${scale5Color(motivSeance)}`}>{motivSeance}/5</span>
+                    )}
+                  </p>
+                  <div className="space-y-1.5">
+                    {MOTIV_LABELS.map((label, i) => {
+                      const val = i + 1
+                      return (
+                        <button
+                          key={val}
+                          onClick={() => setMotivSeance(val)}
+                          className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
+                            val === motivSeance ? scale5Bg(val) : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <hr className="border-gray-100" />
+
+                {/* Intensité mise */}
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-3">
+                    Intensité mise pendant la séance :
+                    {intensiteMise > 0 && (
+                      <span className={`ml-2 font-bold ${scale5Color(intensiteMise)}`}>{intensiteMise}/5</span>
+                    )}
+                  </p>
+                  <div className="space-y-1.5">
+                    {INTENSITE_MISE_LABELS.map((label, i) => {
+                      const val = i + 1
+                      return (
+                        <button
+                          key={val}
+                          onClick={() => setIntensiteMise(val)}
+                          className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
+                            val === intensiteMise ? scale5Bg(val) : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <hr className="border-gray-100" />
+
+                {/* Intensité de la séance (RPE global) */}
+                <div>
+                  <p className="text-sm font-semibold text-gray-700 mb-3">
+                    Intensité de la séance :
+                    {intensiteSeance > 0 && (
+                      <span className={`ml-2 font-bold ${rpeColor(intensiteSeance)}`}>{intensiteSeance}/10</span>
+                    )}
+                  </p>
+                  <div className="space-y-1.5">
+                    {RPE_LABELS.map((label, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setIntensiteSeance(i)}
+                        className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
+                          i === intensiteSeance ? rpeBg(i) : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={saveBilanFin}
+                  disabled={savingBilanFin}
+                  className={`w-full text-sm font-semibold py-3 rounded-xl transition ${
+                    savedBilanFin
+                      ? 'bg-green-500 text-white'
+                      : 'bg-gray-700 hover:bg-gray-800 disabled:opacity-60 text-white'
+                  }`}
+                >
+                  {savedBilanFin ? '✓ Bilan enregistré' : savingBilanFin ? 'Sauvegarde...' : 'Enregistrer le bilan'}
+                </button>
+              </div>
+            )}
+          </div>}
+
+          {/* ── Commentaires de séance (après le bilan) ── */}
+          {(isAdmin || droits?.questionnaire !== false) && <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <button
+              onClick={() => setCommentairesOpen(b => !b)}
+              className="w-full flex items-center gap-3 px-4 py-4 text-left"
+            >
+              {commentairesOpen
+                ? <ChevronUpIcon className="w-5 h-5 text-gray-400 shrink-0" />
+                : <ChevronDownIcon className="w-5 h-5 text-gray-400 shrink-0" />
+              }
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-700">Commentaires de séance</p>
+                {(crCoach || crClient)
+                  ? <p className="text-xs text-green-600 mt-0.5 font-medium">✓ Commentaires enregistrés</p>
+                  : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full mt-1">✗ Aucun commentaire</span>
+                }
+              </div>
+            </button>
+
+            {commentairesOpen && (
+              <div className="px-4 pb-4 space-y-4 border-t border-gray-100 pt-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block mb-1">Commentaire du coach <span className="font-normal text-blue-500">(visible par le client)</span></label>
+                  <textarea
+                    value={crCoach}
+                    onChange={e => setCrCoach(e.target.value)}
+                    rows={3}
+                    placeholder="Votre compte-rendu de séance..."
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-gray-500 resize-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 block mb-1">Commentaire client</label>
+                  <textarea
+                    value={crClient}
+                    onChange={e => setCrClient(e.target.value)}
+                    rows={3}
+                    placeholder="Retour du client..."
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-gray-500 resize-none"
+                  />
+                </div>
+                <button
+                  onClick={saveCommentaires}
+                  disabled={savingCommentaires}
+                  className={`w-full text-sm font-semibold py-2.5 rounded-xl transition ${
+                    savedCommentaires
+                      ? 'bg-green-500 text-white'
+                      : 'bg-gray-600 hover:bg-gray-700 disabled:opacity-60 text-white'
+                  }`}
+                >
+                  {savedCommentaires ? '✓ Enregistré' : savingCommentaires ? 'Sauvegarde...' : 'Enregistrer les commentaires'}
+                </button>
+              </div>
+            )}
+          </div>}
+
+        </div>
+      )}
+      {/* Modal ajouter circuit */}
+      <Modal isOpen={showAddCircuit} onClose={() => setShowAddCircuit(false)} title="Ajouter un circuit">
+        <form onSubmit={handleAddCircuit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Partie de séance</label>
+            <select value={addCircuitForm.partie_seance}
+              onChange={e => setAddCircuitForm({ ...addCircuitForm, partie_seance: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {PARTIES_SEANCE_APERCU.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type de circuit</label>
+            <select
+              value={addCircuitForm.type_seance}
+              onChange={e => {
+                const defaults = getSeanceDefaultsApercu(e.target.value)
+                setAddCircuitForm({ ...addCircuitForm, type_seance: e.target.value, ...defaults })
+              }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {TYPES_SEANCE_APERCU.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nb tours</label>
+              <input type="number" min={1} value={addCircuitForm.nb_tours}
+                onChange={e => setAddCircuitForm({ ...addCircuitForm, nb_tours: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Récup entre tours (s)</label>
+              <input type="number" min={0} value={addCircuitForm.recup_tours}
+                onChange={e => setAddCircuitForm({ ...addCircuitForm, recup_tours: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type d'effort par défaut</label>
+            <select value={addCircuitForm.type_effort_exo_default}
+              onChange={e => setAddCircuitForm({ ...addCircuitForm, type_effort_exo_default: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {TYPES_EFFORT_APERCU.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Effort par défaut {addCircuitForm.type_effort_exo_default === 'Durée (sec)' ? '(sec)' : '(rép)'}
+              </label>
+              <input type="number" min={0} value={addCircuitForm.tps_effort_exo_default}
+                onChange={e => setAddCircuitForm({ ...addCircuitForm, tps_effort_exo_default: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Récup par défaut (s)</label>
+              <input type="number" min={0} value={addCircuitForm.tps_recup_exo_default}
+                onChange={e => setAddCircuitForm({ ...addCircuitForm, tps_recup_exo_default: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={() => setShowAddCircuit(false)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button type="submit" disabled={savingCircuit}
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition">
+              {savingCircuit ? 'Création...' : 'Créer'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+    </div>
+  )
+}

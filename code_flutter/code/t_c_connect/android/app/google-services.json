@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "150719745178",
+    "project_id": "t-c-connect-palw1q",
+    "storage_bucket": "t-c-connect-palw1q.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:150719745178:android:dc13a462917ccfe6116323",
+        "android_client_info": {
+          "package_name": "com.mycompany.tcconnect"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDnMxTwMaYLiqCD2uwDUBYeGZrxI5gheR0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

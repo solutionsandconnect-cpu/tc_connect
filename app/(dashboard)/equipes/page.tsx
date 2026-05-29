@@ -6,7 +6,8 @@ import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useTeams } from '@/hooks/useTeams'
 import Modal from '@/components/ui/Modal'
-import { PlusIcon, UsersIcon } from '@heroicons/react/24/outline'
+import { StoreGate } from '@/components/ui/StoreGate'
+import { PlusIcon, UsersIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { useRouter } from 'next/navigation'
 
 const SPORTS = [
@@ -54,6 +55,7 @@ export default function EquipesPage() {
   }
 
   return (
+    <StoreGate appRoute="/equipes">
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-800">Équipes</h1>
@@ -91,15 +93,15 @@ export default function EquipesPage() {
                 <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={() => openEdit(team)}
-                    className="text-xs text-blue-600 hover:underline"
+                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 transition"
                   >
-                    Modifier
+                    <PencilIcon className="w-3 h-3" />Modifier
                   </button>
                   <button
                     onClick={() => setShowDeleteConfirm(team.id)}
-                    className="text-xs text-red-500 hover:underline"
+                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border border-red-200 text-red-500 bg-red-50 hover:bg-red-100 transition"
                   >
-                    Supprimer
+                    <TrashIcon className="w-3 h-3" />Supprimer
                   </button>
                 </div>
               </div>
@@ -183,5 +185,6 @@ export default function EquipesPage() {
         </div>
       </Modal>
     </div>
+    </StoreGate>
   )
 }

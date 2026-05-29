@@ -3,24 +3,170 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  color-scheme: light;
+
+  /* Override direct des CSS vars Tailwind v4 → Flutter theme */
+  --color-blue-50:  #f2f2f2;
+  --color-blue-100: #e6e6e6;
+  --color-blue-200: #cccccc;
+  --color-blue-300: #b0b0b1;
+  --color-blue-400: #939394;
+  --color-blue-500: #818182;
+  --color-blue-600: #737374;
+  --color-blue-700: #5e5e5f;
+  --color-blue-800: #484849;
+  --color-blue-900: #2e2e2e;
+
+  --color-green-50:  #e9f5f4;
+  --color-green-100: #c3e6e2;
+  --color-green-200: #9dd6d1;
+  --color-green-300: #6dc2bb;
+  --color-green-400: #3db0a8;
+  --color-green-500: #2aa196;
+  --color-green-600: #249689;
+  --color-green-700: #1d7a6f;
+  --color-green-800: #165e56;
+
+  --color-gray-50: #F1F4F8;
+
+  --color-red-50:  #fff1f2;
+  --color-red-100: #ffe0e2;
+  --color-red-400: #FF7880;
+  --color-red-500: #FF5963;
+  --color-red-600: #e8464f;
 }
 
 @theme inline {
+  /* Ces variables DOIVENT rester en inline car elles référencent des CSS vars */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@theme {
+  /* ── Flutter theme : primary = #737374 → écrase toute la famille blue ── */
+  --color-blue-50:  #f2f2f2;
+  --color-blue-100: #e6e6e6;
+  --color-blue-200: #cccccc;
+  --color-blue-300: #b0b0b1;
+  --color-blue-400: #939394;
+  --color-blue-500: #818182;
+  --color-blue-600: #737374;
+  --color-blue-700: #5e5e5f;
+  --color-blue-800: #484849;
+  --color-blue-900: #2e2e2e;
+
+  /* Flutter success = #249689 → écrase toute la famille green */
+  --color-green-50:  #e9f5f4;
+  --color-green-100: #c3e6e2;
+  --color-green-200: #9dd6d1;
+  --color-green-300: #6dc2bb;
+  --color-green-400: #3db0a8;
+  --color-green-500: #2aa196;
+  --color-green-600: #249689;
+  --color-green-700: #1d7a6f;
+  --color-green-800: #165e56;
+
+  /* Flutter primaryBackground = #F1F4F8 → écrase gray-50 */
+  --color-gray-50: #F1F4F8;
+
+  /* Flutter error = #FF5963 → écrase red-500 */
+  --color-red-50:  #fff1f2;
+  --color-red-100: #ffe0e2;
+  --color-red-400: #FF7880;
+  --color-red-500: #FF5963;
+  --color-red-600: #e8464f;
+
+  /* Flutter couleurs custom disponibles comme utilitaires Tailwind */
+  --color-secondary:    #39D2C0;
+  --color-tertiary:     #EE8B60;
+  --color-alternate:    #E0E3E7;
+  --color-etat-bon:     #39D278;
+  --color-etat-moy:     #EEAD60;
+  --color-etat-pas-bon: #EE6060;
+  --color-warning:      #F9CF58;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Safe area — iOS home indicator */
+@utility pb-nav-safe {
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+}
+@utility pb-modal-safe {
+  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Empêche le scroll horizontal global sur mobile */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* iOS/Safari : force la couleur du texte saisi dans les champs */
+input,
+textarea,
+select {
+  color: #111827;
+  -webkit-text-fill-color: #111827;
+  opacity: 1;
+}
+
+/* Inputs date/time : jamais plus larges que leur conteneur sur mobile */
+/* -webkit-appearance: none est indispensable sur iOS Safari pour que width:100% soit respecté */
+input[type="date"],
+input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  font-size: inherit;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+/* Parent direct d'un input date/time : autorise le rétrécissement dans flex/grid */
+div:has(> input[type="date"]),
+div:has(> input[type="time"]) {
+  min-width: 0;
+}
+
+/* Grilles 2 colonnes contenant des inputs date/time → colonne unique sur petit écran */
+@media (max-width: 639px) {
+  [class*="grid-cols-2"]:has(input[type="time"]),
+  [class*="grid-cols-2"]:has(input[type="date"]) {
+    grid-template-columns: 1fr;
+  }
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af;
+  -webkit-text-fill-color: #9ca3af;
+  opacity: 1;
+}
+
+/* Body fixé lors d'un modal ouvert — empêche tout pan horizontal/vertical parasite sur iOS */
+body[style*="position: fixed"] {
+  overflow: hidden !important;
+}
+html:has(body[style*="position: fixed"]) {
+  overflow: hidden;
+}
+
+/* Curseur pointer sur tous les éléments interactifs */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+a[href],
+label[for],
+select:not(:disabled) {
+  cursor: pointer;
 }

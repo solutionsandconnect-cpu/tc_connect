@@ -8,7 +8,7 @@ import { useJoueurs } from '@/hooks/useJoueurs'
 import { useTeams } from '@/hooks/useTeams'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
-import { PlusIcon, ChartBarIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, ChartBarIcon, TrashIcon } from '@heroicons/react/24/outline'
 
 function getRPELabel(val: number): {
   label: string
@@ -29,9 +29,12 @@ export default function RPEPage() {
   const [showModal, setShowModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
 
+  const toLocalDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+
   const [form, setForm] = useState({
     joueur_id: '',
-    date: new Date().toISOString().split('T')[0],
+    date: toLocalDate(new Date()),
     rpe: 5,
     temps: 60,
   })
@@ -39,7 +42,7 @@ export default function RPEPage() {
   const openAdd = () => {
     setForm({
       joueur_id: joueurs[0]?.id || '',
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDate(new Date()),
       rpe: 5,
       temps: 60,
     })
@@ -141,9 +144,9 @@ export default function RPEPage() {
                   </div>
                   <button
                     onClick={() => setShowDeleteConfirm(item.id)}
-                    className="text-xs text-red-500 hover:underline"
+                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border border-red-200 text-red-500 bg-red-50 hover:bg-red-100 transition"
                   >
-                    Supprimer
+                    <TrashIcon className="w-3 h-3" />Supprimer
                   </button>
                 </div>
               </div>

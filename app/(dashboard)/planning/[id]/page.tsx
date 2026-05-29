@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { Timestamp, doc, collection, query, where, orderBy, getDocs } from 'firebase/firestore'
+import { use, useState, useEffect, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
+import { Timestamp, doc, collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { usePlanning } from '@/hooks/usePlanning'
 import { useSeances } from '@/hooks/useSeances'
@@ -16,28 +16,113 @@ import MaterielSelect from '@/components/ui/MaterielSelect'
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
   ClipboardDocumentListIcon, PlusIcon, ChevronRightIcon,
+  PhoneIcon, EnvelopeIcon, MapPinIcon, GlobeAltIcon,
+  MagnifyingGlassIcon, ClockIcon, XMarkIcon,
+  ChevronUpIcon, ChevronDownIcon,
 } from '@heroicons/react/24/outline'
 import { formatDate, formatHeure } from '@/lib/planningUtils'
 import { useAuth } from '@/context/AuthContext'
+import { addToCalendar, RDV_CAL_ID } from '@/lib/googleCalendar'
+import { useClients } from '@/hooks/useClients'
+import type { Client } from '@/types'
+import ClientEditModal from '@/components/ui/ClientEditModal'
 
 const ETATS = ['Non calé', 'Calé', 'Annulé', 'Effectué']
-const TYPES_SEANCE = ['Musculation','Cardio','Circuit training','HIIT','Stretching','Technique','Mixte','Autre']
-const PARTIES_SEANCE = ['Échauffement','Corps de séance','Retour au calme','Séance complète']
+
+async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const res = await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(address)}&limit=1`)
+    const data = await res.json()
+    const coords = data.features?.[0]?.geometry?.coordinates
+    if (!coords) return null
+    return { lat: coords[1], lng: coords[0] }
+  } catch { return null }
+}
+
+async function calculateRoute(fromLat: number, fromLng: number, toLat: number, toLng: number): Promise<{ distanceKm: number; duration: string }> {
+  const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=false`)
+  const data = await res.json()
+  const route = data.routes?.[0]
+  if (!route) throw new Error('Pas de route trouvée')
+  const km = Math.round(route.distance / 100) / 10
+  const mins = Math.round(route.duration / 60)
+  const duration = mins >= 60 ? `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}` : `${mins} min`
+  return { distanceKm: km, duration }
+}
+const NOTE_TYPES_BASE = ['Observation', 'Alerte', 'Bilan', 'Objectif', 'Autre']
+const NOTE_TYPES_KEY = 'tc_note_types_custom'
 const TYPES_RDV = [
-  { groupe: 'TC', options: ['Séance','Programme','Rendez-vous informations','Rendez-vous bilan','Règlement TC','Séance en autonomie','Autre activité','Parcours sportif'] },
-  { groupe: 'S&C', options: ['Rendez-vous infos S&C','Rendez-vous bilan S&C','Règlement S&C'] },
-  { groupe: 'FFD', options: ['Détection','Règlement FFD'] },
-  { groupe: 'EMF', options: ['Séminaire','Règlement EMF'] },
+  { groupe: 'TC', options: ['Séance', 'Programme', 'Rendez-vous informations', 'Rendez-vous bilan', 'Règlement TC', 'Séance en autonomie', 'Autre activité', 'Parcours sportif'] },
+  { groupe: 'S&C', options: ['Rendez-vous infos S&C', 'Rendez-vous bilan S&C', 'Règlement S&C'] },
+  { groupe: 'FFD', options: ['Détection', 'Règlement FFD'] },
+  { groupe: 'EMF', options: ['Séminaire', 'Règlement EMF'] },
+]
+const PARTIES_SEANCE = ['Échauffement', 'Corps de séance', 'Retour au calme', 'Séance complète']
+const TYPES_SEANCE_CIRCUIT = ['Circuit classique','Tabata','Circuit en 30-10','Circuit varié (rep)','Circuit varié (temps)','Circuit varié']
+const TYPES_EFFORT_SEANCE = ['Répétitions', 'Durée (sec)']
+const toFirestoreEffort = (v: string) => v === 'Durée (sec)' ? 'Secondes' : v
+const fromFirestoreEffort = (v: string) => v === 'Secondes' ? 'Durée (sec)' : v
+
+function getSeanceCircuitDefaults(type: string) {
+  switch (type) {
+    case 'Tabata':                return { nb_tours: 4, recup_tours: 0,  tps_recup_exo_default: 10, type_effort_exo_default: 'Durée (sec)',  tps_effort_exo_default: 20 }
+    case 'Circuit en 30-10':      return { nb_tours: 3, recup_tours: 10, tps_recup_exo_default: 10, type_effort_exo_default: 'Durée (sec)',  tps_effort_exo_default: 30 }
+    case 'Circuit varié (rep)':   return { nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,  type_effort_exo_default: 'Répétitions', tps_effort_exo_default: 10 }
+    case 'Circuit varié (temps)': return { nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,  type_effort_exo_default: 'Durée (sec)', tps_effort_exo_default: 30 }
+    case 'Circuit varié':         return { nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,  type_effort_exo_default: 'Répétitions', tps_effort_exo_default: 30 }
+    default:                      return { nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,  type_effort_exo_default: 'Durée (sec)', tps_effort_exo_default: 30 }
+  }
+}
+
+const RPE_LABELS = [
+  '1 — Très très facile',
+  '2 — Très facile',
+  '3 — Facile',
+  '4 — Je sens un effort',
+  '5 — Ça commence à être dur',
+  '6 — Ça devient bien dur',
+  '7 — Dur',
+  '8 — Très dur',
+  '9 — Très très dur',
+  '10 — Tellement dur que je vais arrêter',
 ]
 
 const QUESTIONS_FORME = [
-  { key: 'qualite_sommeil', label: 'Sommeil', question: 'Qualité de sommeil de la nuit dernière ?', labels: ['Très très bonne','Très bonne','Bonne','Moyenne','Mauvaise','Très mauvaise','Très très mauvaise'] },
-  { key: 'niveau_fatigue', label: 'Fatigue', question: 'Niveau de fatigue actuel ?', labels: ['Très très faible','Très faible','Faible','Moyen','Élevé','Très élevé','Très très élevé'] },
-  { key: 'niveau_courbatures', label: 'Courbatures', question: 'Niveau de courbatures / douleurs ?', labels: ['Très très faible','Très faible','Faible','Moyen','Élevé','Très élevé','Très très élevé'] },
-  { key: 'quantite_stress', label: 'Stress', question: 'Quantité de stress actuelle ?', labels: ['Très très faible','Très faible','Faible','Moyen','Élevée','Très élevée','Très très élevée'] },
-  { key: 'motiv_avant_seance', label: 'Motivation', question: 'Motivation avant séance ?', labels: ['Pas motivé','Peu motivé','Moyennement motivé','Motivé','Très motivé'] },
-  { key: 'activite_avant_seance', label: 'Activité', question: 'Activité physique ces derniers jours ?', labels: ['Passif / Rien fait','Peu actif','Moyennement actif','Actif','Très actif'] },
-  { key: 'alimentation_avant_seance', label: 'Alimentation', question: 'Alimentation ces derniers jours ?', labels: ["Que des excès","Beaucoup d'excès","Quelques excès","Très très peu d'excès","Aucun excès / Nutrition hyper saine"] },
+  {
+    key: 'qualite_sommeil', label: 'Sommeil',
+    question: 'Qualité de sommeil de la nuit dernière ?',
+    labels: ['1 — Très très bonne', '2 — Très bonne', '3 — Bonne', '4 — Moyenne', '5 — Mauvaise', '6 — Très mauvaise', '7 — Très très mauvaise'],
+  },
+  {
+    key: 'niveau_fatigue', label: 'Fatigue',
+    question: 'Niveau de fatigue actuel ?',
+    labels: ['1 — Très très faible', '2 — Très faible', '3 — Faible', '4 — Moyen', '5 — Élevé', '6 — Très élevé', '7 — Très très élevé'],
+  },
+  {
+    key: 'niveau_courbatures', label: 'Courbatures',
+    question: 'Niveau de courbatures / douleurs ?',
+    labels: ['1 — Très très faible', '2 — Très faible', '3 — Faible', '4 — Moyen', '5 — Élevé', '6 — Très élevé', '7 — Très très élevé'],
+  },
+  {
+    key: 'quantite_stress', label: 'Stress',
+    question: 'Quantité de stress actuelle ?',
+    labels: ['1 — Très très faible', '2 — Très faible', '3 — Faible', '4 — Moyen', '5 — Élevée', '6 — Très élevée', '7 — Très très élevée'],
+  },
+  {
+    key: 'motivation_avant_seance', label: 'Motivation',
+    question: "Motivation à l'idée de faire la séance ?",
+    labels: ['1 — Pas motivé', '2 — Peu motivé', '3 — Moyennement motivé', '4 — Motivé', '5 — Très motivé'],
+  },
+  {
+    key: 'activite_derniers_jours', label: 'Activité',
+    question: 'Activité physique ces derniers jours ?',
+    labels: ['1 — Passif / Rien fait', '2 — Peu actif', '3 — Moyennement actif', '4 — Actif', '5 — Très actif'],
+  },
+  {
+    key: 'alimentation_derniers_jours', label: 'Alimentation',
+    question: 'Alimentation ces derniers jours ?',
+    labels: ["1 — Que des excès", "2 — Beaucoup d'excès", "3 — Quelques excès", "4 — Très très peu d'excès", '5 — Aucun excès / Nutrition hyper saine'],
+  },
 ]
 
 function getEtatBadgeLocal(etat: string) {
@@ -50,68 +135,239 @@ function getEtatBadgeLocal(etat: string) {
   }
 }
 
-export default function DetailPlanningPage() {
-  const { id } = useParams<{ id: string }>()
-  const router = useRouter()
-  const { currentUser } = useAuth()
-  const { plannings, updatePlanning, deletePlanning } = usePlanning()
-  const { seances, addSeance } = useSeances(id)
-  const { users } = useUsers()
-  const { notes } = useNotes()
+function scale5Color(val: number) {
+  if (val <= 2) return 'text-red-500'
+  if (val === 3) return 'text-orange-500'
+  return 'text-green-600'
+}
+function rpeColor(rpe: number) {
+  if (rpe <= 3) return 'text-green-600'
+  if (rpe <= 7) return 'text-orange-500'
+  return 'text-red-500'
+}
 
-  // Planning + client — déclarés en premier
+const MOTIV_LABELS = ['Pas motivé', 'Peu motivé', 'Moyennement motivé', 'Motivé', 'Très motivé']
+const INTENSITE_MISE_LABELS = ["Aucune intensité", "Minimum d'intensité", '50% de l\'intensité', 'Beaucoup d\'intensité', 'Toute l\'intensité']
+
+function getNoteTypeStyle(type: string) {
+  switch (type) {
+    case 'Alerte':     return { card: 'bg-red-50 border-red-200',    badge: 'bg-red-100 text-red-700',    dot: 'text-red-500',    meta: 'text-red-400' }
+    case 'Bilan':      return { card: 'bg-sky-50 border-sky-200',    badge: 'bg-sky-100 text-sky-700',    dot: 'text-sky-500',    meta: 'text-sky-400' }
+    case 'Objectif':   return { card: 'bg-green-50 border-green-200', badge: 'bg-green-100 text-green-700', dot: 'text-green-500', meta: 'text-green-400' }
+    case 'Observation':return { card: 'bg-orange-50 border-orange-200',badge: 'bg-orange-100 text-orange-700',dot: 'text-orange-500',meta: 'text-orange-400' }
+    case 'Autre':      return { card: 'bg-gray-50 border-gray-200',  badge: 'bg-gray-100 text-gray-500',  dot: 'text-gray-400',   meta: 'text-gray-400' }
+    default:           return { card: 'bg-violet-50 border-violet-200',badge: 'bg-violet-100 text-violet-700',dot: 'text-violet-500',meta: 'text-violet-400' }
+  }
+}
+
+function SectionSep({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 pt-2">
+      <span className="text-xs font-bold text-gray-400 uppercase tracking-wider whitespace-nowrap">{label}</span>
+      <div className="flex-1 h-px bg-gray-100" />
+    </div>
+  )
+}
+
+export default function DetailPlanningPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
+  const router = useRouter()
+  const { currentUser, userProfile } = useAuth()
+  const isAdmin = userProfile?.role_app === 'Admin'
+  const { plannings, updatePlanning, deletePlanning } = usePlanning()
+  const { seances, addSeance, updateSeance, deleteSeance } = useSeances(id)
+  const { users } = useUsers()
+  const { notes, addNote, updateNote, deleteNote } = useNotes()
+  const { clients: allClients } = useClients()
+
   const planning = plannings.find((p) => p.id === id)
-  const clientId = (planning as any)?.ref_client?.id
-    || (planning as any)?.ref_client?.path?.split('/').pop()
+  const _rU = (planning as any)?.ref_users
+  const _rC = (planning as any)?.ref_client
+  const clientId: string | undefined =
+    _rU?.id ||
+    _rU?.path?.split('/').pop() ||
+    (typeof _rU === 'string' && _rU ? _rU.split('/').pop() : undefined) ||
+    _rC?.id ||
+    _rC?.path?.split('/').pop() ||
+    (typeof _rC === 'string' && _rC ? _rC.split('/').pop() : undefined)
   const client = users.find((u) => u.id === clientId)
   const { details: clientDetails } = useUserDetails(clientId)
 
-  // Notes client — après clientId
   const notesClient = notes.filter((n) => {
-    const refId = typeof n.ref_users === 'string'
-      ? n.ref_users
-      : (n.ref_users as any)?.id
+    const refId = typeof n.ref_users === 'string' ? n.ref_users : (n.ref_users as any)?.id
     return refId === clientId
   })
   const notesActives = notesClient.filter((n) => {
     if (!n.date_max_note_active) return true
     return (n.date_max_note_active as any).toDate() >= new Date()
   })
+  const notesExpirees = notesClient.filter(
+    (n) => n.date_max_note_active && (n.date_max_note_active as any).toDate() < new Date()
+  )
 
-  // Derniers RDV effectués
   const [derniersRdv, setDerniersRdv] = useState<any[]>([])
+  const [prochainsRdvClient, setProchainsRdvClient] = useState<any[]>([])
+  const [moyenneHooper, setMoyenneHooper] = useState<number | null>(null)
+  const [rdvSequence, setRdvSequence] = useState<{ index: number; total: number } | null>(null)
+  const [activitesSinceLastRdv, setActivitesSinceLastRdv] = useState<any[]>([])
+
   useEffect(() => {
     if (!clientId) return
-    const fetchDerniers = async () => {
-      const q = query(
-        collection(db, 'planning_pro'),
-        where('ref_client', '==', doc(db, 'users', clientId)),
-        where('etat_planning_rdv', '==', 'Effectué'),
-        orderBy('date_planning', 'desc')
-      )
+    const fetchHistory = async () => {
       try {
-        const snap = await getDocs(q)
-        setDerniersRdv(
-          snap.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
-            .filter((r: any) => r.id !== id)
-            .slice(0, 5)
+        const userRef = doc(db, 'users', clientId)
+        // Query both field names — no orderBy to avoid composite-index requirement
+        const [s1, s2] = await Promise.all([
+          getDocs(query(collection(db, 'planning_pro'), where('ref_client', '==', userRef))).catch(() => ({ docs: [] as any[] })),
+          getDocs(query(collection(db, 'planning_pro'), where('ref_users', '==', userRef))).catch(() => ({ docs: [] as any[] })),
+        ])
+        const seen = new Set<string>()
+        const all = [...s1.docs, ...s2.docs]
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((r: any) => {
+            if (r.id === id || seen.has(r.id)) return false
+            seen.add(r.id)
+            return true
+          }) as any[]
+
+        const now = new Date()
+        const past = all
+          .filter((r) => r.date_planning?.toDate?.() < now)
+          .sort((a, b) => (b.date_planning?.seconds ?? 0) - (a.date_planning?.seconds ?? 0))
+        setDerniersRdv(past.slice(0, 5))
+
+        const prochains = all
+          .filter((r) => r.date_planning?.toDate?.() >= now)
+          .sort((a, b) => (a.date_planning?.seconds ?? 0) - (b.date_planning?.seconds ?? 0))
+        setProchainsRdvClient(prochains.slice(0, 3))
+
+        const withHooper = past.filter((r) => r.indice_hooper)
+        setMoyenneHooper(
+          withHooper.length > 0
+            ? Math.round(withHooper.reduce((s: number, r: any) => s + r.indice_hooper, 0) / withHooper.length * 10) / 10
+            : null
         )
-      } catch {}
+
+        // Activities since last RDV
+        const lastRdvDate: Date | null = past[0]?.date_planning?.toDate?.() ?? null
+        const actsSnap = await getDocs(
+          query(collection(db, 'activites_clients'), where('clientId', '==', clientId))
+        ).catch(() => ({ docs: [] as any[] }))
+        const acts = actsSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[]
+        const filteredActs = acts
+          .filter((a) => {
+            const d: Date | null = a.date_activite?.toDate?.() ?? null
+            if (!d) return false
+            return lastRdvDate ? d >= lastRdvDate : true
+          })
+          .sort((a, b) => (b.date_activite?.seconds ?? 0) - (a.date_activite?.seconds ?? 0))
+        setActivitesSinceLastRdv(filteredActs)
+      } catch (err) {
+        console.error('fetchHistory error', err)
+      }
     }
-    fetchDerniers()
+    fetchHistory()
+
   }, [clientId, id])
 
-  // Modals
+  useEffect(() => {
+    if (!planning) { setRdvSequence(null); return }
+    const getAboId = (p: any) =>
+      p?.refDatabaseUser?.id || p?.refDatabaseUser?.path?.split('/').pop() ||
+      p?.ref_database_user?.id || p?.ref_database_user?.path?.split('/').pop()
+    const aboId = getAboId(planning)
+    if (!aboId) { setRdvSequence(null); return }
+    const grouped = plannings
+      .filter((p) => getAboId(p) === aboId)
+      .sort((a, b) => ((a as any).date_planning?.seconds ?? 0) - ((b as any).date_planning?.seconds ?? 0))
+    const idx = grouped.findIndex((p) => p.id === id)
+    setRdvSequence(idx !== -1 && grouped.length > 1 ? { index: idx + 1, total: grouped.length } : null)
+  }, [planning, plannings, id])
+
+  // Modal states
   const [showEditModal, setShowEditModal] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showSeanceModal, setShowSeanceModal] = useState(false)
+  const [showEditSeanceModal, setShowEditSeanceModal] = useState(false)
+  const [editSeanceItem, setEditSeanceItem] = useState<any>(null)
+  const [editSeanceForm, setEditSeanceForm] = useState({
+    type_seance: 'Circuit classique', partie_seance: 'Corps de séance',
+    observations_seance: '', nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,
+    type_effort_exo_default: 'Durée (sec)' as string, tps_effort_exo_default: 30, intensite_circuit_planifie: 0,
+    num_circuit: 1,
+  })
+  const [deleteSeanceConfirm, setDeleteSeanceConfirm] = useState<string | null>(null)
   const [showQuestionnaireModal, setShowQuestionnaireModal] = useState(false)
   const [showQuestionnaireDirectModal, setShowQuestionnaireDirectModal] = useState(false)
   const [showPlanifModal, setShowPlanifModal] = useState(false)
+  const [showCrModal, setShowCrModal] = useState(false)
+  const [crValue, setCrValue] = useState('')
+  const [showCrCoachModal, setShowCrCoachModal] = useState(false)
+  const [crCoachValue, setCrCoachValue] = useState('')
+  const [showCrClientModal, setShowCrClientModal] = useState(false)
+  const [crClientValue, setCrClientValue] = useState('')
+  const [showBilanClientModal, setShowBilanClientModal] = useState(false)
+  const [showNoteModal, setShowNoteModal] = useState(false)
+  const [editNoteItem, setEditNoteItem] = useState<any>(null)
+  const [addNoteForm, setAddNoteForm] = useState({ type_note: 'Observation', notes: '', date_max_note_active: '' })
+  const [deleteNoteConfirm, setDeleteNoteConfirm] = useState<string | null>(null)
+  const [customNoteTypes, setCustomNoteTypes] = useState<string[]>([])
+  const [newNoteType, setNewNoteType] = useState('')
 
-  // States
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(NOTE_TYPES_KEY)
+      if (v) setCustomNoteTypes(JSON.parse(v))
+    } catch {}
+  }, [])
+  const clientRecord = useMemo<Client | null>(() => {
+    if (!clientId) return null
+    return allClients.find((c) => c.linkedUserId === clientId || c.id === clientId) ?? null
+  }, [allClients, clientId])
+  const [showFicheClient, setShowFicheClient] = useState(true)
+  const [showEditFiche, setShowEditFiche] = useState(false)
+  const [showUrgence, setShowUrgence] = useState(false)
+
+  const [showExpiredNotes, setShowExpiredNotes] = useState(false)
+  const [bilanClientIntensity, setBilanClientIntensity] = useState(1)
+  const [bilanMotivationClient, setBilanMotivationClient] = useState(1)
+  const [bilanIntensiteMiseClient, setBilanIntensiteMiseClient] = useState(1)
   const [intensitePlanifiee, setIntensitePlanifiee] = useState(1)
+  const [pendingEtat, setPendingEtat] = useState<string | null>(null)
+  const [searchClientEdit, setSearchClientEdit] = useState('')
+
+  const filteredUsersEdit = useMemo(() => {
+    if (!searchClientEdit) return users
+    const s = searchClientEdit.toLowerCase()
+    return users.filter((u) =>
+      [u.nom, u.prenom].filter(Boolean).join(" ").toLowerCase().includes(s) ||
+      (u.email?.toLowerCase().includes(s) ?? false)
+    )
+  }, [users, searchClientEdit])
+
+  const [extraDetails, setExtraDetails] = useState<Record<string, any[]>>({})
+  const [newParticipant, setNewParticipant] = useState({ ref_client: '', ref_database_user: '' })
+  const [searchNewParticipant, setSearchNewParticipant] = useState('')
+
+  const loadExtraDetails = async (clientId: string) => {
+    if (!clientId || extraDetails[clientId]) return
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'database_users_details'),
+        where('refUsers', '==', doc(db, 'users', clientId))
+      ))
+      setExtraDetails((prev) => ({ ...prev, [clientId]: snap.docs.map((d) => ({ id: d.id, ...d.data() })) }))
+    } catch {}
+  }
+
+  const filteredUsersExtra = useMemo(() => {
+    if (!searchNewParticipant) return users
+    const s = searchNewParticipant.toLowerCase()
+    return users.filter((u) =>
+      [u.nom, u.prenom].filter(Boolean).join(" ").toLowerCase().includes(s) ||
+      (u.email?.toLowerCase().includes(s) ?? false)
+    )
+  }, [users, searchNewParticipant])
 
   const [form, setForm] = useState({
     ref_client: '',
@@ -122,18 +378,40 @@ export default function DetailPlanningPage() {
     etat_planning_rdv: 'Non calé',
     observations_rdv: '',
     type_planning: 'Séance',
+    mode_rdv: 'Présentiel',
     materiel: [] as string[],
     ref_database_user: '',
-    cr_rdv_moi: '',
-    cr_rdv_client: '',
+    participants_supplementaires: [] as { ref_client: string; ref_database_user: string }[],
+    distance_km: null as number | null,
+    temps_route: '',
   })
+  const [calcDistance, setCalcDistance] = useState(false)
+
+  const handleCalculateDistance = async () => {
+    const from = (userProfile as any)?.adresse_postale || (userProfile as any)?.rue_adresse || ''
+    const to = form.adresse_rdv
+    if (!from || !to) return
+    setCalcDistance(true)
+    try {
+      const [fromCoords, toCoords] = await Promise.all([geocodeAddress(from), geocodeAddress(to)])
+      if (!fromCoords || !toCoords) { setCalcDistance(false); return }
+      const { distanceKm, duration } = await calculateRoute(fromCoords.lat, fromCoords.lng, toCoords.lat, toCoords.lng)
+      setForm((f) => ({ ...f, distance_km: distanceKm, temps_route: duration }))
+    } catch { /* ignore */ }
+    setCalcDistance(false)
+  }
 
   const [seanceForm, setSeanceForm] = useState({
-    type_seance: 'Musculation',
+    type_seance: 'Circuit classique',
     partie_seance: 'Corps de séance',
     observations_seance: '',
-    nb_tours: 1,
-    recup_tours: 60,
+    nb_tours: 3,
+    recup_tours: 30,
+    tps_recup_exo_default: 5,
+    type_effort_exo_default: 'Durée (sec)' as string,
+    tps_effort_exo_default: 30,
+    intensite_circuit_planifie: 0,
+    num_circuit: 1,
   })
 
   const [questionnaireForm, setQuestionnaireForm] = useState({
@@ -141,13 +419,12 @@ export default function DetailPlanningPage() {
     niveau_fatigue: 1,
     niveau_courbatures: 1,
     quantite_stress: 1,
-    motiv_avant_seance: 1,
-    activite_avant_seance: 1,
-    alimentation_avant_seance: 1,
-    commentaire_forme: '',
+    motivation_avant_seance: 1,
+    activite_derniers_jours: 1,
+    alimentation_derniers_jours: 1,
+    infos_complementaire_avant_seance_client: '',
   })
 
-  // Handlers
   const openEdit = () => {
     if (!planning) return
     const date = (planning.date_planning as any)?.toDate()
@@ -162,11 +439,22 @@ export default function DetailPlanningPage() {
       etat_planning_rdv: planning.etat_planning_rdv || 'Non calé',
       observations_rdv: planning.observations_rdv || '',
       type_planning: (planning as any).type_planning || 'Séance',
+      mode_rdv: (planning as any).mode_rdv || 'Présentiel',
       materiel: Array.isArray((planning as any).materiel) ? (planning as any).materiel : (planning as any).materiel ? [(planning as any).materiel] : [],
       ref_database_user: (planning as any).refDatabaseUser?.id || '',
-      cr_rdv_moi: (planning as any).cr_rdv_moi || '',
-      cr_rdv_client: (planning as any).cr_rdv_client || '',
+      participants_supplementaires: [],
+      distance_km: (planning as any).distance_km ?? null,
+      temps_route: (planning as any).temps_route || '',
     })
+    setSearchClientEdit('')
+    setNewParticipant({ ref_client: '', ref_database_user: '' })
+    setSearchNewParticipant('')
+    const existingParts = (((planning as any).participants_supplementaires as any[]) || []).map((p: any) => ({
+      ref_client: p.ref_users?.id || p.ref_users?.path?.split('/').pop() || (typeof p.ref_users === 'string' ? p.ref_users.split('/').pop() : '') || '',
+      ref_database_user: p.ref_database_user?.id || p.ref_database_user?.path?.split('/').pop() || '',
+    }))
+    existingParts.forEach((p: any) => { if (p.ref_client) loadExtraDetails(p.ref_client) })
+    setForm((prev) => ({ ...prev, participants_supplementaires: existingParts }))
     setShowEditModal(true)
   }
 
@@ -177,17 +465,12 @@ export default function DetailPlanningPage() {
       niveau_fatigue: (planning as any).niveau_fatigue || 1,
       niveau_courbatures: (planning as any).niveau_courbatures || 1,
       quantite_stress: (planning as any).quantite_stress || 1,
-      motiv_avant_seance: (planning as any).motiv_avant_seance || 1,
-      activite_avant_seance: (planning as any).activite_avant_seance || 1,
-      alimentation_avant_seance: (planning as any).alimentation_avant_seance || 1,
-      commentaire_forme: (planning as any).commentaire_forme || '',
+      motivation_avant_seance: (planning as any).motivation_avant_seance || 1,
+      activite_derniers_jours: (planning as any).activite_derniers_jours || 1,
+      alimentation_derniers_jours: (planning as any).alimentation_derniers_jours || 1,
+      infos_complementaire_avant_seance_client: (planning as any).infos_complementaire_avant_seance_client || '',
     })
     setShowQuestionnaireDirectModal(true)
-  }
-
-  const openPlanif = () => {
-    setIntensitePlanifiee((planning as any)?.intensite_seance_planifiee || 1)
-    setShowPlanifModal(true)
   }
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -198,7 +481,6 @@ export default function DetailPlanningPage() {
     const [hFin, mFin] = form.heure_fin.split(':').map(Number)
     const dateDebut = new Date(dateObj); dateDebut.setHours(hDebut, mDebut, 0)
     const dateFin = new Date(dateObj); dateFin.setHours(hFin, mFin, 0)
-
     const payload: any = {
       date_planning: Timestamp.fromDate(dateObj),
       heure_planning_debut: Timestamp.fromDate(dateDebut),
@@ -207,13 +489,23 @@ export default function DetailPlanningPage() {
       etat_planning_rdv: form.etat_planning_rdv,
       observations_rdv: form.observations_rdv,
       type_planning: form.type_planning,
+      mode_rdv: form.mode_rdv,
       materiel: form.materiel,
-      cr_rdv_moi: form.cr_rdv_moi,
-      cr_rdv_client: form.cr_rdv_client,
     }
-    if (form.ref_client) payload.ref_client = doc(db, 'users', form.ref_client)
+    if (form.ref_client) {
+      const userRef = doc(db, 'users', form.ref_client)
+      payload.ref_client = userRef
+      payload.ref_users = userRef
+    }
+    if (form.distance_km != null) payload.distance_km = form.distance_km
+    if (form.temps_route) payload.temps_route = form.temps_route
     if (form.ref_database_user) payload.refDatabaseUser = doc(db, 'database_users_details', form.ref_database_user)
-
+    payload.participants_supplementaires = form.participants_supplementaires
+      .filter((p) => p.ref_client)
+      .map((p) => ({
+        ref_users: doc(db, 'users', p.ref_client),
+        ...(p.ref_database_user ? { ref_database_user: doc(db, 'database_users_details', p.ref_database_user) } : {}),
+      }))
     await updatePlanning(id, payload)
     setShowEditModal(false)
   }
@@ -223,8 +515,23 @@ export default function DetailPlanningPage() {
     router.push('/planning')
   }
 
+  const handleRemoveParticipant = async (index: number) => {
+    const parts = (((planning as any).participants_supplementaires as any[]) || [])
+    const updated = parts.filter((_: any, i: number) => i !== index)
+    await updatePlanning(id, { participants_supplementaires: updated } as any)
+  }
+
   const handleEtatChange = async (etat: string) => {
     await updatePlanning(id, { etat_planning_rdv: etat } as any)
+    setPendingEtat(null)
+  }
+
+  const handleToggleRdvPret = async () => {
+    await updatePlanning(id, { rdv_pret: (planning as any)?.rdv_pret === 'Oui' ? '' : 'Oui' } as any)
+  }
+
+  const handleToggleRdvEffectue = async () => {
+    await updatePlanning(id, { rdv_effectue: (planning as any)?.rdv_effectue === 'Effectué' ? '' : 'Effectué' } as any)
   }
 
   const handleAddSeance = async (e: React.FormEvent) => {
@@ -234,29 +541,155 @@ export default function DetailPlanningPage() {
       ...seanceForm,
       nb_tours: Number(seanceForm.nb_tours),
       recup_tours: Number(seanceForm.recup_tours),
+      tps_recup_exo_default: Number(seanceForm.tps_recup_exo_default),
+      type_effort_exo_default: toFirestoreEffort(seanceForm.type_effort_exo_default),
+      tps_effort_exo_default: Number(seanceForm.tps_effort_exo_default),
+      intensite_circuit_planifie: Number(seanceForm.intensite_circuit_planifie),
       ref_planning: doc(db, 'planning_pro', id) as any,
       ref_users: doc(db, 'users', currentUser.uid) as any,
-      num_circuit: 1,
+      num_circuit: Number(seanceForm.num_circuit),
       avancement_circuit: 0,
-    })
+      nb_exercice: 0,
+      date_create: Timestamp.now(),
+    } as any)
     setShowSeanceModal(false)
+    setSeanceForm({
+      type_seance: 'Circuit classique', partie_seance: 'Corps de séance',
+      observations_seance: '', nb_tours: 3, recup_tours: 30, tps_recup_exo_default: 5,
+      type_effort_exo_default: 'Durée (sec)', tps_effort_exo_default: 30, intensite_circuit_planifie: 0,
+      num_circuit: 1,
+    })
+  }
+
+  const openEditSeance = (s: any) => {
+    setEditSeanceItem(s)
+    setEditSeanceForm({
+      type_seance: s.type_seance || 'Circuit classique',
+      partie_seance: s.partie_seance || 'Corps de séance',
+      observations_seance: s.observations_seance || '',
+      nb_tours: s.nb_tours ?? 3,
+      recup_tours: s.recup_tours ?? 30,
+      tps_recup_exo_default: s.tps_recup_exo_default ?? 5,
+      type_effort_exo_default: fromFirestoreEffort(s.type_effort_exo_default || 'Durée (sec)'),
+      tps_effort_exo_default: s.tps_effort_exo_default ?? 30,
+      intensite_circuit_planifie: s.intensite_circuit_planifie ?? 0,
+      num_circuit: s.num_circuit ?? 1,
+    })
+    setShowEditSeanceModal(true)
+  }
+
+  const handleEditSeance = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editSeanceItem) return
+    await updateSeance(editSeanceItem.id, {
+      ...editSeanceForm,
+      nb_tours: Number(editSeanceForm.nb_tours),
+      recup_tours: Number(editSeanceForm.recup_tours),
+      tps_recup_exo_default: Number(editSeanceForm.tps_recup_exo_default),
+      type_effort_exo_default: toFirestoreEffort(editSeanceForm.type_effort_exo_default),
+      tps_effort_exo_default: Number(editSeanceForm.tps_effort_exo_default),
+      intensite_circuit_planifie: Number(editSeanceForm.intensite_circuit_planifie),
+      num_circuit: Number(editSeanceForm.num_circuit),
+    } as any)
+    setShowEditSeanceModal(false)
+    setEditSeanceItem(null)
+  }
+
+  const handleMoveSeance = async (seanceId: string, direction: 'up' | 'down') => {
+    const sorted = [...seances].sort((a, b) => ((a as any).num_circuit || 0) - ((b as any).num_circuit || 0))
+    const idx = sorted.findIndex(s => s.id === seanceId)
+    if (direction === 'up' && idx === 0) return
+    if (direction === 'down' && idx === sorted.length - 1) return
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    const a = sorted[idx]
+    const b = sorted[swapIdx]
+    const numA = (a as any).num_circuit ?? idx + 1
+    const numB = (b as any).num_circuit ?? swapIdx + 1
+    await Promise.all([
+      updateSeance(a.id, { num_circuit: numB } as any),
+      updateSeance(b.id, { num_circuit: numA } as any),
+    ])
+  }
+
+  const handleDeleteSeance = async (seanceId: string) => {
+    await deleteSeance(seanceId)
+    setDeleteSeanceConfirm(null)
   }
 
   const handleSubmitQuestionnaire = async (e: React.FormEvent) => {
     e.preventDefault()
-    await updatePlanning(id, { ...questionnaireForm, questionnaire_rempli: true } as any)
-    setShowQuestionnaireDirectModal(false)
+    const indice_hooper =
+      questionnaireForm.qualite_sommeil +
+      questionnaireForm.niveau_fatigue +
+      questionnaireForm.niveau_courbatures +
+      questionnaireForm.quantite_stress
+    try {
+      await updatePlanning(id, {
+        qualite_sommeil: questionnaireForm.qualite_sommeil,
+        niveau_fatigue: questionnaireForm.niveau_fatigue,
+        niveau_courbatures: questionnaireForm.niveau_courbatures,
+        quantite_stress: questionnaireForm.quantite_stress,
+        motivation_avant_seance: questionnaireForm.motivation_avant_seance,
+        activite_derniers_jours: questionnaireForm.activite_derniers_jours,
+        alimentation_derniers_jours: questionnaireForm.alimentation_derniers_jours,
+        infos_complementaire_avant_seance_client: questionnaireForm.infos_complementaire_avant_seance_client,
+        questionnaire_rempli: true,
+        indice_hooper,
+      } as any)
+      setShowQuestionnaireDirectModal(false)
+    } catch (err: any) {
+      alert(`Erreur lors de l'enregistrement : ${err?.message ?? 'inconnue'}`)
+    }
   }
 
-  const handleSavePlanif = async () => {
-    await updatePlanning(id, { intensite_seance_planifiee: intensitePlanifiee } as any)
-    setShowPlanifModal(false)
+  const openBilanClient = () => {
+    setBilanMotivationClient((planning as any)?.motivation_pdt_seance ?? 0)
+    setBilanIntensiteMiseClient((planning as any)?.intensite_mise_pdt_seance ?? 0)
+    setBilanClientIntensity((planning as any)?.intensite_seance ?? 0)
+    setShowBilanClientModal(true)
   }
 
   const handleSendSMS = () => {
-    const lien = `${window.location.origin}/questionnaire/${id}`
-    const message = `Bonjour, merci de remplir votre questionnaire de forme avant notre séance : ${lien}`
-    window.open(`sms:?body=${encodeURIComponent(message)}`, '_blank')
+    const phone = client?.phone_number || ''
+    const debut = (planning as any)?.heure_planning_debut?.toDate?.()
+    const heure = debut
+      ? `${String(debut.getHours()).padStart(2, '0')}h${String(debut.getMinutes()).padStart(2, '0')}`
+      : ''
+    const adresse = planning?.adresse_rdv || ''
+    const typePlanning = ((planning as any)?.type_planning || 'Séance') as string
+    const isSeance = typePlanning.toLowerCase().includes('séance')
+
+    let message = `Bonjour,\n\nRappel de ton rendez-vous aujourd'hui${heure ? ` à ${heure}` : ''}.`
+    if (adresse) message += `\nLieu de séance : ${adresse}.`
+    if (isSeance) {
+      const lien = `${window.location.origin}/questionnaire/${id}`
+      message += `\n\nMerci de remplir ton questionnaire de forme avant la séance :\n${lien}`
+    }
+    message += `\n\nBonne journée\n\nTeddy`
+
+    const smsUrl = phone
+      ? `sms:${phone}?body=${encodeURIComponent(message)}`
+      : `sms:?body=${encodeURIComponent(message)}`
+    window.open(smsUrl, '_blank')
+  }
+
+  const handleAddToCalendar = async () => {
+    if (!planning) return
+    try {
+      const debut = (planning.heure_planning_debut as any)?.toDate()
+      const fin = (planning.heure_planning_fin as any)?.toDate()
+      if (!debut || !fin) return
+      await addToCalendar(RDV_CAL_ID, {
+        summary: `${(planning as any).type_planning || 'Séance'} — ${client ? [client.nom, client.prenom].filter(Boolean).join(" ") : 'Client'}`,
+        start: debut,
+        end: fin,
+        location: planning.adresse_rdv || '',
+        description: planning.observations_rdv || '',
+      })
+      alert('Événement ajouté à Google Agenda !')
+    } catch (err: any) {
+      alert(`Erreur Google Agenda : ${err?.message ?? 'inconnue'}`)
+    }
   }
 
   if (!planning) {
@@ -268,35 +701,98 @@ export default function DetailPlanningPage() {
   }
 
   const etat = getEtatBadgeLocal(planning.etat_planning_rdv)
+  const indiceHooper = (planning as any).indice_hooper
+  const adresse = planning.adresse_rdv
+
+  const displayName = client
+    ? [client.nom, client.prenom].filter(Boolean).join(" ")
+    : clientRecord
+      ? [clientRecord.nom, clientRecord.prenom].filter(Boolean).join(" ")
+      : null
+
+  const debutDate = (planning.heure_planning_debut as any)?.toDate?.()
+  const finDate = (planning.heure_planning_fin as any)?.toDate?.()
+  const durationMin = debutDate && finDate ? Math.round((finDate.getTime() - debutDate.getTime()) / 60000) : null
+  const chargePlanifiee = durationMin && (planning as any).intensite_seance_planifiee
+    ? durationMin * (planning as any).intensite_seance_planifiee : null
+  const chargeRessenti = durationMin && (planning as any).intensite_seance > 0
+    ? durationMin * (planning as any).intensite_seance : null
+
+  const phoneNumber = client?.phone_number || clientRecord?.telephone || null
+  const urgenceNom = client?.contactUrgenceNom || clientRecord?.contactUrgenceNom || null
+  const urgenceTel = client?.contactUrgenceTel || clientRecord?.contactUrgenceTel || null
+  const urgenceRelation = client?.contactUrgenceRelation || clientRecord?.contactUrgenceRelation || null
+  const wazeLink = adresse ? `https://waze.com/ul?q=${encodeURIComponent(adresse)}&navigate=yes` : null
+  const mapsLink = adresse ? `https://maps.google.com/?q=${encodeURIComponent(adresse)}` : null
+  const lastWithCr = derniersRdv.find((r) => r.cr_rdv_moi || r.cr_rdv_client)
+
+  const isSC = ((planning as any).type_planning ?? '').includes('S&C')
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
 
-      {/* En-tête */}
+      {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => router.push('/planning')} className="p-2 rounded-lg hover:bg-gray-100 transition">
           <ArrowLeftIcon className="w-5 h-5 text-gray-600" />
         </button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-800">Détail du RDV</h1>
-          <p className="text-sm text-gray-500 capitalize">{formatDate(planning.date_planning as any)}</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl font-bold text-gray-800 truncate">
+            {displayName ?? 'Détail du RDV'}
+          </h1>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <p className="text-sm text-gray-500 capitalize">{formatDate(planning.date_planning as any)}</p>
+            {rdvSequence && (
+              <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-medium">
+                RDV {rdvSequence.index}/{rdvSequence.total}
+              </span>
+            )}
+          </div>
         </div>
-        <button onClick={openEdit} className="p-2 rounded-lg hover:bg-gray-100 transition text-blue-600">
-          <PencilIcon className="w-5 h-5" />
-        </button>
-        <button onClick={() => setShowDeleteConfirm(true)} className="p-2 rounded-lg hover:bg-red-50 transition text-red-500">
-          <TrashIcon className="w-5 h-5" />
-        </button>
+        {isAdmin && (
+          <>
+            <button onClick={openEdit} className="p-2 rounded-lg hover:bg-gray-100 transition text-blue-600">
+              <PencilIcon className="w-5 h-5" />
+            </button>
+            <button onClick={() => setShowDeleteConfirm(true)} className="p-2 rounded-lg hover:bg-red-50 transition text-red-500">
+              <TrashIcon className="w-5 h-5" />
+            </button>
+          </>
+        )}
       </div>
+
+      {/* ─── INFORMATIONS ─── */}
+      <SectionSep label="Informations" />
 
       {/* Infos RDV */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3">
         {client && (
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-500">Client</span>
-            <span className="text-sm font-semibold text-blue-600">👤 {client.prenom} {client.nom}</span>
+            <span className="text-sm font-semibold text-blue-600">{client.prenom} {client.nom}</span>
           </div>
         )}
+        {((planning as any).participants_supplementaires as any[])?.filter((p: any) => p.ref_users).map((p: any, i: number) => {
+          const pu = users.find((u) => u.id === (p.ref_users?.id || p.ref_users?.path?.split('/').pop()))
+          return pu ? (
+            <div key={i} className="flex items-center justify-between gap-2">
+              <span className="text-sm text-gray-500 shrink-0">Participant {i + 2}</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm font-semibold text-blue-600 truncate">{pu.prenom} {pu.nom}</span>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveParticipant(i)}
+                    className="shrink-0 p-0.5 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition"
+                    title="Retirer ce participant"
+                  >
+                    <XMarkIcon className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : null
+        })}
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-500">Horaire</span>
           <span className="text-sm font-semibold text-gray-800">
@@ -313,13 +809,46 @@ export default function DetailPlanningPage() {
             <span className="text-sm text-gray-800">{(planning as any).type_planning}</span>
           </div>
         )}
-        {planning.adresse_rdv && (
+        {(planning as any).mode_rdv && (planning as any).mode_rdv !== 'Présentiel' && (
           <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-500">Adresse</span>
-            <span className="text-sm text-gray-800 text-right max-w-[60%]">📍 {planning.adresse_rdv}</span>
+            <span className="text-sm text-gray-500">Mode</span>
+            <span className="text-sm font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{(planning as any).mode_rdv}</span>
           </div>
         )}
-        {Array.isArray((planning as any).materiel) && (planning as any).materiel.length > 0 && (
+        {adresse && (
+          <div>
+            <span className="text-sm text-gray-500 block mb-1">Adresse</span>
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-gray-800">{adresse}</p>
+                {isAdmin && ((planning as any).distance_km != null || (planning as any).temps_route) && (
+                  <p className="text-xs text-blue-600 font-medium mt-0.5">
+                    {(planning as any).distance_km != null ? `${(planning as any).distance_km} km` : ''}
+                    {(planning as any).distance_km != null && (planning as any).temps_route ? ' · ' : ''}
+                    {(planning as any).temps_route || ''}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-1.5 flex-shrink-0">
+                {wazeLink && (
+                  <a href={wazeLink} target="_blank" rel="noreferrer"
+                    className="flex items-center gap-1 text-xs bg-sky-500 text-white px-2.5 py-1 rounded-lg hover:bg-sky-600 transition">
+                    <MapPinIcon className="w-3.5 h-3.5" />
+                    Waze
+                  </a>
+                )}
+                {mapsLink && (
+                  <a href={mapsLink} target="_blank" rel="noreferrer"
+                    className="flex items-center gap-1 text-xs bg-red-500 text-white px-2.5 py-1 rounded-lg hover:bg-red-600 transition">
+                    <GlobeAltIcon className="w-3.5 h-3.5" />
+                    Maps
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {isAdmin && Array.isArray((planning as any).materiel) && (planning as any).materiel.length > 0 && (
           <div>
             <span className="text-sm text-gray-500 block mb-1">Matériel</span>
             <div className="flex flex-wrap gap-1">
@@ -329,136 +858,636 @@ export default function DetailPlanningPage() {
             </div>
           </div>
         )}
-        {planning.observations_rdv && (
-          <div>
-            <span className="text-sm text-gray-500 block mb-1">Observations</span>
-            <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3">{planning.observations_rdv}</p>
-          </div>
-        )}
-        {(planning as any).cr_rdv_moi && (
-          <div>
-            <span className="text-sm text-gray-500 block mb-1">Commentaire coach</span>
-            <p className="text-sm text-gray-800 bg-blue-50 rounded-lg p-3">{(planning as any).cr_rdv_moi}</p>
-          </div>
-        )}
-        {(planning as any).cr_rdv_client && (
-          <div>
-            <span className="text-sm text-gray-500 block mb-1">Commentaire client</span>
-            <p className="text-sm text-gray-800 bg-green-50 rounded-lg p-3">{(planning as any).cr_rdv_client}</p>
-          </div>
-        )}
       </div>
 
-      {/* Changement rapide d'état */}
-      <div>
-        <p className="text-sm font-semibold text-gray-600 mb-2">Changer l'état</p>
-        <div className="flex flex-wrap gap-2">
-          {ETATS.map((e) => (
-            <button key={e} onClick={() => handleEtatChange(e)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition border ${
-                planning.etat_planning_rdv === e
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {e}
-            </button>
-          ))}
+      {/* Coordonnées client */}
+      {(client || clientRecord) && (phoneNumber || client?.email || clientRecord?.email || urgenceNom) && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3">
+          <p className="text-sm font-medium text-gray-700">Coordonnées</p>
+          {phoneNumber && (
+            <div className="flex items-center gap-2">
+              <PhoneIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <span className="text-sm text-gray-700 flex-1">{phoneNumber}</span>
+              <div className="flex gap-1.5">
+                <a href={`tel:${phoneNumber}`}
+                  className="inline-flex items-center text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition">
+                  Appel
+                </a>
+                <a href={`sms:${phoneNumber}`}
+                  className="inline-flex items-center text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition">
+                  SMS
+                </a>
+              </div>
+            </div>
+          )}
+          {(client?.email || clientRecord?.email) && (
+            <div className="flex items-center gap-2">
+              <EnvelopeIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <span className="text-sm text-gray-700 flex-1 break-all">{client?.email || clientRecord?.email}</span>
+              <a href={`mailto:${client?.email || clientRecord?.email}`}
+                className="inline-flex items-center text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-gray-700 text-white hover:bg-gray-800 transition flex-shrink-0">
+                Mail
+              </a>
+            </div>
+          )}
+          {!phoneNumber && !client?.email && !clientRecord?.email && !urgenceNom && (
+            <p className="text-sm text-gray-400 italic">Aucune coordonnée renseignée</p>
+          )}
+          {urgenceNom && !isSC && (
+            <div className="border-t border-dashed border-gray-100 pt-3">
+              <button
+                onClick={() => setShowUrgence(v => !v)}
+                className="flex items-center justify-between w-full text-left gap-2"
+              >
+                <p className="text-xs font-medium text-gray-500">
+                  Contact d'urgence — {urgenceNom}{urgenceRelation ? ` (${urgenceRelation})` : ''}
+                </p>
+                <ChevronDownIcon className={`w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform ${showUrgence ? 'rotate-180' : ''}`} />
+              </button>
+              {showUrgence && urgenceTel && (
+                <div className="flex items-center gap-2 mt-2">
+                  <PhoneIcon className="w-4 h-4 text-orange-400 flex-shrink-0" />
+                  <span className="text-sm text-gray-700 flex-1">{urgenceTel}</span>
+                  <div className="flex gap-1.5">
+                    <a href={`tel:${urgenceTel}`}
+                      className="inline-flex items-center text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition">
+                      Appel
+                    </a>
+                    <a href={`sms:${urgenceTel}`}
+                      className="inline-flex items-center text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition">
+                      SMS
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+      )}
+
+      {/* ─── FICHE CLIENT ─── */}
+      {clientRecord && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div
+            onClick={() => setShowFicheClient((v) => !v)}
+            className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition cursor-pointer"
+          >
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <span className="text-sm font-semibold text-gray-700">Fiche client</span>
+              {clientRecord.objectifs && clientRecord.objectifs.length > 0 && (
+                <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">{clientRecord.objectifs.length} objectif{clientRecord.objectifs.length > 1 ? 's' : ''}</span>
+              )}
+              {clientRecord.antecedentsMedicaux && clientRecord.antecedentsMedicaux.length > 0 && (
+                <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-medium">{clientRecord.antecedentsMedicaux.length} antécédent{clientRecord.antecedentsMedicaux.length > 1 ? 's' : ''}</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+              {isAdmin && (
+                <button
+                  onClick={() => setShowEditFiche(true)}
+                  className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                  title="Modifier la fiche client"
+                >
+                  <PencilIcon className="w-4 h-4" />
+                </button>
+              )}
+              {showFicheClient ? <ChevronUpIcon className="w-4 h-4 text-gray-400" /> : <ChevronDownIcon className="w-4 h-4 text-gray-400" />}
+            </div>
+          </div>
+          {showFicheClient && (
+            <div className="px-5 pb-5 space-y-4 border-t border-gray-100 pt-4">
+              {/* Objectifs */}
+              {clientRecord.objectifs && clientRecord.objectifs.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Objectifs</p>
+                  <div className="space-y-1.5">
+                    {clientRecord.objectifs.map((o, i) => (
+                      <div key={i} className="flex items-start gap-2 bg-green-50 border border-green-100 rounded-xl px-3 py-2">
+                        <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${o.priorite === 'Primaire' ? 'bg-blue-500' : 'bg-gray-300'}`} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800">{o.texte}</p>
+                          {o.donneeChiffree && <p className="text-xs text-gray-500">{o.donneeChiffree}</p>}
+                          {o.commentaire && <p className="text-xs text-gray-400 italic mt-0.5">{o.commentaire}</p>}
+                        </div>
+                        {o.dateObjectif && <span className="text-xs text-gray-400 shrink-0">avant le {new Date(o.dateObjectif).toLocaleDateString('fr-FR')}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Antécédents médicaux */}
+              {clientRecord.antecedentsMedicaux && clientRecord.antecedentsMedicaux.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Antécédents médicaux</p>
+                  <div className="space-y-1.5">
+                    {clientRecord.antecedentsMedicaux.map((a, i) => (
+                      <div key={i} className={`rounded-xl border px-3 py-2 ${a.estContreIndication ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-medium text-gray-800">{a.description}</span>
+                            {a.estContreIndication && <span className="ml-2 text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-medium">Contre-indication</span>}
+                            {a.estChronique && <span className="ml-1 text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-medium">Chronique</span>}
+                          </div>
+                          {(a.anneeDebut || a.anneeFin) && (
+                            <span className="text-xs text-gray-400 shrink-0">{a.anneeDebut || '?'}{a.anneeFin ? ` → ${a.anneeFin}` : ''}</span>
+                          )}
+                        </div>
+                        {a.zonesCorps && a.zonesCorps.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {a.zonesCorps.map((z) => <span key={z} className="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full">{z}</span>)}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Profil sport */}
+              {!isSC && (clientRecord.sportPratique || clientRecord.niveauSportif) && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Profil sportif</p>
+                  <p className="text-sm text-gray-700">
+                    {clientRecord.sportPratique}{clientRecord.niveauSportif ? ` · ${clientRecord.niveauSportif}` : ''}
+                  </p>
+                </div>
+              )}
+              {/* Antécédents sportifs */}
+              {!isSC && clientRecord.antecedentsSportifs && clientRecord.antecedentsSportifs.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Historique sportif</p>
+                  <div className="space-y-1">
+                    {clientRecord.antecedentsSportifs.map((s, i) => (
+                      <div key={i} className="text-sm text-gray-700">
+                        <span className="font-medium">{s.sport}</span>
+                        {(s.anneeDebut || s.anneeFin) && <span className="text-gray-400 ml-2 text-xs">{s.anneeDebut || '?'}{s.anneeFin ? ` → ${s.anneeFin}` : ' → en cours'}</span>}
+                        {s.niveau && <span className="text-gray-400 ml-1 text-xs">· {s.niveau}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!clientRecord.objectifs?.length && !clientRecord.antecedentsMedicaux?.length && !clientRecord.sportPratique && !clientRecord.antecedentsSportifs?.length && (
+                <p className="text-sm text-gray-400 italic">Aucune information complémentaire renseignée.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      <ClientEditModal
+        client={clientRecord}
+        isOpen={showEditFiche}
+        onClose={() => setShowEditFiche(false)}
+      />
+
+      {/* ─── ÉTAT & STATUT (admin) ─── */}
+      {isAdmin && (
+        <>
+          <SectionSep label="État & statut" />
+
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-2">État du RDV</p>
+              <div className="flex flex-wrap gap-2">
+                {ETATS.map((e) => (
+                  <button key={e} onClick={() => setPendingEtat(e)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition border ${
+                      planning.etat_planning_rdv === e
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={handleToggleRdvPret}
+                className={`flex-1 py-2 rounded-xl text-xs font-semibold transition border ${
+                  (planning as any).rdv_pret === 'Oui'
+                    ? 'bg-green-500 text-white border-green-500'
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {(planning as any).rdv_pret === 'Oui' ? '✓ RDV prêt' : 'RDV prêt ?'}
+              </button>
+              <button onClick={handleToggleRdvEffectue}
+                className={`flex-1 py-2 rounded-xl text-xs font-semibold transition border ${
+                  (planning as any).rdv_effectue === 'Effectué'
+                    ? 'bg-sky-500 text-white border-sky-500'
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {(planning as any).rdv_effectue === 'Effectué' ? '✓ Séance effectuée' : 'Séance effectuée ?'}
+              </button>
+            </div>
+          </div>
+
+          <button onClick={handleAddToCalendar}
+            className="w-full flex items-center justify-center gap-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium py-2.5 rounded-xl hover:bg-gray-50 transition">
+            <GlobeAltIcon className="w-4 h-4 text-blue-500" />
+            Ajouter à Google Agenda
+          </button>
+        </>
+      )}
+
+      {/* ─── AVANT SÉANCE ─── */}
+      {!isSC && <SectionSep label="Avant séance" />}
 
       {/* Questionnaire de forme */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      {!isSC && <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-gray-700">Questionnaire de forme</p>
-            {(planning as any).questionnaire_rempli
-              ? <p className="text-xs text-green-600 mt-0.5 font-medium">✓ Rempli</p>
-              : <p className="text-xs text-orange-500 mt-0.5">⏳ Non rempli</p>
-            }
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {(planning as any).questionnaire_rempli ? (
+                <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">
+                  ✓ Rempli
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-semibold px-2.5 py-0.5 rounded-full">
+                  <ClockIcon className="w-3 h-3" />
+                  Non rempli
+                </span>
+              )}
+              {indiceHooper != null && (
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                  indiceHooper <= 12 ? 'bg-green-100 text-green-700' :
+                  indiceHooper <= 18 ? 'bg-yellow-100 text-yellow-700' :
+                  'bg-red-100 text-red-700'
+                }`}>
+                  Hooper {indiceHooper}
+                </span>
+              )}
+              {moyenneHooper != null && (
+                <span className="text-xs text-gray-400">moy. {moyenneHooper}</span>
+              )}
+            </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap justify-end">
             {(planning as any).questionnaire_rempli && (
               <button onClick={() => setShowQuestionnaireModal(true)}
                 className="text-xs text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition">
                 Voir
               </button>
             )}
-            <button onClick={openQuestionnaireDirect}
-              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
-              Remplir
-            </button>
-            <button onClick={handleSendSMS}
-              className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition">
-              SMS
-            </button>
+            {isAdmin ? (
+              <>
+                <button onClick={openQuestionnaireDirect}
+                  className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
+                  {(planning as any).questionnaire_rempli ? 'Modifier' : 'Remplir'}
+                </button>
+                <button onClick={handleSendSMS}
+                  className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition">
+                  Rappel rdv
+                </button>
+              </>
+            ) : (
+              (() => {
+                const rdvFin = (planning as any).heure_planning_fin?.toDate?.()
+                const canEdit = rdvFin && new Date() <= rdvFin
+                return canEdit ? (
+                  <button onClick={openQuestionnaireDirect}
+                    className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
+                    {(planning as any).questionnaire_rempli ? 'Modifier' : 'Remplir'}
+                  </button>
+                ) : null
+              })()
+            )}
           </div>
         </div>
-      </div>
+        {(planning as any).infos_complementaire_avant_seance_client && (
+          <div className="mt-3">
+            <p className="text-xs text-gray-500 mb-1">Informations complémentaires</p>
+            <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3">{(planning as any).infos_complementaire_avant_seance_client}</p>
+          </div>
+        )}
+      </div>}
 
-      {/* Planification séance */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-gray-700">Planification séance</p>
-            {(planning as any).intensite_seance_planifiee
-              ? <p className="text-xs text-blue-600 mt-0.5">Intensité planifiée : {(planning as any).intensite_seance_planifiee}/10</p>
-              : <p className="text-xs text-gray-400 mt-0.5">Non planifiée</p>
-            }
+      {/* ─── COMPTE RENDU & BILANS (admin) ─── */}
+      {isAdmin && (
+        <>
+          <SectionSep label="Compte rendu & bilans" />
+
+          {/* CR de RDV + Commentaires */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+
+            {/* Compte rendu */}
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Compte rendu</p>
+                  {(planning as any).observations_rdv
+                    ? <p className="text-xs text-green-600">✓ Renseigné</p>
+                    : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full">✗ Non renseigné</span>
+                  }
+                </div>
+                <button onClick={() => { setCrValue((planning as any)?.observations_rdv || ''); setShowCrModal(true) }}
+                  className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition shrink-0">
+                  {(planning as any).observations_rdv ? 'Modifier' : 'Rédiger'}
+                </button>
+              </div>
+              {(planning as any).observations_rdv && (
+                <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3 mt-2 whitespace-pre-wrap">{(planning as any).observations_rdv}</p>
+              )}
+            </div>
+
+            <div className="border-t border-dashed border-gray-200" />
+
+            {/* Commentaire coach */}
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Commentaire coach</p>
+                  {(planning as any).cr_rdv_moi
+                    ? <p className="text-xs text-green-600">✓ Renseigné</p>
+                    : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full">✗ Non renseigné</span>
+                  }
+                </div>
+                <button onClick={() => { setCrCoachValue((planning as any)?.cr_rdv_moi || ''); setShowCrCoachModal(true) }}
+                  className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition shrink-0">
+                  {(planning as any).cr_rdv_moi ? 'Modifier' : 'Rédiger'}
+                </button>
+              </div>
+              {(planning as any).cr_rdv_moi && (
+                <p className="text-sm text-gray-800 bg-blue-50 rounded-lg p-3 mt-2 whitespace-pre-wrap">{(planning as any).cr_rdv_moi}</p>
+              )}
+            </div>
+
+            <div className="border-t border-dashed border-gray-200" />
+
+            {/* Commentaire client */}
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Commentaire client</p>
+                  {(planning as any).cr_rdv_client
+                    ? <p className="text-xs text-green-600">✓ Renseigné</p>
+                    : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full">✗ Non renseigné</span>
+                  }
+                </div>
+                <button onClick={() => { setCrClientValue((planning as any)?.cr_rdv_client || ''); setShowCrClientModal(true) }}
+                  className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition shrink-0">
+                  {(planning as any).cr_rdv_client ? 'Modifier' : 'Rédiger'}
+                </button>
+              </div>
+              {(planning as any).cr_rdv_client && (
+                <p className="text-sm text-gray-800 bg-green-50 rounded-lg p-3 mt-2 whitespace-pre-wrap">{(planning as any).cr_rdv_client}</p>
+              )}
+            </div>
+
           </div>
-          <button onClick={openPlanif}
-            className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
-            Planifier
-          </button>
+
+          {/* Planification & Bilan séance */}
+          {!isSC && <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Planification</p>
+                {(planning as any).intensite_seance_planifiee
+                  ? <p className="text-sm font-medium text-blue-600">RPE planifié : {(planning as any).intensite_seance_planifiee}/10</p>
+                  : <p className="text-xs text-gray-400">Non planifiée</p>
+                }
+              </div>
+              <button onClick={() => { setIntensitePlanifiee((planning as any)?.intensite_seance_planifiee || 1); setShowPlanifModal(true) }}
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
+                {(planning as any).intensite_seance_planifiee ? 'Modifier' : 'Planifier'}
+              </button>
+            </div>
+            {(planning as any).intensite_seance_planifiee && (planning as any).intensite_seance > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-center gap-4 bg-gray-50 rounded-xl px-4 py-3">
+                  <div className="text-center">
+                    <p className="text-xs text-gray-400 mb-0.5">RPE planifié</p>
+                    <p className={`text-xl font-bold ${rpeColor((planning as any).intensite_seance_planifiee)}`}>
+                      {(planning as any).intensite_seance_planifiee}<span className="text-sm font-medium text-gray-400">/10</span>
+                    </p>
+                    {chargePlanifiee != null && (
+                      <p className="text-xs font-semibold text-blue-600 mt-0.5">{chargePlanifiee} UA</p>
+                    )}
+                  </div>
+                  <ChevronRightIcon className="w-5 h-5 text-gray-300 shrink-0" />
+                  <div className="text-center">
+                    <p className="text-xs text-gray-400 mb-0.5">RPE ressenti</p>
+                    <p className={`text-xl font-bold ${rpeColor((planning as any).intensite_seance)}`}>
+                      {(planning as any).intensite_seance}<span className="text-sm font-medium text-gray-400">/10</span>
+                    </p>
+                    {chargeRessenti != null && (
+                      <p className="text-xs font-semibold text-green-600 mt-0.5">{chargeRessenti} UA</p>
+                    )}
+                  </div>
+                </div>
+                {chargePlanifiee != null && chargeRessenti != null && (() => {
+                  const delta = chargeRessenti - chargePlanifiee
+                  return (
+                    <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-500">
+                      <span>Δ charge</span>
+                      <span className={`font-semibold ${Math.abs(delta) > 50 ? 'text-red-500' : delta === 0 ? 'text-gray-500' : 'text-gray-700'}`}>
+                        {delta > 0 ? '+' : ''}{delta} UA
+                      </span>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+            <div className="border-t border-dashed border-gray-200" />
+            <div>
+              <div className="flex items-center justify-between mb-3 gap-2">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Bilan client</p>
+                <button onClick={openBilanClient}
+                  className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition">
+                  {(planning as any).motivation_pdt_seance ? 'Modifier' : 'Remplir'}
+                </button>
+              </div>
+              <div className="space-y-2">
+                {(planning as any).motivation_pdt_seance ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Motivation pendant séance</span>
+                    <span className={`text-xs font-bold ${scale5Color((planning as any).motivation_pdt_seance)}`}>
+                      {(planning as any).motivation_pdt_seance}/5 — {MOTIV_LABELS[((planning as any).motivation_pdt_seance) - 1]}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Motivation pendant séance</span>
+                    <span className="text-xs text-gray-300">—</span>
+                  </div>
+                )}
+                {(planning as any).intensite_mise_pdt_seance ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Intensité mise</span>
+                    <span className={`text-xs font-bold ${scale5Color((planning as any).intensite_mise_pdt_seance)}`}>
+                      {(planning as any).intensite_mise_pdt_seance}/5 — {INTENSITE_MISE_LABELS[((planning as any).intensite_mise_pdt_seance) - 1]}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Intensité mise</span>
+                    <span className="text-xs text-gray-300">—</span>
+                  </div>
+                )}
+                {(planning as any).intensite_seance != null && (planning as any).intensite_seance > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">RPE client</span>
+                    <span className={`text-xs font-bold ${rpeColor((planning as any).intensite_seance)}`}>
+                      {(planning as any).intensite_seance}/10 — {RPE_LABELS[((planning as any).intensite_seance) - 1]?.split(' — ').slice(1).join(' — ')}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">RPE client</span>
+                    <span className="text-xs text-gray-300">—</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>}
+        </>
+      )}
+
+      {/* Mon bilan de séance (client non-admin) */}
+      {!isAdmin && !isSC && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Mon bilan de séance</p>
+              {(planning as any).motivation_pdt_seance
+                ? <p className="text-xs text-green-600 mt-0.5">✓ Rempli</p>
+                : <p className="text-xs text-gray-400 mt-0.5">Non renseigné</p>
+              }
+            </div>
+            <button onClick={openBilanClient}
+              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
+              {(planning as any).motivation_pdt_seance ? 'Modifier' : 'Remplir'}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Notes client */}
-      {clientId && notesClient.length > 0 && (
+      {isAdmin && clientId && (
         <section>
-          <h2 className="text-base font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            Notes client
-            {notesActives.length > 0 && (
-              <span className="bg-orange-500 text-white text-xs px-2 py-0.5 rounded-full">
-                {notesActives.length} active(s)
-              </span>
-            )}
-          </h2>
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <h2 className="text-base font-semibold text-gray-700 flex items-center gap-2">
+              Notes client
+              {notesActives.length > 0 && (
+                <span className="bg-orange-500 text-white text-xs px-2 py-0.5 rounded-full">{notesActives.length} active(s)</span>
+              )}
+            </h2>
+            <button
+              onClick={() => {
+                const j7 = new Date(); j7.setDate(j7.getDate() + 7)
+                setEditNoteItem(null)
+                setAddNoteForm({ type_note: 'Observation', notes: '', date_max_note_active: `${j7.getFullYear()}-${String(j7.getMonth()+1).padStart(2,'0')}-${String(j7.getDate()).padStart(2,'0')}` })
+                setShowNoteModal(true)
+              }}
+              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 transition">
+              <PlusIcon className="w-3.5 h-3.5" />
+              Ajouter
+            </button>
+          </div>
           <div className="space-y-2">
-            {notesClient.slice(0, 3).map((note) => {
-              const isActive = !note.date_max_note_active ||
-                (note.date_max_note_active as any).toDate() >= new Date()
+            {notesActives.length === 0 && notesExpirees.length === 0 && (
+              <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center">
+                <p className="text-gray-400 text-sm">Aucune note pour ce client</p>
+              </div>
+            )}
+            {notesActives.map((note) => {
+              const s = getNoteTypeStyle(note.type_note)
               return (
-                <div key={note.id}
-                  className={`rounded-xl border p-3 ${isActive ? 'bg-orange-50 border-orange-200' : 'bg-gray-50 border-gray-100 opacity-60'}`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${isActive ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-500'}`}>
-                      {note.type_note}
-                    </span>
-                    {isActive && <span className="text-xs text-orange-600 font-medium">● Active</span>}
+                <div key={note.id} className={`rounded-xl border p-3 ${s.card}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.badge}`}>{note.type_note}</span>
+                      <span className={`text-xs font-medium ${s.dot}`}>● Active</span>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={() => {
+                        const dateMax = note.date_max_note_active?.toDate?.()
+                        setEditNoteItem(note)
+                        setAddNoteForm({ type_note: note.type_note || 'Observation', notes: note.notes || '', date_max_note_active: dateMax ? `${dateMax.getFullYear()}-${String(dateMax.getMonth()+1).padStart(2,'0')}-${String(dateMax.getDate()).padStart(2,'0')}` : '' })
+                        setShowNoteModal(true)
+                      }} className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-white/60 transition">
+                        <PencilIcon className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => setDeleteNoteConfirm(note.id)} className="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition">
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-800">{note.notes}</p>
+                  <p className="text-sm text-gray-800 mt-1.5">{note.notes}</p>
+                  {note.date_max_note_active && (
+                    <p className={`text-xs mt-1.5 ${s.meta}`}>
+                      Active jusqu'au {(note.date_max_note_active as any).toDate().toLocaleDateString('fr-FR')}
+                    </p>
+                  )}
                 </div>
               )
             })}
-            {notesClient.length > 3 && (
-              <button onClick={() => router.push('/notes')} className="text-xs text-blue-600 hover:underline">
-                Voir toutes les notes ({notesClient.length})
-              </button>
+            {notesExpirees.length > 0 && (
+              <>
+                <button
+                  onClick={() => setShowExpiredNotes((v) => !v)}
+                  className="text-xs text-gray-400 hover:text-gray-600 transition flex items-center gap-1 py-1">
+                  <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform ${showExpiredNotes ? 'rotate-90' : ''}`} />
+                  {showExpiredNotes ? 'Masquer' : 'Voir'} les notes expirées ({notesExpirees.length})
+                </button>
+                {showExpiredNotes && notesExpirees.map((note) => (
+                  <div key={note.id} className="rounded-xl border bg-white border-gray-200 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{note.type_note}</span>
+                        <span className="text-xs text-gray-400">Expirée</span>
+                        {note.date_max_note_active && (
+                          <span className="text-xs text-gray-400">
+                            · {(note.date_max_note_active as any).toDate().toLocaleDateString('fr-FR')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <button onClick={() => {
+                          const dateMax = note.date_max_note_active?.toDate?.()
+                          setEditNoteItem(note)
+                          setAddNoteForm({ type_note: note.type_note || 'Observation', notes: note.notes || '', date_max_note_active: dateMax ? `${dateMax.getFullYear()}-${String(dateMax.getMonth()+1).padStart(2,'0')}-${String(dateMax.getDate()).padStart(2,'0')}` : '' })
+                          setShowNoteModal(true)
+                        }} className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition">
+                          <PencilIcon className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => setDeleteNoteConfirm(note.id)} className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition">
+                          <TrashIcon className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-600 mt-1.5">{note.notes}</p>
+                  </div>
+                ))}
+              </>
             )}
           </div>
         </section>
       )}
 
       {/* Séances associées */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-semibold text-gray-700">Séances ({seances.length})</h2>
-          <button onClick={() => setShowSeanceModal(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">
-            <PlusIcon className="w-3.5 h-3.5" />
-            Créer une séance
-          </button>
+      {!isSC && <section>
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <h2 className="text-base font-semibold text-gray-700 shrink-0">Séances ({seances.length})</h2>
+          <div className="flex gap-2 flex-wrap justify-end">
+            <button onClick={() => router.push(`/seances/apercu/${id}`)}
+              className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">
+              Lancer la séance
+            </button>
+            {isAdmin && (
+              <button onClick={() => {
+                const nextNum = seances.length > 0 ? Math.max(...seances.map(s => (s as any).num_circuit || 0)) + 1 : 1
+                setSeanceForm(f => ({ ...f, num_circuit: nextNum }))
+                setShowSeanceModal(true)
+              }}
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">
+                <PlusIcon className="w-3.5 h-3.5" />
+                Créer
+              </button>
+            )}
+          </div>
         </div>
         {seances.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center">
@@ -467,53 +1496,345 @@ export default function DetailPlanningPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {seances.map((seance) => (
-              <div key={seance.id} onClick={() => router.push(`/seances/${seance.id}`)}
-                className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center justify-between cursor-pointer hover:shadow-md transition">
-                <div>
-                  <p className="text-sm font-semibold text-gray-800">{seance.type_seance}</p>
-                  <p className="text-xs text-gray-500">{seance.partie_seance} · {seance.nb_tours} tour(s)</p>
+            {[...seances].sort((a, b) => ((a as any).num_circuit || 0) - ((b as any).num_circuit || 0)).map((seance, idx, arr) => {
+              const isDone = ((seance as any).avancement_circuit ?? 0) >= 1
+              return (
+              <div key={seance.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                <div className="flex items-center justify-between gap-2">
+                  {isAdmin && (
+                    <div className="flex flex-col gap-0.5 shrink-0">
+                      <button onClick={() => handleMoveSeance(seance.id, 'up')} disabled={idx === 0}
+                        className="p-0.5 rounded text-gray-400 hover:text-gray-700 disabled:opacity-20 transition">
+                        <ChevronUpIcon className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleMoveSeance(seance.id, 'down')} disabled={idx === arr.length - 1}
+                        className="p-0.5 rounded text-gray-400 hover:text-gray-700 disabled:opacity-20 transition">
+                        <ChevronDownIcon className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                  <div
+                    className="flex-1 min-w-0 cursor-pointer"
+                    onClick={() => router.push(`/seances/${seance.id}?planningId=${id}`)}
+                  >
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-sm font-semibold text-gray-800">
+                        <span className="text-gray-400 font-normal mr-1">n°{(seance as any).num_circuit ?? idx + 1}</span>
+                        {seance.type_seance}
+                      </p>
+                      {isDone && (
+                        <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-medium">✓ Terminé</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      {seance.partie_seance} · {seance.nb_tours} tour(s)
+                      {(seance as any).tps_effort_exo_default ? ` · ${(seance as any).tps_effort_exo_default}${(seance as any).type_effort_exo_default === 'Durée (sec)' ? 's' : ' rép'}` : ''}
+                      {seance.recup_tours != null ? ` · récup tours ${seance.recup_tours}s` : ''}
+                      {(seance as any).tps_recup_exo_default != null && (seance as any).tps_recup_exo_default !== seance.recup_tours ? ` · récup exo ${(seance as any).tps_recup_exo_default}s` : ''}
+                    </p>
+                    {(seance as any).intensite_circuit_planifie > 0 && (
+                      <p className="text-xs text-blue-600 font-medium mt-0.5">RPE cible : {(seance as any).intensite_circuit_planifie}/10</p>
+                    )}
+                    {(seance as any).observations_seance && (
+                      <p className="text-xs text-gray-400 italic mt-0.5 truncate">{(seance as any).observations_seance}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {isAdmin && (
+                      <>
+                        <button
+                          onClick={() => openEditSeance(seance)}
+                          className="p-1.5 rounded-lg border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 transition"
+                          title="Modifier"
+                        >
+                          <PencilIcon className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteSeanceConfirm(seance.id)}
+                          className="p-1.5 rounded-lg border border-red-200 text-red-500 bg-red-50 hover:bg-red-100 transition"
+                          title="Supprimer"
+                        >
+                          <TrashIcon className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                    <ChevronRightIcon
+                      className="w-4 h-4 text-gray-400 cursor-pointer"
+                      onClick={() => router.push(`/seances/${seance.id}?planningId=${id}`)}
+                    />
+                  </div>
                 </div>
-                <ChevronRightIcon className="w-4 h-4 text-gray-400" />
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
-      </section>
+      </section>}
 
-      {/* Derniers RDV effectués */}
-      {derniersRdv.length > 0 && (
+      {/* Dernier compte rendu */}
+      {lastWithCr && (
+        <section>
+          <h2 className="text-base font-semibold text-gray-700 mb-3">Dernier compte rendu</h2>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-700">
+                  {lastWithCr.date_planning?.toDate().toLocaleDateString('fr-FR', {
+                    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+                  })}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {formatHeure(lastWithCr.heure_planning_debut)} → {formatHeure(lastWithCr.heure_planning_fin)}
+                  {lastWithCr.type_planning ? ` · ${lastWithCr.type_planning}` : ''}
+                </p>
+              </div>
+              <button
+                onClick={() => router.push(`/planning/${lastWithCr.id}`)}
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 transition cursor-pointer flex-shrink-0"
+              >
+                <ChevronRightIcon className="w-3.5 h-3.5" />
+                Voir ce RDV
+              </button>
+            </div>
+            {lastWithCr.cr_rdv_moi && (
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Coach</p>
+                <p className="text-sm text-gray-700 bg-gray-50 rounded-lg p-3 whitespace-pre-wrap line-clamp-4">
+                  {lastWithCr.cr_rdv_moi}
+                </p>
+              </div>
+            )}
+            {lastWithCr.cr_rdv_client && (
+              <div className={lastWithCr.cr_rdv_moi ? 'mt-2' : ''}>
+                <p className="text-xs text-gray-500 mb-1">Client</p>
+                <p className="text-sm text-gray-700 bg-green-50 rounded-lg p-3 whitespace-pre-wrap line-clamp-4">
+                  {lastWithCr.cr_rdv_client}
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Activités depuis le dernier RDV */}
+      {activitesSinceLastRdv.length > 0 && (
         <section>
           <h2 className="text-base font-semibold text-gray-700 mb-3">
-            Derniers RDV effectués avec {client?.prenom}
+            Activités depuis le dernier RDV
+            <span className="ml-2 text-xs font-normal text-gray-400">({activitesSinceLastRdv.length})</span>
           </h2>
           <div className="space-y-2">
-            {derniersRdv.map((rdv) => (
-              <div key={rdv.id} onClick={() => router.push(`/planning/${rdv.id}`)}
-                className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center justify-between cursor-pointer hover:shadow-md transition">
-                <div>
-                  <p className="text-sm font-semibold text-gray-800">
-                    {rdv.date_planning?.toDate().toLocaleDateString('fr-FR', {
-                      weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
-                    })}
+            {activitesSinceLastRdv.map((act) => (
+              <div key={act.id} className="bg-green-50 rounded-xl border border-green-200 p-3 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-green-800">{act.type_activite}</span>
+                    {act.heure_debut && (
+                      <span className="text-xs text-green-600">{act.heure_debut}{act.heure_fin ? ` → ${act.heure_fin}` : ''}</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {act.date_activite?.toDate?.()?.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    {act.distance_km ? ` · 📍 ${act.distance_km} km` : ''}
+                    {(act as any).calories ? ` · 🔥 ${(act as any).calories} kcal` : ''}
                   </p>
-                  <p className="text-xs text-gray-500">
-                    {formatHeure(rdv.heure_planning_debut)} → {formatHeure(rdv.heure_planning_fin)}
-                    {rdv.type_planning ? ` · ${rdv.type_planning}` : ''}
-                  </p>
+                  {act.notes && <p className="text-xs text-gray-400 italic mt-0.5">{act.notes}</p>}
                 </div>
-                <ChevronRightIcon className="w-4 h-4 text-gray-400" />
               </div>
             ))}
           </div>
         </section>
       )}
 
-      {/* ── MODALS ── */}
+      {/* Historique RDV */}
+      {(prochainsRdvClient.length > 0 || derniersRdv.length > 0) && (
+        <section className="space-y-4">
+          {prochainsRdvClient.length > 0 && (
+            <div>
+              <h2 className="text-base font-semibold text-gray-700 mb-3">
+                Prochains RDV — {client?.prenom}
+              </h2>
+              <div className="space-y-2">
+                {prochainsRdvClient.map((rdv) => (
+                  <div key={rdv.id} onClick={() => router.push(`/planning/${rdv.id}`)}
+                    className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center justify-between cursor-pointer hover:shadow-md transition">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">
+                        {rdv.date_planning?.toDate().toLocaleDateString('fr-FR', {
+                          weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+                        })}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatHeure(rdv.heure_planning_debut)} → {formatHeure(rdv.heure_planning_fin)}
+                        {rdv.type_planning ? ` · ${rdv.type_planning}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge label={getEtatBadgeLocal(rdv.etat_planning_rdv).label} variant={getEtatBadgeLocal(rdv.etat_planning_rdv).variant} />
+                      <ChevronRightIcon className="w-4 h-4 text-gray-400" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {derniersRdv.length > 0 && (
+            <div>
+              <h2 className="text-base font-semibold text-gray-700 mb-3">
+                Historique — {client?.prenom}
+              </h2>
+              <div className="space-y-2">
+                {derniersRdv.map((rdv) => (
+                  <div key={rdv.id} onClick={() => router.push(`/planning/${rdv.id}`)}
+                    className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center justify-between cursor-pointer hover:shadow-md transition">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">
+                        {rdv.date_planning?.toDate().toLocaleDateString('fr-FR', {
+                          weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+                        })}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatHeure(rdv.heure_planning_debut)} → {formatHeure(rdv.heure_planning_fin)}
+                        {rdv.type_planning ? ` · ${rdv.type_planning}` : ''}
+                      </p>
+                    </div>
+                    <ChevronRightIcon className="w-4 h-4 text-gray-400" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ─── MODALS ─── */}
 
       {/* Modal modification RDV */}
       <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Modifier le RDV" size="lg">
         <form onSubmit={handleEdit} className="space-y-4">
+          {/* Client */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Client</label>
+            <div className="relative mb-2">
+              <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input type="text" placeholder="Rechercher un client..." value={searchClientEdit}
+                onChange={(e) => setSearchClientEdit(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <select value={form.ref_client}
+              onChange={(e) => setForm({ ...form, ref_client: e.target.value, ref_database_user: '' })}
+              size={4} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">— Aucun client —</option>
+              {filteredUsersEdit.map((u) => (
+                <option key={u.id} value={u.id}>{u.prenom} {u.nom}{u.email ? ` — ${u.email}` : ''}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Abonnement */}
+          {clientDetails.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Abonnement</label>
+              <select value={form.ref_database_user} onChange={(e) => setForm({ ...form, ref_database_user: e.target.value })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">— Sélectionner —</option>
+                {(() => {
+                  const sorted = [...clientDetails].sort((a, b) => {
+                    const aActive = a.etat === 'Actif' ? 0 : 1
+                    const bActive = b.etat === 'Actif' ? 0 : 1
+                    if (aActive !== bActive) return aActive - bActive
+                    return ((b as any).date_debut?.seconds ?? 0) - ((a as any).date_debut?.seconds ?? 0)
+                  })
+                  const actifs = sorted.filter((d) => d.etat === 'Actif')
+                  const autres = sorted.filter((d) => d.etat !== 'Actif')
+                  const opt = (d: (typeof clientDetails)[number]) => (
+                    <option key={d.id} value={d.id}>
+                      {d.titre_abo || d.categorie_prestation || 'Abonnement sans titre'}
+                      {d.etat ? ` — ${d.etat}` : ''}
+                    </option>
+                  )
+                  return <>
+                    {actifs.length > 0 && <optgroup label="Actifs">{actifs.map(opt)}</optgroup>}
+                    {autres.length > 0 && <optgroup label="Inactifs / Terminés">{autres.map(opt)}</optgroup>}
+                  </>
+                })()}
+              </select>
+            </div>
+          )}
+
+          {/* Participants supplémentaires */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Participants supplémentaires</label>
+            {form.participants_supplementaires.length > 0 && (
+              <div className="space-y-1.5 mb-2">
+                {form.participants_supplementaires.map((p, i) => {
+                  const pc = users.find((u) => u.id === p.ref_client)
+                  const pAbo = (extraDetails[p.ref_client] || []).find((d: any) => d.id === p.ref_database_user)
+                  return (
+                    <div key={i} className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">{pc ? [pc.nom, pc.prenom].filter(Boolean).join(" ") : '—'}</p>
+                        {pAbo && <p className="text-xs text-gray-400">{(pAbo as any).titre_abo || (pAbo as any).categorie_prestation || 'Abonnement'}{(pAbo as any).etat ? ` — ${(pAbo as any).etat}` : ''}</p>}
+                      </div>
+                      <button type="button"
+                        onClick={() => setForm({ ...form, participants_supplementaires: form.participants_supplementaires.filter((_, j) => j !== i) })}
+                        className="p-1 text-gray-400 hover:text-red-500 transition">
+                        <XMarkIcon className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <div className="border border-dashed border-gray-200 rounded-xl p-3 space-y-2">
+              <p className="text-xs font-medium text-gray-500">Ajouter un participant</p>
+              <div className="relative">
+                <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input type="text" placeholder="Rechercher..." value={searchNewParticipant}
+                  onChange={(e) => setSearchNewParticipant(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <select value={newParticipant.ref_client} size={3}
+                onChange={(e) => { const v = e.target.value; setNewParticipant({ ref_client: v, ref_database_user: '' }); loadExtraDetails(v) }}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">— Sélectionner —</option>
+                {filteredUsersExtra
+                  .filter((u) => u.id !== clientId && !form.participants_supplementaires.some((p) => p.ref_client === u.id))
+                  .map((u) => <option key={u.id} value={u.id}>{u.prenom} {u.nom}</option>)}
+              </select>
+              {newParticipant.ref_client && (
+                <select value={newParticipant.ref_database_user}
+                  onChange={(e) => setNewParticipant({ ...newParticipant, ref_database_user: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">— Abonnement (optionnel) —</option>
+                  {(() => {
+                    const details = extraDetails[newParticipant.ref_client] || []
+                    const sorted = [...details].sort((a: any, b: any) => {
+                      const aA = a.etat === 'Actif' ? 0 : 1; const bA = b.etat === 'Actif' ? 0 : 1
+                      if (aA !== bA) return aA - bA
+                      return (b.date_debut?.seconds ?? 0) - (a.date_debut?.seconds ?? 0)
+                    })
+                    const actifs = sorted.filter((d: any) => d.etat === 'Actif')
+                    const autres = sorted.filter((d: any) => d.etat !== 'Actif')
+                    const opt = (d: any) => <option key={d.id} value={d.id}>{d.titre_abo || d.categorie_prestation || 'Abonnement sans titre'}{d.etat ? ` — ${d.etat}` : ''}</option>
+                    return <>{actifs.length > 0 && <optgroup label="Actifs">{actifs.map(opt)}</optgroup>}{autres.length > 0 && <optgroup label="Inactifs / Terminés">{autres.map(opt)}</optgroup>}</>
+                  })()}
+                </select>
+              )}
+              <button type="button" disabled={!newParticipant.ref_client}
+                onClick={() => {
+                  if (!newParticipant.ref_client) return
+                  setForm({ ...form, participants_supplementaires: [...form.participants_supplementaires, { ...newParticipant }] })
+                  setNewParticipant({ ref_client: '', ref_database_user: '' })
+                  setSearchNewParticipant('')
+                }}
+                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                <PlusIcon className="w-3.5 h-3.5" />
+                Ajouter ce participant
+              </button>
+            </div>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Type de RDV</label>
             <select value={form.type_planning} onChange={(e) => setForm({ ...form, type_planning: e.target.value })}
@@ -528,72 +1849,56 @@ export default function DetailPlanningPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
             <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+              className="w-full min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="min-w-0">
               <label className="block text-sm font-medium text-gray-700 mb-1">Début</label>
               <input type="time" value={form.heure_debut} onChange={(e) => setForm({ ...form, heure_debut: e.target.value })} required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+                className="w-full min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
-            <div>
+            <div className="min-w-0">
               <label className="block text-sm font-medium text-gray-700 mb-1">Fin</label>
               <input type="time" value={form.heure_fin} onChange={(e) => setForm({ ...form, heure_fin: e.target.value })} required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+                className="w-full min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mode de RDV</label>
+            <select value={form.mode_rdv} onChange={(e) => setForm({ ...form, mode_rdv: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {['Présentiel', 'Visioconférence', 'Appel téléphonique'].map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Adresse</label>
             <AdresseAutocomplete value={form.adresse_rdv} onChange={(val) => setForm({ ...form, adresse_rdv: val })} />
+            {form.adresse_rdv && (
+              <div className="mt-2 flex items-center gap-2">
+                <button type="button" onClick={handleCalculateDistance} disabled={calcDistance}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-50 transition font-medium">
+                  {calcDistance ? 'Calcul…' : 'Calculer temps de route'}
+                </button>
+                {(form.distance_km != null || form.temps_route) && (
+                  <span className="text-xs text-blue-600 font-medium">
+                    {form.distance_km != null ? `${form.distance_km} km` : ''}
+                    {form.distance_km != null && form.temps_route ? ' · ' : ''}
+                    {form.temps_route}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Matériel</label>
             <MaterielSelect value={form.materiel} onChange={(val) => setForm({ ...form, materiel: val })} />
           </div>
-          {clientDetails.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Abonnement</label>
-              <select value={form.ref_database_user} onChange={(e) => setForm({ ...form, ref_database_user: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">— Sélectionner —</option>
-                {clientDetails.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.titre_abo || d.categorie_prestation || 'Abonnement sans titre'}
-                    {d.etat ? ` — ${d.etat}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">État</label>
             <select value={form.etat_planning_rdv} onChange={(e) => setForm({ ...form, etat_planning_rdv: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
               {ETATS.map((e) => <option key={e} value={e}>{e}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Observations</label>
-            <textarea value={form.observations_rdv} onChange={(e) => setForm({ ...form, observations_rdv: e.target.value })}
-              rows={2} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Commentaire coach</label>
-            <textarea value={form.cr_rdv_moi} onChange={(e) => setForm({ ...form, cr_rdv_moi: e.target.value })}
-              rows={2} placeholder="Votre compte-rendu..."
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Commentaire client</label>
-            <textarea value={form.cr_rdv_client} onChange={(e) => setForm({ ...form, cr_rdv_client: e.target.value })}
-              rows={2} placeholder="Retour du client..."
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            />
           </div>
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={() => setShowEditModal(false)}
@@ -608,15 +1913,74 @@ export default function DetailPlanningPage() {
         </form>
       </Modal>
 
+      {/* Modal CR de RDV */}
+      <Modal isOpen={showCrModal} onClose={() => setShowCrModal(false)} title="Compte rendu de RDV" size="lg">
+        <div className="space-y-4">
+          <textarea value={crValue} onChange={(e) => setCrValue(e.target.value)}
+            rows={6} placeholder="Rédigez votre compte rendu..."
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+          <div className="flex gap-3">
+            <button onClick={() => setShowCrModal(false)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button onClick={async () => { await updatePlanning(id, { observations_rdv: crValue } as any); setShowCrModal(false) }}
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+              Enregistrer
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal commentaire coach */}
+      <Modal isOpen={showCrCoachModal} onClose={() => setShowCrCoachModal(false)} title="Commentaire coach" size="lg">
+        <div className="space-y-4">
+          <textarea value={crCoachValue} onChange={(e) => setCrCoachValue(e.target.value)}
+            rows={6} placeholder="Votre commentaire..."
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+          <div className="flex gap-3">
+            <button onClick={() => setShowCrCoachModal(false)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button onClick={async () => { await updatePlanning(id, { cr_rdv_moi: crCoachValue } as any); setShowCrCoachModal(false) }}
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+              Enregistrer
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal commentaire client */}
+      <Modal isOpen={showCrClientModal} onClose={() => setShowCrClientModal(false)} title="Commentaire client" size="lg">
+        <div className="space-y-4">
+          <textarea value={crClientValue} onChange={(e) => setCrClientValue(e.target.value)}
+            rows={6} placeholder="Retour du client..."
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+          <div className="flex gap-3">
+            <button onClick={() => setShowCrClientModal(false)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button onClick={async () => { await updatePlanning(id, { cr_rdv_client: crClientValue } as any); setShowCrClientModal(false) }}
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+              Enregistrer
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Modal planification */}
       <Modal isOpen={showPlanifModal} onClose={() => setShowPlanifModal(false)} title="Planification séance" size="lg">
         <div className="space-y-4">
-          <p className="text-sm text-gray-600">Définissez l'intensité prévue pour cette séance (RPE planifié).</p>
           <p className="text-sm font-semibold text-gray-700">
-            Intensité prévue : <span className="text-blue-600">{intensitePlanifiee}/10</span>
+            RPE planifié : <span className="text-blue-600">{intensitePlanifiee}/10</span>
           </p>
           <div className="space-y-2">
-            {['1 — Très très facile','2 — Très facile','3 — Facile','4 — Je sens un effort','5 — Ça commence à être dur','6 — Ça devient bien dur','7 — Dur','8 — Très dur','9 — Très très dur','10 — Tellement dur que je vais arrêter'].map((label, i) => {
+            {RPE_LABELS.map((label, i) => {
               const val = i + 1
               return (
                 <button key={val} type="button" onClick={() => setIntensitePlanifiee(val)}
@@ -631,12 +1995,12 @@ export default function DetailPlanningPage() {
               )
             })}
           </div>
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-3">
             <button onClick={() => setShowPlanifModal(false)}
               className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
               Annuler
             </button>
-            <button onClick={handleSavePlanif}
+            <button onClick={async () => { await updatePlanning(id, { intensite_seance_planifiee: intensitePlanifiee } as any); setShowPlanifModal(false) }}
               className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
               Enregistrer
             </button>
@@ -644,84 +2008,230 @@ export default function DetailPlanningPage() {
         </div>
       </Modal>
 
-      {/* Modal création séance */}
-      <Modal isOpen={showSeanceModal} onClose={() => setShowSeanceModal(false)} title="Créer une séance">
-        <form onSubmit={handleAddSeance} className="space-y-4">
+      {/* Modal bilan client */}
+      <Modal isOpen={showBilanClientModal} onClose={() => setShowBilanClientModal(false)} title="Bilan de fin de séance" size="lg">
+        <div className="space-y-5">
+
+          {/* Motivation pendant la séance */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Type de séance</label>
-            <select value={seanceForm.type_seance} onChange={(e) => setSeanceForm({ ...seanceForm, type_seance: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-              {TYPES_SEANCE.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Partie de séance</label>
-            <select value={seanceForm.partie_seance} onChange={(e) => setSeanceForm({ ...seanceForm, partie_seance: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-              {PARTIES_SEANCE.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nb tours</label>
-              <input type="number" min={1} value={seanceForm.nb_tours}
-                onChange={(e) => setSeanceForm({ ...seanceForm, nb_tours: Number(e.target.value) })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Récup (sec)</label>
-              <input type="number" min={0} value={seanceForm.recup_tours}
-                onChange={(e) => setSeanceForm({ ...seanceForm, recup_tours: Number(e.target.value) })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+            <p className="text-sm font-semibold text-gray-700 mb-1">Motivation</p>
+            <p className="text-xs text-gray-500 mb-2">Comment évaluez-vous votre motivation pendant la séance ?</p>
+            <div className="space-y-2">
+              {MOTIV_LABELS.map((label, i) => {
+                const val = i + 1
+                return (
+                  <button key={val} type="button" onClick={() => setBilanMotivationClient(val)}
+                    className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
+                      bilanMotivationClient === val
+                        ? 'bg-blue-600 text-white border-blue-600 font-medium'
+                        : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
+                    }`}
+                  >
+                    {val} — {label}
+                  </button>
+                )
+              })}
             </div>
           </div>
+
+          {/* Intensité mise */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Observations</label>
-            <textarea value={seanceForm.observations_seance}
-              onChange={(e) => setSeanceForm({ ...seanceForm, observations_seance: e.target.value })}
-              rows={3} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            />
+            <p className="text-sm font-semibold text-gray-700 mb-1">Intensité mise</p>
+            <p className="text-xs text-gray-500 mb-2">Quelle intensité avez-vous mise dans la séance ?</p>
+            <div className="space-y-2">
+              {INTENSITE_MISE_LABELS.map((label, i) => {
+                const val = i + 1
+                return (
+                  <button key={val} type="button" onClick={() => setBilanIntensiteMiseClient(val)}
+                    className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
+                      bilanIntensiteMiseClient === val
+                        ? 'bg-blue-600 text-white border-blue-600 font-medium'
+                        : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
+                    }`}
+                  >
+                    {val} — {label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* RPE */}
+          <div>
+            <p className="text-sm font-semibold text-gray-700 mb-1">Intensité ressentie (RPE)</p>
+            <p className="text-xs text-gray-500 mb-2">Comment évaluez-vous l'intensité globale de la séance ?</p>
+            <div className="space-y-2">
+              {RPE_LABELS.map((label, i) => {
+                const val = i + 1
+                return (
+                  <button key={val} type="button" onClick={() => setBilanClientIntensity(val)}
+                    className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
+                      bilanClientIntensity === val
+                        ? 'bg-blue-600 text-white border-blue-600 font-medium'
+                        : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button onClick={() => setShowBilanClientModal(false)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button onClick={async () => {
+              await updatePlanning(id, {
+                motivation_pdt_seance: bilanMotivationClient,
+                intensite_mise_pdt_seance: bilanIntensiteMiseClient,
+                intensite_seance: bilanClientIntensity,
+              } as any)
+              setShowBilanClientModal(false)
+            }}
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+              Enregistrer
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal note (ajout / modification) */}
+      <Modal isOpen={showNoteModal} onClose={() => setShowNoteModal(false)} title={editNoteItem ? 'Modifier la note' : 'Nouvelle note client'}>
+        <form onSubmit={async (e) => {
+          e.preventDefault()
+          if (!clientId) return
+          const payload: any = {
+            ref_users: doc(db, 'users', clientId),
+            notes: addNoteForm.notes,
+            type_note: addNoteForm.type_note,
+            date_max_note_active: addNoteForm.date_max_note_active
+              ? Timestamp.fromDate(new Date(addNoteForm.date_max_note_active))
+              : null,
+          }
+          if (editNoteItem) {
+            await updateNote(editNoteItem.id, payload)
+          } else {
+            await addNote({ ...payload, date_create: Timestamp.now() })
+          }
+          setShowNoteModal(false)
+        }} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+            <select value={addNoteForm.type_note} onChange={(e) => setAddNoteForm({ ...addNoteForm, type_note: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {[...NOTE_TYPES_BASE, ...customNoteTypes.filter((t) => !NOTE_TYPES_BASE.includes(t))]
+                .concat(addNoteForm.type_note && !NOTE_TYPES_BASE.includes(addNoteForm.type_note) && !customNoteTypes.includes(addNoteForm.type_note) ? [addNoteForm.type_note] : [])
+                .map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <div className="flex gap-2 mt-2">
+              <input
+                type="text"
+                value={newNoteType}
+                onChange={(e) => setNewNoteType(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  const t = newNoteType.trim()
+                  if (!t) return
+                  const updated = customNoteTypes.includes(t) ? customNoteTypes : [...customNoteTypes, t]
+                  setCustomNoteTypes(updated)
+                  try { localStorage.setItem(NOTE_TYPES_KEY, JSON.stringify(updated)) } catch {}
+                  setAddNoteForm({ ...addNoteForm, type_note: t })
+                  setNewNoteType('')
+                }}
+                placeholder="Nouveau type..."
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button type="button" onClick={() => {
+                const t = newNoteType.trim()
+                if (!t) return
+                const updated = customNoteTypes.includes(t) ? customNoteTypes : [...customNoteTypes, t]
+                setCustomNoteTypes(updated)
+                try { localStorage.setItem(NOTE_TYPES_KEY, JSON.stringify(updated)) } catch {}
+                setAddNoteForm({ ...addNoteForm, type_note: t })
+                setNewNoteType('')
+              }} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                <PlusIcon className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Note</label>
+            <textarea value={addNoteForm.notes} onChange={(e) => setAddNoteForm({ ...addNoteForm, notes: e.target.value })}
+              required rows={4} placeholder="Contenu de la note..."
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date d'expiration (optionnel)</label>
+            <input type="date" value={addNoteForm.date_max_note_active}
+              onChange={(e) => setAddNoteForm({ ...addNoteForm, date_max_note_active: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={() => setShowSeanceModal(false)}
+            <button type="button" onClick={() => setShowNoteModal(false)}
               className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
               Annuler
             </button>
             <button type="submit"
               className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
-              Créer
+              {editNoteItem ? 'Enregistrer' : 'Créer la note'}
             </button>
           </div>
         </form>
       </Modal>
 
+      {/* Modal suppression note */}
+      <Modal isOpen={!!deleteNoteConfirm} onClose={() => setDeleteNoteConfirm(null)} title="Supprimer cette note ?" size="sm">
+        <p className="text-sm text-gray-600 mb-4">Cette action est irréversible.</p>
+        <div className="flex gap-3">
+          <button onClick={() => setDeleteNoteConfirm(null)}
+            className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+            Annuler
+          </button>
+          <button onClick={() => deleteNoteConfirm && deleteNote(deleteNoteConfirm).then(() => setDeleteNoteConfirm(null))}
+            className="flex-1 bg-red-500 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition">
+            Supprimer
+          </button>
+        </div>
+      </Modal>
+
       {/* Modal voir questionnaire */}
       <Modal isOpen={showQuestionnaireModal} onClose={() => setShowQuestionnaireModal(false)} title="Questionnaire de forme" size="lg">
         <div className="space-y-3">
-          {[
-            { label: 'Sommeil', key: 'qualite_sommeil' },
-            { label: 'Fatigue', key: 'niveau_fatigue' },
-            { label: 'Courbatures', key: 'niveau_courbatures' },
-            { label: 'Stress', key: 'quantite_stress' },
-            { label: 'Motivation', key: 'motiv_avant_seance' },
-            { label: 'Activité', key: 'activite_avant_seance' },
-            { label: 'Alimentation', key: 'alimentation_avant_seance' },
-          ].map((item) => {
+          {QUESTIONS_FORME.map((item) => {
             const val = (planning as any)[item.key]
-            const color = val <= 2 ? 'text-green-600' : val <= 4 ? 'text-orange-500' : 'text-red-500'
+            const hooperKeys = ['qualite_sommeil', 'niveau_fatigue', 'niveau_courbatures', 'quantite_stress']
+            const isHooper = hooperKeys.includes(item.key)
+            const colorGood = isHooper ? val <= 2 : val >= 4
+            const colorBad = isHooper ? val >= 5 : val <= 2
+            const color = colorGood ? 'text-green-600' : colorBad ? 'text-red-500' : 'text-orange-500'
             return (
               <div key={item.key} className="flex items-center justify-between py-2 border-b border-gray-50">
                 <span className="text-sm text-gray-600">{item.label}</span>
-                <span className={`text-sm font-bold ${color}`}>{val || '—'}</span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-bold ${color}`}>{val || '—'}</span>
+                  {val && <span className="text-xs text-gray-400">{item.labels[val - 1]?.replace(/^\d+ — /, '')}</span>}
+                </div>
               </div>
             )
           })}
-          {(planning as any).commentaire_forme && (
+          {indiceHooper != null && (
+            <div className="pt-2 flex items-center justify-between border-t border-gray-100">
+              <span className="text-sm font-semibold text-gray-700">Indice Hooper</span>
+              <span className={`text-sm font-bold px-3 py-1 rounded-full ${
+                indiceHooper <= 12 ? 'bg-green-100 text-green-700' :
+                indiceHooper <= 18 ? 'bg-yellow-100 text-yellow-700' :
+                'bg-red-100 text-red-700'
+              }`}>{indiceHooper}/28</span>
+            </div>
+          )}
+          {(planning as any).infos_complementaire_avant_seance_client && (
             <div className="pt-2">
               <p className="text-sm text-gray-500 mb-1">Commentaire</p>
-              <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3">{(planning as any).commentaire_forme}</p>
+              <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3">{(planning as any).infos_complementaire_avant_seance_client}</p>
             </div>
           )}
         </div>
@@ -740,12 +2250,12 @@ export default function DetailPlanningPage() {
                   const isSelected = (questionnaireForm as any)[q.key] === val
                   return (
                     <button key={val} type="button"
-                      onClick={() => setQuestionnaireForm({ ...questionnaireForm, [q.key]: val })}
+                      onClick={() => setQuestionnaireForm((prev) => ({ ...prev, [q.key]: val }))}
                       className={`px-3 py-1.5 rounded-full text-xs font-medium transition border ${
                         isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
                       }`}
                     >
-                      {val} — {label}
+                      {label}
                     </button>
                   )
                 })}
@@ -754,8 +2264,9 @@ export default function DetailPlanningPage() {
           ))}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Commentaire</label>
-            <textarea value={questionnaireForm.commentaire_forme}
-              onChange={(e) => setQuestionnaireForm({ ...questionnaireForm, commentaire_forme: e.target.value })}
+            <textarea
+              value={questionnaireForm.infos_complementaire_avant_seance_client}
+              onChange={(e) => { const v = e.target.value; setQuestionnaireForm((prev) => ({ ...prev, infos_complementaire_avant_seance_client: v })) }}
               rows={3} placeholder="Maladie, douleurs ciblées..."
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
@@ -771,6 +2282,256 @@ export default function DetailPlanningPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal création circuit */}
+      <Modal isOpen={showSeanceModal} onClose={() => setShowSeanceModal(false)} title="Ajouter un circuit">
+        <form onSubmit={handleAddSeance} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Numéro du circuit</label>
+            <input type="number" min={1} value={seanceForm.num_circuit}
+              onChange={(e) => setSeanceForm({ ...seanceForm, num_circuit: Number(e.target.value) })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Partie de séance</label>
+            <select value={seanceForm.partie_seance}
+              onChange={(e) => setSeanceForm({ ...seanceForm, partie_seance: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {PARTIES_SEANCE.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type de circuit</label>
+            <select
+              value={seanceForm.type_seance}
+              onChange={(e) => {
+                const defaults = getSeanceCircuitDefaults(e.target.value)
+                setSeanceForm({ ...seanceForm, type_seance: e.target.value, ...defaults })
+              }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {TYPES_SEANCE_CIRCUIT.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nb tours</label>
+              <input type="number" min={1} value={seanceForm.nb_tours}
+                onChange={(e) => setSeanceForm({ ...seanceForm, nb_tours: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Récup entre tours (s)</label>
+              <input type="number" min={0} value={seanceForm.recup_tours}
+                onChange={(e) => setSeanceForm({ ...seanceForm, recup_tours: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type d'effort par défaut</label>
+            <select value={seanceForm.type_effort_exo_default}
+              onChange={(e) => setSeanceForm({ ...seanceForm, type_effort_exo_default: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {TYPES_EFFORT_SEANCE.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Effort par défaut {seanceForm.type_effort_exo_default === 'Durée (sec)' ? '(sec)' : '(rép)'}
+              </label>
+              <input type="number" min={0} value={seanceForm.tps_effort_exo_default}
+                onChange={(e) => setSeanceForm({ ...seanceForm, tps_effort_exo_default: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Récup par défaut (s)</label>
+              <input type="number" min={0} value={seanceForm.tps_recup_exo_default}
+                onChange={(e) => setSeanceForm({ ...seanceForm, tps_recup_exo_default: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              RPE cible{seanceForm.intensite_circuit_planifie > 0 && <span className="ml-1.5 text-blue-600 font-bold">{seanceForm.intensite_circuit_planifie}/10</span>}
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {[0,1,2,3,4,5,6,7,8,9,10].map((v) => (
+                <button key={v} type="button"
+                  onClick={() => setSeanceForm({ ...seanceForm, intensite_circuit_planifie: v })}
+                  className={`w-8 h-8 rounded-lg text-xs font-bold border transition ${
+                    seanceForm.intensite_circuit_planifie === v
+                      ? v === 0 ? 'bg-gray-400 text-white border-gray-400'
+                        : v >= 8 ? 'bg-red-500 text-white border-red-500'
+                        : v >= 4 ? 'bg-orange-400 text-white border-orange-400'
+                        : 'bg-green-500 text-white border-green-500'
+                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  {v === 0 ? '—' : v}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Observations</label>
+            <textarea value={seanceForm.observations_seance}
+              onChange={(e) => setSeanceForm({ ...seanceForm, observations_seance: e.target.value })}
+              rows={3} placeholder="Notes sur ce circuit..."
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={() => setShowSeanceModal(false)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button type="submit"
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+              Créer
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal modifier circuit */}
+      <Modal isOpen={showEditSeanceModal} onClose={() => setShowEditSeanceModal(false)} title="Modifier le circuit">
+        <form onSubmit={handleEditSeance} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Numéro du circuit</label>
+            <input type="number" min={1} value={editSeanceForm.num_circuit}
+              onChange={(e) => setEditSeanceForm({ ...editSeanceForm, num_circuit: Number(e.target.value) })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Partie de séance</label>
+            <select value={editSeanceForm.partie_seance}
+              onChange={(e) => setEditSeanceForm({ ...editSeanceForm, partie_seance: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {PARTIES_SEANCE.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type de circuit</label>
+            <select value={editSeanceForm.type_seance}
+              onChange={(e) => {
+                const defaults = getSeanceCircuitDefaults(e.target.value)
+                setEditSeanceForm({ ...editSeanceForm, type_seance: e.target.value, ...defaults })
+              }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {TYPES_SEANCE_CIRCUIT.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nb tours</label>
+              <input type="number" min={1} value={editSeanceForm.nb_tours}
+                onChange={(e) => setEditSeanceForm({ ...editSeanceForm, nb_tours: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Récup entre tours (s)</label>
+              <input type="number" min={0} value={editSeanceForm.recup_tours}
+                onChange={(e) => setEditSeanceForm({ ...editSeanceForm, recup_tours: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type d'effort par défaut</label>
+            <select value={editSeanceForm.type_effort_exo_default}
+              onChange={(e) => setEditSeanceForm({ ...editSeanceForm, type_effort_exo_default: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {TYPES_EFFORT_SEANCE.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Effort par défaut {editSeanceForm.type_effort_exo_default === 'Durée (sec)' ? '(sec)' : '(rép)'}
+              </label>
+              <input type="number" min={0} value={editSeanceForm.tps_effort_exo_default}
+                onChange={(e) => setEditSeanceForm({ ...editSeanceForm, tps_effort_exo_default: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Récup par défaut (s)</label>
+              <input type="number" min={0} value={editSeanceForm.tps_recup_exo_default}
+                onChange={(e) => setEditSeanceForm({ ...editSeanceForm, tps_recup_exo_default: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              RPE cible{editSeanceForm.intensite_circuit_planifie > 0 && <span className="ml-1.5 text-blue-600 font-bold">{editSeanceForm.intensite_circuit_planifie}/10</span>}
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {[0,1,2,3,4,5,6,7,8,9,10].map((v) => (
+                <button key={v} type="button"
+                  onClick={() => setEditSeanceForm({ ...editSeanceForm, intensite_circuit_planifie: v })}
+                  className={`w-8 h-8 rounded-lg text-xs font-bold border transition ${
+                    editSeanceForm.intensite_circuit_planifie === v
+                      ? v === 0 ? 'bg-gray-400 text-white border-gray-400'
+                        : v >= 8 ? 'bg-red-500 text-white border-red-500'
+                        : v >= 4 ? 'bg-orange-400 text-white border-orange-400'
+                        : 'bg-green-500 text-white border-green-500'
+                      : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  {v === 0 ? '—' : v}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Observations</label>
+            <textarea value={editSeanceForm.observations_seance}
+              onChange={(e) => setEditSeanceForm({ ...editSeanceForm, observations_seance: e.target.value })}
+              rows={3} placeholder="Notes sur ce circuit..."
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={() => setShowEditSeanceModal(false)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button type="submit"
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+              Enregistrer
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Confirmation suppression circuit */}
+      <Modal isOpen={!!deleteSeanceConfirm} onClose={() => setDeleteSeanceConfirm(null)} title="Supprimer ce circuit ?" size="sm">
+        <p className="text-sm text-gray-600 mb-4">Cette action est irréversible. Les exercices du circuit seront également supprimés.</p>
+        <div className="flex gap-3">
+          <button onClick={() => setDeleteSeanceConfirm(null)}
+            className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+            Annuler
+          </button>
+          <button onClick={() => deleteSeanceConfirm && handleDeleteSeance(deleteSeanceConfirm)}
+            className="flex-1 bg-red-500 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition">
+            Supprimer
+          </button>
+        </div>
+      </Modal>
+
+      {/* Confirmation changement d'état */}
+      <Modal isOpen={!!pendingEtat} onClose={() => setPendingEtat(null)} title="Changer l'état ?" size="sm">
+        <p className="text-sm text-gray-600 mb-4">
+          Passer ce RDV en <strong className="text-gray-800">{pendingEtat}</strong> ?
+        </p>
+        <div className="flex gap-3">
+          <button onClick={() => setPendingEtat(null)}
+            className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+            Annuler
+          </button>
+          <button onClick={() => pendingEtat && handleEtatChange(pendingEtat)}
+            className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+            Confirmer
+          </button>
+        </div>
       </Modal>
 
       {/* Confirmation suppression */}

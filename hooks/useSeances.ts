@@ -8,25 +8,31 @@ import { useAuth } from '@/context/AuthContext'
 import type { Seance } from '@/types'
 
 export function useSeances(planningId?: string) {
-  const { currentUser } = useAuth()
+  const { currentUser, userProfile } = useAuth()
   const [seances, setSeances] = useState<Seance[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!currentUser) return
 
-    const constraints: any[] = planningId
-      ? [where('ref_planning', '==', doc(db, 'planning_pro', planningId))]
-      : [where('ref_users', '==', doc(db, 'users', currentUser.uid))]
+    const isAdmin = userProfile?.role_app === 'Admin'
 
-    const q = query(collection(db, 'seance'), ...constraints)
+    let q
+    if (planningId) {
+      q = query(collection(db, 'seance'), where('ref_planning', '==', doc(db, 'planning_pro', planningId)))
+    } else if (isAdmin) {
+      // Admins see all seances
+      q = query(collection(db, 'seance'))
+    } else {
+      q = query(collection(db, 'seance'), where('ref_users', '==', doc(db, 'users', currentUser.uid)))
+    }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setSeances(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as Seance[])
       setLoading(false)
     })
     return unsubscribe
-  }, [currentUser, planningId])
+  }, [currentUser, planningId, userProfile])
 
   const addSeance = async (data: Omit<Seance, 'id'>) => {
     return await addDoc(collection(db, 'seance'), data)

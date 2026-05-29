@@ -6,15 +6,30 @@ import { MapPinIcon } from '@heroicons/react/24/outline'
 interface Suggestion {
   label: string
   value: string
+  adresse?: string
+  ville?: string
+  code_postal?: string
+  lat?: number
+  lng?: number
+}
+
+export interface SelectedAddress {
+  adresse: string
+  ville: string
+  code_postal: string
+  label: string
+  lat?: number
+  lng?: number
 }
 
 interface Props {
   value: string
   onChange: (value: string) => void
+  onSelectFull?: (data: SelectedAddress) => void
   placeholder?: string
 }
 
-export default function AdresseAutocomplete({ value, onChange, placeholder }: Props) {
+export default function AdresseAutocomplete({ value, onChange, onSelectFull, placeholder }: Props) {
   const [query, setQuery] = useState(value)
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -53,6 +68,11 @@ export default function AdresseAutocomplete({ value, onChange, placeholder }: Pr
         data.features.map((f: any) => ({
           label: f.properties.label,
           value: f.properties.label,
+          adresse: f.properties.name || f.properties.label,
+          ville: f.properties.city || '',
+          code_postal: f.properties.postcode || '',
+          lat: f.geometry?.coordinates?.[1],
+          lng: f.geometry?.coordinates?.[0],
         }))
       )
       setShowSuggestions(true)
@@ -73,6 +93,16 @@ export default function AdresseAutocomplete({ value, onChange, placeholder }: Pr
   const handleSelect = (suggestion: Suggestion) => {
     setQuery(suggestion.value)
     onChange(suggestion.value)
+    if (onSelectFull) {
+      onSelectFull({
+        adresse: suggestion.adresse ?? suggestion.value,
+        ville: suggestion.ville ?? '',
+        code_postal: suggestion.code_postal ?? '',
+        label: suggestion.label,
+        lat: suggestion.lat,
+        lng: suggestion.lng,
+      })
+    }
     setSuggestions([])
     setShowSuggestions(false)
   }

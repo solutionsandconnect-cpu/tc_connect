@@ -1,9 +1,14 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { signOut } from 'firebase/auth'
 import { useAuth } from '@/context/AuthContext'
+import { auth } from '@/lib/firebase'
 import Navbar from '@/components/layout/Navbar'
+import { UserIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
+
+type ImpersonationInfo = { adminName: string; targetName: string }
 
 export default function DashboardLayout({
   children,
@@ -12,12 +17,26 @@ export default function DashboardLayout({
 }) {
   const { currentUser, loading } = useAuth()
   const router = useRouter()
+  const [impersonation, setImpersonation] = useState<ImpersonationInfo | null>(null)
 
   useEffect(() => {
     if (!loading && !currentUser) {
       router.push('/login')
     }
   }, [currentUser, loading, router])
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('tc_impersonation')
+      if (stored) setImpersonation(JSON.parse(stored))
+    } catch {}
+  }, [])
+
+  const quitImpersonation = async () => {
+    localStorage.removeItem('tc_impersonation')
+    await signOut(auth)
+    router.push('/login')
+  }
 
   if (loading || !currentUser) {
     return (
@@ -32,11 +51,30 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navbar latérale sur desktop, bottom bar sur mobile */}
+      {/* Bandeau impersonation */}
+      {impersonation && (
+        <div className="fixed top-0 left-0 right-0 z-[60] bg-amber-500 text-white px-4 py-2.5 flex items-center justify-between shadow-md">
+          <div className="flex items-center gap-2 text-sm font-medium min-w-0">
+            <UserIcon className="w-4 h-4 shrink-0" />
+            <span className="truncate">
+              Mode impersonation — vous naviguez en tant que{' '}
+              <strong>{impersonation.targetName}</strong>
+            </span>
+          </div>
+          <button
+            onClick={quitImpersonation}
+            className="flex items-center gap-1.5 shrink-0 ml-3 text-xs font-semibold bg-white/25 hover:bg-white/40 px-3 py-1.5 rounded-lg transition"
+          >
+            <ArrowLeftIcon className="w-3.5 h-3.5" />
+            Quitter
+          </button>
+        </div>
+      )}
+
       <Navbar />
-      {/* Contenu principal */}
-      <main className="lg:ml-64 pb-20 lg:pb-0 min-h-screen">
-        <div className="max-w-6xl mx-auto px-4 py-6">
+
+      <main className={`lg:ml-64 pb-nav-safe lg:pb-0 min-h-screen overflow-x-hidden${impersonation ? ' pt-11' : ''}`}>
+        <div className="px-4 py-6 min-w-0">
           {children}
         </div>
       </main>

@@ -1,0 +1,426 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "team",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userref",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nom_equipe",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "joueurs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "equiperef",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "type",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nom_joueur",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "rpe",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "joueurref",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "rpe",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "joueurref",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "store_apps",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ordre",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "store_subscriptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "store_subscriptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userUid",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "seances_equipe",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "teamId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "date_planning",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "heure_planning_debut",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ref_users",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "refDatabaseUser",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "type_planning",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_planning",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "date_planning",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ref_users",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "heure_planning_debut",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "date_planning",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ref_users",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "etat_planning_rdv",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "heure_planning_debut",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ref_users",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "etat_planning_rdv",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_planning",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "heure_planning_debut",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "etat_client",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "role_app",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dernier_changement_etat",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "display_name",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ref_users",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_planning",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "seance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ref_planning",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "num_circuit",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ref_users",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_planning",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "exercices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "partie_prioritaire",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nom_exercice",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "programme_seance",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ref_seance",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "num_exercice",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "Notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "refUsers",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "etat_notification",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_create",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "database_users_details",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "refUsers",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_create",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "database_users_details",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "refUsers",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_debut",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "database_users_details",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "refUsers",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "etat",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_debut",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "notes_historique",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ref_users",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_create",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "refDatabaseUser",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_planning",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "planning_pro",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "refDatabaseUser",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "type_planning",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_planning",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "Notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "refUsers",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "etat_notification",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date_declenchement",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ]
+}

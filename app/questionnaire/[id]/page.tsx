@@ -1,9 +1,67 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import type { PainPoint } from '@/types'
+
+const ZONES_DOULEUR: { id: string; label: string }[] = [
+  { id: 'tete_cou', label: 'Tête / Cou' }, { id: 'nuque', label: 'Nuque' },
+  { id: 'epaule_g', label: 'Épaule G' }, { id: 'epaule_d', label: 'Épaule D' },
+  { id: 'thorax', label: 'Thorax' }, { id: 'bras_g', label: 'Bras G' },
+  { id: 'bras_d', label: 'Bras D' }, { id: 'av_bras_g', label: 'Avant-bras G' },
+  { id: 'av_bras_d', label: 'Avant-bras D' }, { id: 'abdomen', label: 'Abdomen' },
+  { id: 'lombaires', label: 'Lombaires' }, { id: 'hanches', label: 'Hanches' },
+  { id: 'fessier_g', label: 'Fessier G' }, { id: 'fessier_d', label: 'Fessier D' },
+  { id: 'cuisse_g', label: 'Cuisse G' }, { id: 'cuisse_d', label: 'Cuisse D' },
+  { id: 'genou_g', label: 'Genou G' }, { id: 'genou_d', label: 'Genou D' },
+  { id: 'mollet_g', label: 'Mollet G' }, { id: 'mollet_d', label: 'Mollet D' },
+]
+
+function PainBodySelector({ value, onChange }: { value: PainPoint[]; onChange: (v: PainPoint[]) => void }) {
+  const selMap = Object.fromEntries(value.map(p => [p.zone, p]))
+
+  const toggle = (id: string) => {
+    if (selMap[id]) onChange(value.filter(p => p.zone !== id))
+    else onChange([...value, { zone: id, intensite: 5, type: '' }])
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5">
+        {ZONES_DOULEUR.map(({ id, label }) => (
+          <button key={id} type="button" onClick={() => toggle(id)}
+            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition ${
+              selMap[id]
+                ? 'bg-red-500 text-white border-red-500'
+                : 'border-gray-300 text-gray-600 hover:border-red-300 hover:text-red-500'
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {value.length > 0 && (
+        <div className="space-y-2 mt-2">
+          {value.map((p) => {
+            const lbl = ZONES_DOULEUR.find(z => z.id === p.zone)?.label ?? p.zone
+            return (
+              <div key={p.zone} className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                <span className="text-sm text-gray-800 flex-1 font-medium">{lbl}</span>
+                <input type="range" min={1} max={10} value={p.intensite}
+                  onChange={(e) => onChange(value.map(x => x.zone === p.zone ? { ...x, intensite: Number(e.target.value) } : x))}
+                  className="w-24 accent-red-500" />
+                <span className="text-xs text-red-600 font-semibold w-10 text-right">{p.intensite}/10</span>
+                <button type="button" onClick={() => onChange(value.filter(x => x.zone !== p.zone))}
+                  className="text-gray-400 hover:text-red-500 text-sm ml-1">✕</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const QUESTIONS = [
   {
@@ -63,7 +121,7 @@ const QUESTIONS = [
     ],
   },
   {
-    key: 'motiv_avant_seance',
+    key: 'motivation_avant_seance',
     label: 'Motivation',
     question: "Comment évaluez-vous votre motivation à l'idée de faire la séance ?",
     labels: [
@@ -76,7 +134,7 @@ const QUESTIONS = [
     max: 5,
   },
   {
-    key: 'activite_avant_seance',
+    key: 'activite_derniers_jours',
     label: 'Activité',
     question: 'Comment évaluez-vous votre niveau d\'activité physique ces derniers jours ?',
     labels: [
@@ -89,7 +147,7 @@ const QUESTIONS = [
     max: 5,
   },
   {
-    key: 'alimentation_avant_seance',
+    key: 'alimentation_derniers_jours',
     label: 'Alimentation',
     question: 'Comment évaluez-vous votre alimentation ces derniers jours ?',
     labels: [
@@ -115,11 +173,12 @@ export default function QuestionnairePage() {
     niveau_fatigue: 1,
     niveau_courbatures: 1,
     quantite_stress: 1,
-    motiv_avant_seance: 1,
-    activite_avant_seance: 1,
-    alimentation_avant_seance: 1,
+    motivation_avant_seance: 1,
+    activite_derniers_jours: 1,
+    alimentation_derniers_jours: 1,
   })
   const [commentaire, setCommentaire] = useState('')
+  const [douleurs, setDouleurs] = useState<PainPoint[]>([])
 
   useEffect(() => {
     const fetch = async () => {
@@ -127,20 +186,17 @@ export default function QuestionnairePage() {
       if (snap.exists()) {
         const data = snap.data()
         setPlanning({ id: snap.id, ...data })
-        // Pré-remplir si déjà rempli
-        if (data.questionnaire_rempli) {
-          setSubmitted(true)
-        }
         setForm({
           qualite_sommeil: data.qualite_sommeil || 1,
           niveau_fatigue: data.niveau_fatigue || 1,
           niveau_courbatures: data.niveau_courbatures || 1,
           quantite_stress: data.quantite_stress || 1,
-          motiv_avant_seance: data.motiv_avant_seance || 1,
-          activite_avant_seance: data.activite_avant_seance || 1,
-          alimentation_avant_seance: data.alimentation_avant_seance || 1,
+          motivation_avant_seance: data.motivation_avant_seance || 1,
+          activite_derniers_jours: data.activite_derniers_jours || 1,
+          alimentation_derniers_jours: data.alimentation_derniers_jours || 1,
         })
-        setCommentaire(data.commentaire_forme || '')
+        setCommentaire(data.infos_complementaire_avant_seance_client || '')
+        setDouleurs(data.douleurs ?? [])
       }
       setLoading(false)
     }
@@ -150,13 +206,41 @@ export default function QuestionnairePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
-    await updateDoc(doc(db, 'planning_pro', id), {
-      ...form,
-      commentaire_forme: commentaire,
-      questionnaire_rempli: true,
-    })
-    setSubmitted(true)
-    setSubmitting(false)
+    const indice_hooper =
+      (form.qualite_sommeil || 0) +
+      (form.niveau_fatigue || 0) +
+      (form.niveau_courbatures || 0) +
+      (form.quantite_stress || 0)
+    try {
+      await updateDoc(doc(db, 'planning_pro', id), {
+        qualite_sommeil: form.qualite_sommeil,
+        niveau_fatigue: form.niveau_fatigue,
+        niveau_courbatures: form.niveau_courbatures,
+        quantite_stress: form.quantite_stress,
+        motivation_avant_seance: form.motivation_avant_seance,
+        activite_derniers_jours: form.activite_derniers_jours,
+        alimentation_derniers_jours: form.alimentation_derniers_jours,
+        infos_complementaire_avant_seance_client: commentaire,
+        douleurs: douleurs.length ? douleurs : [],
+        questionnaire_rempli: true,
+        indice_hooper,
+      })
+      setSubmitted(true)
+      fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toAdmins: true,
+          title: 'Questionnaire rempli',
+          body: 'Un client vient de remplir son questionnaire de forme.',
+          url: `/planning/${id}`,
+        }),
+      }).catch(() => {})
+    } catch (err: any) {
+      alert(`Erreur : ${err?.message ?? 'inconnue'}`)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   if (loading) {
@@ -188,6 +272,12 @@ export default function QuestionnairePage() {
           <p className="text-gray-500 text-sm">
             Votre questionnaire de forme a bien été enregistré. Votre coach en a été informé.
           </p>
+          <button
+            onClick={() => setSubmitted(false)}
+            className="mt-4 text-xs text-blue-500 hover:underline"
+          >
+            Modifier mes réponses
+          </button>
         </div>
       </div>
     )
@@ -206,6 +296,12 @@ export default function QuestionnairePage() {
             Pour chaque section, sélectionnez la réponse qui vous semble la plus appropriée.
           </p>
         </div>
+
+        {planning.questionnaire_rempli && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-6 text-sm text-blue-700">
+            Vos réponses sont déjà enregistrées. Vous pouvez les modifier ci-dessous.
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {QUESTIONS.map((q) => {
@@ -238,6 +334,13 @@ export default function QuestionnairePage() {
               </div>
             )
           })}
+
+          {/* Douleurs / localisation */}
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <h3 className="font-semibold text-gray-800 mb-1">Douleurs</h3>
+            <p className="text-sm text-gray-500 mb-4">Avez-vous des douleurs en ce moment ? Touchez les zones concernées sur le schéma.</p>
+            <PainBodySelector value={douleurs} onChange={setDouleurs} />
+          </div>
 
           {/* Commentaire libre */}
           <div className="bg-white rounded-2xl shadow-sm p-5">
