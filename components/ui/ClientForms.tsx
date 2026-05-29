@@ -484,7 +484,7 @@ export function MouvementsDetailSelector({ value, onChange }: { value: Mouvement
 
 // ── ObjectifsList ─────────────────────────────────────────────────────────────
 
-export function ObjectifsList({ value, onChange }: { value: Objectif[]; onChange: (v: Objectif[]) => void }) {
+export function ObjectifsList({ value, onChange, simple }: { value: Objectif[]; onChange: (v: Objectif[]) => void; simple?: boolean }) {
   const empty: Objectif = { texte: "", priorite: "Primaire", dateObjectif: "", donneeChiffree: "", commentaire: "" }
   const [form, setForm] = useState<Objectif>(empty)
   const [open, setOpen] = useState(false)

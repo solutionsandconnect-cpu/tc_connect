@@ -72,7 +72,8 @@ export const navSections = [
 ]
 
 // Flat list for accueil page grid and bottom bar
-export const navItems = navSections.flatMap((s) => s.items)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const navItems: any[] = navSections.flatMap((s) => s.items as any[])
 
 // Mobile bottom bar
 const mobileItems = [

@@ -192,7 +192,7 @@ export function Section({ title, children }: { title: string; children: React.Re
   )
 }
 
-export function Field({ label, children }: { label: string; children: React.ReactNode }) {
+export function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
