@@ -451,7 +451,7 @@ export interface PainPoint {
 }
 
 // Collection : abonnements
-export type AbonnementEtat = 'Prospect' | 'Actif' | 'Inactif'
+export type AbonnementEtat = 'Prospect' | 'Actif' | 'Inactif' | 'En attente' | 'Terminé' | 'Suspendu'
 
 export interface Abonnement {
   id: string
