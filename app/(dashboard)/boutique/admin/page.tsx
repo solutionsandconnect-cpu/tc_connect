@@ -129,7 +129,7 @@ export default function BoutiqueAdminPage() {
         periodicite: appForm.periodicite,
         actif: appForm.actif,
         ordre: Number(appForm.ordre) || 0,
-        route: appForm.route.trim() || null,
+        route: appForm.route.trim() || undefined,
         tags: appForm.tags.split(",").map((t) => t.trim()).filter(Boolean),
         createdBy: currentUser!.uid,
       };
