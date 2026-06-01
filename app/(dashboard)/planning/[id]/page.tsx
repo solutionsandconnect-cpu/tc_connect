@@ -2,13 +2,12 @@
 
 import { use, useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { Timestamp, doc, collection, query, where, getDocs } from 'firebase/firestore'
+import { Timestamp, doc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { usePlanning } from '@/hooks/usePlanning'
 import { useSeances } from '@/hooks/useSeances'
 import { useUsers } from '@/hooks/useUsers'
 import { useNotes } from '@/hooks/useNotes'
-import { useUserDetails } from '@/hooks/useUserDetails'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import AdresseAutocomplete from '@/components/ui/AdresseAutocomplete'
@@ -28,6 +27,10 @@ import type { Client } from '@/types'
 import ClientEditModal from '@/components/ui/ClientEditModal'
 
 const ETATS = ['Non calé', 'Calé', 'Annulé', 'Effectué']
+
+// Bornes de journée — comparer par jour (et non à la milliseconde près)
+const startOfDayMs = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime() }
+const endOfDayMs = (ms: number) => { const d = new Date(ms); d.setHours(23, 59, 59, 999); return d.getTime() }
 
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   try {
@@ -191,7 +194,51 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     _rC?.path?.split('/').pop() ||
     (typeof _rC === 'string' && _rC ? _rC.split('/').pop() : undefined)
   const client = users.find((u) => u.id === clientId)
-  const { details: clientDetails } = useUserDetails(clientId)
+
+  // Normalise un linkedUserId : "uid", "users/uid" ou référence { id }
+  const normUid = (v: any): string | null => {
+    if (!v) return null
+    if (typeof v === 'string') return v.includes('/') ? v.split('/').pop() ?? null : v
+    return v.id ?? v.path?.split('/').pop() ?? null
+  }
+
+  // Charger tous les abonnements du coach et les indexer par UID app + id client
+  const [allAbos, setAllAbos] = useState<any[]>([])
+  useEffect(() => {
+    if (!currentUser) return
+    getDocs(query(collection(db, 'abonnements'), where('userId', '==', currentUser.uid)))
+      .then((snap) => setAllAbos(snap.docs.map((d) => ({ id: d.id, ...d.data() as any }))))
+      .catch(() => setAllAbos([]))
+  }, [currentUser])
+
+  const clientAbonnements = useMemo(() => {
+    if (!clientId) return []
+    const emailToUid: Record<string, string> = {}
+    users.forEach((u) => { const e = (u as any).email?.toLowerCase?.(); if (e) emailToUid[e] = u.id })
+    // clientId → UID app (linkedUserId OU email)
+    const clientToUids: Record<string, Set<string>> = {}
+    allClients.forEach((c) => {
+      const set = new Set<string>()
+      const lu = normUid((c as any).linkedUserId); if (lu) set.add(lu)
+      const ce = (c as any).email?.toLowerCase?.(); if (ce && emailToUid[ce]) set.add(emailToUid[ce])
+      clientToUids[c.id] = set
+    })
+    let list = allAbos.filter((a) => a.clientId === clientId || clientToUids[a.clientId]?.has(clientId))
+    // Fallback 1 : RDV déjà lié à un abonnement
+    if (list.length === 0 && (planning as any)?.abonnementId) {
+      const abo = allAbos.find((a) => a.id === (planning as any).abonnementId)
+      if (abo) list = allAbos.filter((a) => a.clientId === abo.clientId)
+    }
+    // Fallback 2 : matcher par nom complet du compte
+    if (list.length === 0 && client) {
+      const fullName = [client.nom, client.prenom].filter(Boolean).join(' ').toLowerCase().trim()
+      if (fullName) {
+        const ids = new Set(allClients.filter((c) => [c.nom, c.prenom].filter(Boolean).join(' ').toLowerCase().trim() === fullName).map((c) => c.id))
+        list = allAbos.filter((a) => ids.has(a.clientId))
+      }
+    }
+    return list.sort((x, y) => (x.dateDebut?.toMillis?.() ?? 0) - (y.dateDebut?.toMillis?.() ?? 0))
+  }, [allAbos, allClients, clientId, users, planning, client])
 
   const notesClient = notes.filter((n) => {
     const refId = typeof n.ref_users === 'string' ? n.ref_users : (n.ref_users as any)?.id
@@ -271,18 +318,27 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   }, [clientId, id])
 
   useEffect(() => {
-    if (!planning) { setRdvSequence(null); return }
-    const getAboId = (p: any) =>
-      p?.refDatabaseUser?.id || p?.refDatabaseUser?.path?.split('/').pop() ||
-      p?.ref_database_user?.id || p?.ref_database_user?.path?.split('/').pop()
-    const aboId = getAboId(planning)
-    if (!aboId) { setRdvSequence(null); return }
+    if (!planning || !clientId) { setRdvSequence(null); return }
+    // Trouver la période d'abonnement (collection abonnements) qui contient ce RDV — comparaison par jour
+    const ms = startOfDayMs(((planning as any).date_planning?.seconds ?? 0) * 1000)
+    const aboStart = (a: any) => a.dateDebut?.toMillis ? startOfDayMs(a.dateDebut.toMillis()) : 0
+    const aboEnd = (a: any) => a.dateFin?.toMillis ? endOfDayMs(a.dateFin.toMillis()) : Infinity
+    const abo = clientAbonnements.find((a) => ms >= aboStart(a) && ms <= aboEnd(a))
+    if (!abo) { setRdvSequence(null); return }
+    const start = aboStart(abo)
+    const end = aboEnd(abo)
+    // Tous les RDVs du même client dans cette période
     const grouped = plannings
-      .filter((p) => getAboId(p) === aboId)
+      .filter((p) => {
+        const uid = (p as any).ref_users?.id || (p as any).ref_users?.path?.split('/').pop() || (p as any).ref_client?.id
+        if (uid !== clientId) return false
+        const pms = startOfDayMs(((p as any).date_planning?.seconds ?? 0) * 1000)
+        return pms >= start && pms <= end
+      })
       .sort((a, b) => ((a as any).date_planning?.seconds ?? 0) - ((b as any).date_planning?.seconds ?? 0))
     const idx = grouped.findIndex((p) => p.id === id)
     setRdvSequence(idx !== -1 && grouped.length > 1 ? { index: idx + 1, total: grouped.length } : null)
-  }, [planning, plannings, id])
+  }, [planning, plannings, id, clientId, clientAbonnements])
 
   // Modal states
   const [showEditModal, setShowEditModal] = useState(false)
@@ -347,6 +403,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
   const [extraDetails, setExtraDetails] = useState<Record<string, any[]>>({})
   const [newParticipant, setNewParticipant] = useState({ ref_client: '', ref_database_user: '' })
+
   const [searchNewParticipant, setSearchNewParticipant] = useState('')
 
   const loadExtraDetails = async (clientId: string) => {
@@ -380,7 +437,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     type_planning: 'Séance',
     mode_rdv: 'Présentiel',
     materiel: [] as string[],
-    ref_database_user: '',
+    abonnement_id: '',
     participants_supplementaires: [] as { ref_client: string; ref_database_user: string }[],
     distance_km: null as number | null,
     temps_route: '',
@@ -441,7 +498,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
       type_planning: (planning as any).type_planning || 'Séance',
       mode_rdv: (planning as any).mode_rdv || 'Présentiel',
       materiel: Array.isArray((planning as any).materiel) ? (planning as any).materiel : (planning as any).materiel ? [(planning as any).materiel] : [],
-      ref_database_user: (planning as any).refDatabaseUser?.id || '',
+      abonnement_id: (planning as any).abonnementId || '',
       participants_supplementaires: [],
       distance_km: (planning as any).distance_km ?? null,
       temps_route: (planning as any).temps_route || '',
@@ -499,7 +556,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     }
     if (form.distance_km != null) payload.distance_km = form.distance_km
     if (form.temps_route) payload.temps_route = form.temps_route
-    if (form.ref_database_user) payload.refDatabaseUser = doc(db, 'database_users_details', form.ref_database_user)
+    if (form.abonnement_id) payload.abonnementId = form.abonnement_id
     payload.participants_supplementaires = form.participants_supplementaires
       .filter((p) => p.ref_client)
       .map((p) => ({
@@ -1079,7 +1136,9 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                     : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
                 }`}
               >
-                {(planning as any).rdv_effectue === 'Effectué' ? '✓ Séance effectuée' : 'Séance effectuée ?'}
+                {(planning as any).rdv_effectue === 'Effectué'
+                  ? `✓ ${(planning as any).type_planning === 'Séance' ? 'Séance effectuée' : 'Rendez-vous effectué'}`
+                  : `${(planning as any).type_planning === 'Séance' ? 'Séance effectuée ?' : 'Rendez-vous effectué ?'}`}
               </button>
             </div>
           </div>
@@ -1195,25 +1254,27 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
             <div className="border-t border-dashed border-gray-200" />
 
-            {/* Commentaire coach */}
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Commentaire coach</p>
-                  {(planning as any).cr_rdv_moi
-                    ? <p className="text-xs text-green-600">✓ Renseigné</p>
-                    : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full">✗ Non renseigné</span>
-                  }
+            {/* Commentaire coach — visible uniquement par l'admin */}
+            {isAdmin && (
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Commentaire coach</p>
+                    {(planning as any).cr_rdv_moi
+                      ? <p className="text-xs text-green-600">✓ Renseigné</p>
+                      : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full">✗ Non renseigné</span>
+                    }
+                  </div>
+                  <button onClick={() => { setCrCoachValue((planning as any)?.cr_rdv_moi || ''); setShowCrCoachModal(true) }}
+                    className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition shrink-0">
+                    {(planning as any).cr_rdv_moi ? 'Modifier' : 'Rédiger'}
+                  </button>
                 </div>
-                <button onClick={() => { setCrCoachValue((planning as any)?.cr_rdv_moi || ''); setShowCrCoachModal(true) }}
-                  className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition shrink-0">
-                  {(planning as any).cr_rdv_moi ? 'Modifier' : 'Rédiger'}
-                </button>
+                {(planning as any).cr_rdv_moi && (
+                  <p className="text-sm text-gray-800 bg-blue-50 rounded-lg p-3 mt-2 whitespace-pre-wrap">{(planning as any).cr_rdv_moi}</p>
+                )}
               </div>
-              {(planning as any).cr_rdv_moi && (
-                <p className="text-sm text-gray-800 bg-blue-50 rounded-lg p-3 mt-2 whitespace-pre-wrap">{(planning as any).cr_rdv_moi}</p>
-              )}
-            </div>
+            )}
 
             <div className="border-t border-dashed border-gray-200" />
 
@@ -1649,7 +1710,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
       {/* Historique RDV */}
       {(prochainsRdvClient.length > 0 || derniersRdv.length > 0) && (
         <section className="space-y-4">
-          {prochainsRdvClient.length > 0 && (
+          {isAdmin && prochainsRdvClient.length > 0 && (
             <div>
               <h2 className="text-base font-semibold text-gray-700 mb-3">
                 Prochains RDV — {client?.prenom}
@@ -1722,7 +1783,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                 className="w-full border border-gray-200 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <select value={form.ref_client}
-              onChange={(e) => setForm({ ...form, ref_client: e.target.value, ref_database_user: '' })}
+              onChange={(e) => setForm({ ...form, ref_client: e.target.value, abonnement_id: '' })}
               size={4} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">— Aucun client —</option>
               {filteredUsersEdit.map((u) => (
@@ -1732,25 +1793,18 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
           </div>
 
           {/* Abonnement */}
-          {clientDetails.length > 0 && (
+          {clientAbonnements.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Abonnement</label>
-              <select value={form.ref_database_user} onChange={(e) => setForm({ ...form, ref_database_user: e.target.value })}
+              <select value={form.abonnement_id} onChange={(e) => setForm({ ...form, abonnement_id: e.target.value })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="">— Sélectionner —</option>
                 {(() => {
-                  const sorted = [...clientDetails].sort((a, b) => {
-                    const aActive = a.etat === 'Actif' ? 0 : 1
-                    const bActive = b.etat === 'Actif' ? 0 : 1
-                    if (aActive !== bActive) return aActive - bActive
-                    return ((b as any).date_debut?.seconds ?? 0) - ((a as any).date_debut?.seconds ?? 0)
-                  })
-                  const actifs = sorted.filter((d) => d.etat === 'Actif')
-                  const autres = sorted.filter((d) => d.etat !== 'Actif')
-                  const opt = (d: (typeof clientDetails)[number]) => (
-                    <option key={d.id} value={d.id}>
-                      {d.titre_abo || d.categorie_prestation || 'Abonnement sans titre'}
-                      {d.etat ? ` — ${d.etat}` : ''}
+                  const actifs = clientAbonnements.filter((a) => a.etat === 'Actif')
+                  const autres = clientAbonnements.filter((a) => a.etat !== 'Actif')
+                  const opt = (a: typeof clientAbonnements[number]) => (
+                    <option key={a.id} value={a.id}>
+                      N°{clientAbonnements.indexOf(a) + 1} — {a.categorie}{a.typeSuivi ? ` · ${a.typeSuivi}` : ''} ({a.etat})
                     </option>
                   )
                   return <>
@@ -1861,6 +1915,21 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
               <label className="block text-sm font-medium text-gray-700 mb-1">Fin</label>
               <input type="time" value={form.heure_fin} onChange={(e) => setForm({ ...form, heure_fin: e.target.value })} required
                 className="w-full min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              {form.heure_debut && (
+                <div className="flex gap-1 mt-1">
+                  {([15, 30, 60] as const).map((min) => {
+                    const [h, m] = form.heure_debut.split(':').map(Number)
+                    const total = h * 60 + m + min
+                    const fin = `${String(Math.floor(total / 60) % 24).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`
+                    return (
+                      <button key={min} type="button" onClick={() => setForm({ ...form, heure_fin: fin })}
+                        className="flex-1 text-xs py-0.5 rounded bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-500 transition">
+                        +{min < 60 ? `${min}min` : '1h'}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
           <div>

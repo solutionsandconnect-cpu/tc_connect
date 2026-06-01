@@ -341,6 +341,7 @@ export interface ContactSupplementaire {
   ville?: string
   telephone?: string
   email?: string
+  factureParDefaut?: boolean   // utiliser ces coordonnées par défaut pour la facturation
 }
 
 // Collection : clients (indépendant de Firebase Auth)
@@ -416,7 +417,8 @@ export interface Client {
   antecedentsMedicauxLegacy?: string
   contraindications?: string
   notes?: string
-  linkedUserId?: string     // Lien optionnel vers collection users (compte app)
+  linkedUserId?: string           // Lien optionnel vers collection users (compte app)
+  seanceAccessExpiry?: Timestamp  // Date d'expiration d'accès aux séances en ligne (après arrêt)
   actif: boolean
   createdAt: Timestamp
   updatedAt?: Timestamp
@@ -435,6 +437,7 @@ export interface Company {
   siret?: string
   tva?: string
   iban?: string
+  bic?: string
   logoUrl?: string
   mentionsLegales?: string
   couleurPrimaire?: string  // ex : "#2563eb"
@@ -481,7 +484,7 @@ export interface Abonnement {
 }
 
 // Collection : factures
-export type FactureStatus = 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled' | 'accepted' | 'rejected'
+export type FactureStatus = 'draft' | 'pending' | 'sent' | 'paid' | 'overdue' | 'cancelled' | 'accepted' | 'rejected'
 export type FactureType = 'facture' | 'devis'
 
 export interface FactureItem {
@@ -504,6 +507,7 @@ export interface EcheanceRef {
   montant: number  // montant de cette échéance uniquement
   index: number    // 0-based
   count: number    // nombre total d'échéances du devis
+  cumulPrecedent?: number  // somme des échéances précédentes (déjà réglées avant celle-ci)
 }
 
 export interface Facture {
@@ -523,7 +527,8 @@ export interface Facture {
   echeances?: Echeance[]
   echeanceRef?: EcheanceRef  // présent sur les factures issues d'un devis à échéancier
   notes?: string
-  date?: Timestamp                  // Date du document (modifiable)
+  date?: Timestamp                  // Date d'émission du document (modifiable)
+  dateEcheance?: Timestamp          // Date de paiement prévue (échéancier uniquement)
   devisRef?: string                 // ID du devis d'origine
   devisNumber?: string              // Numéro du devis d'origine
   signed?: boolean                  // Devis signé électroniquement
@@ -532,6 +537,7 @@ export interface Facture {
   pdfUrl?: string                    // URL Firebase Storage du PDF généré
   convertedToFactureId?: string      // Facture créée depuis ce devis (legacy single)
   convertedToFactureIds?: string[]   // Toutes les factures créées depuis ce devis
+  clientLinkedUserId?: string          // Firebase Auth UID du client (pour requêtes côté utilisateur)
   clientAddress?: string
   clientVille?: string
   clientCodePostal?: string
@@ -540,6 +546,9 @@ export interface Facture {
   factureAdresse?: string
   factureCodePostal?: string
   factureVille?: string
+  factureEmail?: string
+  paymentDate?: Timestamp
+  paymentMethod?: string
   createdAt?: Timestamp
   updatedAt?: Timestamp
 }

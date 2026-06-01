@@ -53,11 +53,12 @@ type TabKey = 'tous' | DocCategory
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<FactureStatus, string> = {
-  draft: 'Brouillon', sent: 'En attente', paid: 'Payée',
+  draft: 'Brouillon', pending: 'En attente', sent: 'Envoyé', paid: 'Payée',
   overdue: 'En retard', cancelled: 'Annulée', accepted: 'Accepté', rejected: 'Non validé',
 }
 const STATUS_COLOR: Record<FactureStatus, string> = {
   draft: 'bg-gray-100 text-gray-500',
+  pending: 'bg-yellow-100 text-yellow-700',
   sent: 'bg-blue-100 text-blue-700',
   paid: 'bg-green-100 text-green-700',
   overdue: 'bg-red-100 text-red-700',
@@ -418,33 +419,42 @@ export default function DocumentsPage() {
       const all: AnyDoc[] = []
 
       try {
-        // ── 1. Factures/devis via linked client ──────────────────────────────
-        const clientsSnap = await getDocs(
-          query(collection(db, 'clients'), where('linkedUserId', '==', currentUser!.uid))
-        )
-        const clientIds = clientsSnap.docs.map((d) => d.id)
+        // ── 1. Factures/devis — deux méthodes selon les droits Firestore ─────
+        const pushFacture = (d: any) => {
+          const data = d.data ? d.data() : d
+          if (!data.pdfUrl || data.status === 'draft' || data.status === 'cancelled') return
+          const ms = toMs(data.date ?? data.createdAt)
+          all.push({
+            id: d.id,
+            category: 'facturation',
+            docType: data.type as FactureType,
+            title: data.number,
+            date: ms,
+            dateLabel: fmtDate(ms),
+            status: data.status as FactureStatus,
+            total: data.total ?? 0,
+            pdfUrl: data.pdfUrl,
+          } satisfies FactureDoc)
+        }
 
-        if (clientIds.length > 0) {
-          for (const clientId of clientIds) {
-            const snap = await getDocs(
-              query(collection(db, 'factures'), where('clientId', '==', clientId))
+        // Méthode A : query directe par clientLinkedUserId (pas besoin d'accès à clients)
+        try {
+          const snap = await getDocs(
+            query(collection(db, 'factures'), where('clientLinkedUserId', '==', currentUser!.uid))
+          )
+          snap.docs.forEach(pushFacture)
+        } catch {
+          // Méthode B : via collection clients (fallback si règles le permettent)
+          try {
+            const clientsSnap = await getDocs(
+              query(collection(db, 'clients'), where('linkedUserId', '==', currentUser!.uid))
             )
-            snap.docs.forEach((d) => {
-              const data = d.data() as any
-              if (!data.pdfUrl || data.status === 'draft' || data.status === 'cancelled') return
-              const ms = toMs(data.date ?? data.createdAt)
-              all.push({
-                id: d.id,
-                category: 'facturation',
-                docType: data.type as FactureType,
-                title: data.number,
-                date: ms,
-                dateLabel: fmtDate(ms),
-                status: data.status as FactureStatus,
-                total: data.total ?? 0,
-                pdfUrl: data.pdfUrl,
-              } satisfies FactureDoc)
-            })
+            for (const c of clientsSnap.docs) {
+              const snap = await getDocs(query(collection(db, 'factures'), where('clientId', '==', c.id)))
+              snap.docs.forEach(pushFacture)
+            }
+          } catch (e) {
+            console.warn('[DocumentsPage] factures non accessibles', e)
           }
         }
 
@@ -452,7 +462,7 @@ export default function DocumentsPage() {
         const qSnap = await getDocs(
           query(
             collection(db, 'planning_pro'),
-            where('ref_users', '==', currentUser!.uid),
+            where('ref_users', '==', doc(db, 'users', currentUser!.uid)),
             where('questionnaire_rempli', '==', true),
           )
         )
@@ -528,7 +538,7 @@ export default function DocumentsPage() {
   }), [docs])
 
   return (
-    <div className="p-4 sm:p-6 max-w-2xl mx-auto">
+    <div className="p-4 sm:p-6">
 
       {/* Header */}
       <div className="flex items-center gap-3 mb-5">

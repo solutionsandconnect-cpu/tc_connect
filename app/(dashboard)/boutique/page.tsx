@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useStoreApps } from "@/hooks/useStoreApps";
 import { useMyStoreSubscriptions } from "@/hooks/useStoreSubscriptions";
+import { usePendingSubscriptions } from "@/hooks/usePendingSubscriptions";
 import { createStoreSubscription } from "@/lib/storeService";
 import type { StoreApp, StoreSubStatut } from "@/types";
 import { Timestamp } from "firebase/firestore";
@@ -37,6 +38,7 @@ export default function BoutiquePage() {
   const { subscriptions } = useMyStoreSubscriptions(currentUser?.uid);
   const [requesting, setRequesting] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const pendingCount = usePendingSubscriptions();
 
   const visibleApps = isAdmin ? apps : apps.filter((a) => a.actif);
 
@@ -62,6 +64,17 @@ export default function BoutiquePage() {
         dateDebut: Timestamp.now(),
         createdBy: currentUser.uid,
       });
+      // Notifier l'admin par push
+      fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toAdmins: true,
+          title: 'Nouvelle demande boutique',
+          body: `${userProfile?.display_name || currentUser.email || 'Un utilisateur'} souhaite accéder à ${app.nom}`,
+          url: '/boutique/admin',
+        }),
+      }).catch(() => {});
       showToast("Demande envoyée ! Votre coach traitera votre demande.");
     } catch {
       showToast("Erreur lors de la demande.", false);
@@ -88,13 +101,18 @@ export default function BoutiquePage() {
         {isAdmin && (
           <button
             onClick={() => router.push("/boutique/admin")}
-            className="flex items-center gap-2 bg-gray-900 hover:bg-gray-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition"
+            className="relative flex items-center gap-2 bg-gray-900 hover:bg-gray-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
             Gérer le store
+            {pendingCount > 0 && (
+              <span className="ml-1 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">
+                {pendingCount}
+              </span>
+            )}
           </button>
         )}
       </div>

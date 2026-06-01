@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   collection, query, orderBy, where,
-  onSnapshot, addDoc, updateDoc, deleteDoc, doc
+  onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
@@ -42,7 +42,11 @@ export function usePlanning() {
   }
 
   const deletePlanning = async (id: string) => {
-    await deleteDoc(doc(db, 'planning_pro', id))
+    // Supprimer les séances liées à ce RDV
+    const planningRef = doc(db, 'planning_pro', id)
+    const seancesSnap = await getDocs(query(collection(db, 'seance'), where('ref_planning', '==', planningRef)))
+    await Promise.all(seancesSnap.docs.map((d) => deleteDoc(d.ref)))
+    await deleteDoc(planningRef)
   }
 
   return { plannings, loading, addPlanning, updatePlanning, deletePlanning }

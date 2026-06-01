@@ -56,6 +56,7 @@ export default function BoutiqueAdminPage() {
   const { clients } = useClients();
   const { users } = useUsers();
 
+  const pendingCount = subscriptions.filter((s) => s.statut === "pending").length;
   const [tab, setTab] = useState<"apps" | "subs">("apps");
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -246,7 +247,8 @@ export default function BoutiqueAdminPage() {
   const filteredSubs = subscriptions
     .filter((s) => !filterApp || s.appId === filterApp)
     .filter((s) => filterStatut === "all" || s.statut === filterStatut)
-    .filter((s) => !searchSub || s.clientNom.toLowerCase().includes(searchSub.toLowerCase()) || s.clientEmail?.toLowerCase().includes(searchSub.toLowerCase()));
+    .filter((s) => !searchSub || s.clientNom.toLowerCase().includes(searchSub.toLowerCase()) || s.clientEmail?.toLowerCase().includes(searchSub.toLowerCase()))
+    .sort((a, b) => (a.statut === "pending" ? -1 : 1) - (b.statut === "pending" ? -1 : 1));
 
   return (
     <div className="min-h-screen">
@@ -274,7 +276,14 @@ export default function BoutiqueAdminPage() {
             onClick={() => setTab(t)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition ${tab === t ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
           >
-            {t === "apps" ? `Applications (${apps.length})` : `Abonnements (${subscriptions.length})`}
+            {t === "apps" ? `Applications (${apps.length})` : (
+            <span className="flex items-center gap-1.5">
+              Abonnements ({subscriptions.length})
+              {pendingCount > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">{pendingCount}</span>
+              )}
+            </span>
+          )}
           </button>
         ))}
       </div>
@@ -370,7 +379,7 @@ export default function BoutiqueAdminPage() {
               {filteredSubs.map((sub) => {
                 const app = apps.find((a) => a.id === sub.appId);
                 return (
-                  <div key={sub.id} className="bg-white border rounded-xl p-4">
+                  <div key={sub.id} className={`bg-white border rounded-xl p-4 ${sub.statut === "pending" ? "border-orange-300 bg-orange-50 ring-1 ring-orange-200" : ""}`}>
                     <div className="flex flex-wrap items-center gap-3">
                       {/* App icon */}
                       <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg shrink-0" style={{ backgroundColor: (app?.couleur ?? "#6366f1") + "20" }}>

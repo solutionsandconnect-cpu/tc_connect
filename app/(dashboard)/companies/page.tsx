@@ -10,13 +10,13 @@ import type { Company } from "@/types";
 type Form = {
   nom: string; adresse: string; codePostal: string; ville: string;
   email: string; telephone: string; siret: string; tva: string;
-  iban: string; logoUrl: string; couleurPrimaire: string; mentionsLegales: string;
+  iban: string; bic: string; logoUrl: string; couleurPrimaire: string; mentionsLegales: string;
   cgv: string; cgvDate: string;
 };
 
 const EMPTY: Form = {
   nom: "", adresse: "", codePostal: "", ville: "", email: "",
-  telephone: "", siret: "", tva: "", iban: "", logoUrl: "",
+  telephone: "", siret: "", tva: "", iban: "", bic: "", logoUrl: "",
   couleurPrimaire: "#2563eb", mentionsLegales: "", cgv: "", cgvDate: "",
 };
 
@@ -173,7 +173,7 @@ export default function CompaniesPage() {
     setForm({
       nom: c.nom, adresse: c.adresse ?? "", codePostal: c.codePostal ?? "",
       ville: c.ville ?? "", email: c.email ?? "", telephone: c.telephone ?? "",
-      siret: c.siret ?? "", tva: c.tva ?? "", iban: c.iban ?? "",
+      siret: c.siret ?? "", tva: c.tva ?? "", iban: c.iban ?? "", bic: c.bic ?? "",
       logoUrl: c.logoUrl ?? "", couleurPrimaire: c.couleurPrimaire ?? "#2563eb",
       mentionsLegales: c.mentionsLegales ?? "", cgv: c.cgv ?? "", cgvDate: c.cgvDate ?? "",
     });
@@ -197,6 +197,7 @@ export default function CompaniesPage() {
         siret: form.siret || undefined,
         tva: form.tva || undefined,
         iban: form.iban || undefined,
+        bic: form.bic || undefined,
         logoUrl: form.logoUrl || undefined,
         couleurPrimaire: form.couleurPrimaire || "#2563eb",
         mentionsLegales: form.mentionsLegales || undefined,
@@ -275,9 +276,24 @@ export default function CompaniesPage() {
               </div>
             </div>
             <div className="space-y-1 text-xs text-gray-500">
-              {c.email && <div>✉ {c.email}</div>}
-              {c.telephone && <div>☎ {c.telephone}</div>}
-              {c.siret && <div>SIRET : {c.siret}</div>}
+              {c.email && (
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                  <span className="truncate">{c.email}</span>
+                </div>
+              )}
+              {c.telephone && (
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>
+                  <span>{c.telephone}</span>
+                </div>
+              )}
+              {c.siret && (
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  <span>SIRET : {c.siret}</span>
+                </div>
+              )}
             </div>
             <div className="flex gap-2 mt-4">
               <button onClick={() => openEdit(c)} className="flex-1 border rounded-lg py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition">Modifier</button>
@@ -354,9 +370,15 @@ export default function CompaniesPage() {
                       <input className={inputCls} placeholder="FR00000000000" value={form.tva} onChange={set("tva")} />
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">IBAN</label>
-                    <input className={inputCls} placeholder="FR76 0000 0000 0000 0000 0000 000" value={form.iban} onChange={set("iban")} />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">IBAN</label>
+                      <input className={inputCls} placeholder="FR76 0000 0000 0000 0000 0000 000" value={form.iban} onChange={set("iban")} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">BIC / SWIFT</label>
+                      <input className={inputCls} placeholder="BNPAFRPPXXX" value={form.bic} onChange={set("bic")} />
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1">Mentions légales (bas de facture)</label>

@@ -240,8 +240,22 @@ export default function SeancesPage() {
                   className="w-full flex items-center justify-between p-4 text-left cursor-pointer"
                 >
                   <div className="flex-1 min-w-0">
+                    {clientName && (
+                      <div className="flex items-center gap-1.5 mb-1">
+                        {clientObj?.photo_url ? (
+                          <img src={clientObj.photo_url} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" />
+                        ) : (
+                          <div className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-semibold text-[10px] shrink-0">
+                            {(clientObj?.prenom?.[0] ?? clientName[0] ?? '').toUpperCase()}
+                          </div>
+                        )}
+                        <p className="text-sm font-semibold text-gray-800">
+                          {clientObj ? `${(clientObj.nom ?? '').toUpperCase()} ${clientObj.prenom ?? ''}`.trim() : clientName}
+                        </p>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-gray-800 capitalize">
+                      <span className="text-xs text-gray-500 capitalize">
                         {formatDate(info?.date_planning)}
                       </span>
                       {info?.type_planning && (
@@ -250,18 +264,6 @@ export default function SeancesPage() {
                         </span>
                       )}
                     </div>
-                    {clientName && (
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        {clientObj?.photo_url ? (
-                          <img src={clientObj.photo_url} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" />
-                        ) : (
-                          <div className="w-4 h-4 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-semibold text-[9px] shrink-0">
-                            {(clientObj?.prenom?.[0] ?? clientName[0] ?? '').toUpperCase()}
-                          </div>
-                        )}
-                        <p className="text-xs text-gray-500">{clientName}</p>
-                      </div>
-                    )}
                     <p className="text-xs text-gray-400 mt-0.5">{circuits.length} circuit(s)</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0 ml-2">

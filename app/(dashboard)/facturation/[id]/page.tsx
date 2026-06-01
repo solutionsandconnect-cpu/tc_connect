@@ -5,13 +5,14 @@ import { useCustomPrestations } from "@/hooks/useCustomPrestations";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
-  getFacture, updateFacture, deleteFacture, convertDevisToFacture,
+  getFacture, updateFacture, deleteFacture, convertDevisToFacture, generateNextEcheanceFacture,
 } from "@/lib/facturationService";
 import { getCompany } from "@/lib/companyService";
-import { getClient } from "@/lib/clientService";
+import { getClient, updateClient } from "@/lib/clientService";
 import { downloadInvoicePDF, generateInvoicePDFBlob, itemNetTotal } from "@/lib/invoicePdf";
 import { uploadBlob } from "@/lib/uploadImage";
 import { addToCalendar, BILLING_CAL_ID } from "@/lib/googleCalendar";
+import { buildInvoiceEmailText } from "@/lib/invoiceEmailTemplate";
 import { Timestamp } from "firebase/firestore";
 import type { Facture, FactureItem, FactureStatus, Echeance, EcheanceRef, Company, Client } from "@/types";
 
@@ -39,6 +40,13 @@ const ECHEANCE_LABELS = [
   "Solde", "Paiement comptant",
   "1ère mensualité", "2ème mensualité", "3ème mensualité", "4ème mensualité", "5ème mensualité", "6ème mensualité", "7ème mensualité", "8ème mensualité", "9ème mensualité", "10ème mensualité",
 ];
+
+const MENSUALITE_LABELS = [
+  "1ère mensualité", "2ème mensualité", "3ème mensualité", "4ème mensualité",
+  "5ème mensualité", "6ème mensualité", "7ème mensualité", "8ème mensualité",
+  "9ème mensualité", "10ème mensualité",
+];
+const mensualiteLabel = (n: number) => MENSUALITE_LABELS[n - 1] ?? `${n}ème mensualité`;
 
 function SuggestDropdown({ value, onChange, options, placeholder, wrapperClassName, inputClassName, onCommit, removableLabels, onRemoveOption }: {
   value: string; onChange: (v: string) => void; options: string[];
@@ -109,11 +117,12 @@ function SuggestDropdown({ value, onChange, options, placeholder, wrapperClassNa
 // ── Constantes ────────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<FactureStatus, string> = {
-  draft: "Brouillon", sent: "En attente", paid: "Payée",
+  draft: "Brouillon", pending: "En attente", sent: "Envoyé", paid: "Payée",
   overdue: "En retard", cancelled: "Annulée", accepted: "Accepté", rejected: "Non validé",
 };
 const STATUS_STYLE: Record<FactureStatus, string> = {
   draft: "bg-gray-100 text-gray-600 border-gray-200",
+  pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
   sent: "bg-blue-50 text-blue-700 border-blue-200",
   paid: "bg-green-50 text-green-700 border-green-200",
   overdue: "bg-red-50 text-red-700 border-red-200",
@@ -121,11 +130,12 @@ const STATUS_STYLE: Record<FactureStatus, string> = {
   accepted: "bg-emerald-50 text-emerald-700 border-emerald-200",
   rejected: "bg-orange-50 text-orange-700 border-orange-200",
 };
-const STATUSES_FACTURE: FactureStatus[] = ["draft", "sent", "paid", "overdue", "cancelled"];
-const STATUSES_DEVIS: FactureStatus[] = ["draft", "sent", "accepted", "rejected", "cancelled"];
+const STATUSES_FACTURE: FactureStatus[] = ["draft", "pending", "sent", "paid", "overdue", "cancelled"];
+const STATUSES_DEVIS: FactureStatus[] = ["draft", "pending", "sent", "accepted", "rejected", "cancelled"];
 
 const STATUS_DOT: Record<FactureStatus, string> = {
   draft: "bg-gray-400",
+  pending: "bg-yellow-400",
   sent: "bg-blue-500",
   paid: "bg-green-500",
   overdue: "bg-red-500",
@@ -134,10 +144,11 @@ const STATUS_DOT: Record<FactureStatus, string> = {
   rejected: "bg-orange-500",
 };
 
-function StatusSelect({ current, statuses, onChange }: {
+function StatusSelect({ current, statuses, onChange, labels = STATUS_LABEL }: {
   current: FactureStatus;
   statuses: FactureStatus[];
   onChange: (s: FactureStatus) => void;
+  labels?: Record<FactureStatus, string>;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -156,7 +167,7 @@ function StatusSelect({ current, statuses, onChange }: {
         onClick={() => setOpen((o) => !o)}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition ${STATUS_STYLE[current]}`}
       >
-        {STATUS_LABEL[current]}
+        {labels[current]}
         <svg className={`w-3 h-3 transition-transform duration-150 ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
         </svg>
@@ -178,7 +189,7 @@ function StatusSelect({ current, statuses, onChange }: {
               >
                 <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[s]}`} />
                 <span className={`font-medium ${isCurrent ? "text-gray-900" : "text-gray-700"}`}>
-                  {STATUS_LABEL[s]}
+                  {labels[s]}
                 </span>
                 {isCurrent && (
                   <span className="ml-auto text-[10px] font-semibold text-gray-400 uppercase tracking-wide">actuel</span>
@@ -240,9 +251,13 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
   const [facture, setFacture] = useState<Facture | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [client, setClient] = useState<Client | null>(null);
+  const [linkedFactures, setLinkedFactures] = useState<Facture[]>([]);
+  const [siblingIds, setSiblingIds] = useState<string[]>([]);
+  const [siblingTotals, setSiblingTotals] = useState<number[]>([]);
+  const [devisExpectedTotal, setDevisExpectedTotal] = useState<number | null>(null);
   const [editingNumber, setEditingNumber] = useState(false);
   const [draftNumber, setDraftNumber] = useState("");
-  const { allLabels: allPrestations, customLabels, addCustomLabel, removeCustomLabel } = useCustomPrestations(PRESTATIONS_LABELS, currentUser?.uid);
+  const { allLabels: allPrestations, customLabels, addCustomLabel, removeCustomLabel, priceMap, savePriceForLabel, removePriceForLabel } = useCustomPrestations(PRESTATIONS_LABELS, currentUser?.uid);
   const [items, setItems] = useState<FactureItem[]>([]);
   const [echeances, setEcheances] = useState<Echeance[]>([]);
   const [notes, setNotes] = useState("");
@@ -252,15 +267,20 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
   const [pdfUploading, setPdfUploading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmConvert, setConfirmConvert] = useState(false);
+  const [generatingNextEcheance, setGeneratingNextEcheance] = useState(false);
   const [signModal, setSignModal] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [emailModal, setEmailModal] = useState<{ to: string; cc: string; cci: string } | null>(null);
 
   // Facturer à (override coordonnées)
   const [factureNom, setFactureNom] = useState("");
   const [factureAdresse, setFactureAdresse] = useState("");
   const [factureCodePostal, setFactureCodePostal] = useState("");
   const [factureVille, setFactureVille] = useState("");
+  const [factureEmail, setFactureEmail] = useState("");
   const [showFactureA, setShowFactureA] = useState(false);
+  const [paymentDate, setPaymentDate] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
 
   useEffect(() => {
     getFacture(id).then((data) => {
@@ -274,9 +294,37 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       setFactureAdresse(data.factureAdresse ?? "");
       setFactureCodePostal(data.factureCodePostal ?? "");
       setFactureVille(data.factureVille ?? "");
+      setFactureEmail(data.factureEmail ?? "");
       if (data.factureNom) setShowFactureA(true);
+      setPaymentDate(toDateInputValue(data.paymentDate ?? null));
+      setPaymentMethod(data.paymentMethod ?? "");
       if (data.companyId) getCompany(data.companyId).then(setCompany).catch(() => null);
       if (data.clientId) getClient(data.clientId).then(setClient).catch(() => null);
+      if (data.type === "devis") {
+        const ids = data.convertedToFactureIds ?? (data.convertedToFactureId ? [data.convertedToFactureId] : []);
+        if (ids.length) Promise.all(ids.map((fid) => getFacture(fid))).then(setLinkedFactures).catch(() => {});
+      }
+      if (data.type !== "devis" && data.devisRef) {
+        getFacture(data.devisRef).then(async (devis) => {
+          const ids = devis.convertedToFactureIds ?? (devis.convertedToFactureId ? [devis.convertedToFactureId] : []);
+          if (ids.length > 1) setSiblingIds(ids);
+          setDevisExpectedTotal(devis.total ?? null);
+          if (ids.length > 0) {
+            const siblings = await Promise.all(ids.map((fid) => getFacture(fid)));
+            setSiblingTotals(siblings.map((f) => f.total ?? 0));
+          }
+          // Recalcule le cumul réellement réglé avant cette échéance depuis le devis (échéances éventuellement inégales)
+          const er = data.echeanceRef as EcheanceRef | undefined;
+          if (er && Array.isArray(devis.echeances) && devis.echeances.length > 0) {
+            const realCumul = devis.echeances.slice(0, er.index).reduce((acc, e) => acc + (e.montant ?? 0), 0);
+            if (er.cumulPrecedent !== realCumul) {
+              const fixedEr = { ...er, cumulPrecedent: realCumul };
+              setFacture((p) => p ? ({ ...p, echeanceRef: fixedEr }) : p);
+              updateFacture(id, { echeanceRef: fixedEr }).catch(() => {});
+            }
+          }
+        }).catch(() => {});
+      }
     });
   }, [id]);
 
@@ -285,11 +333,56 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Sauvegarde uniquement les coordonnées "Facturé à" sur la facture
+  const [savingFactureA, setSavingFactureA] = useState(false);
+  const saveFactureA = async () => {
+    setSavingFactureA(true);
+    try {
+      await updateFacture(id, {
+        factureNom: factureNom.trim() || undefined,
+        factureAdresse: factureAdresse.trim() || undefined,
+        factureCodePostal: factureCodePostal.trim() || undefined,
+        factureVille: factureVille.trim() || undefined,
+        factureEmail: factureEmail.trim() || undefined,
+      });
+      setFacture((p) => p ? { ...p, factureNom: factureNom.trim() || undefined, factureAdresse: factureAdresse.trim() || undefined, factureCodePostal: factureCodePostal.trim() || undefined, factureVille: factureVille.trim() || undefined, factureEmail: factureEmail.trim() || undefined } : null);
+      showToast("Coordonnées de facturation enregistrées");
+    } catch { showToast("Erreur lors de l'enregistrement", false); }
+    finally { setSavingFactureA(false); }
+  };
+
+  // Enregistre les coordonnées "Facturé à" actuelles comme contact réutilisable du client
+  const [savingContact, setSavingContact] = useState(false);
+  const saveAsReusableContact = async () => {
+    if (!client || !factureNom.trim()) return;
+    setSavingContact(true);
+    try {
+      const newContact = {
+        nom: factureNom.trim() || undefined,
+        adresse: factureAdresse.trim() || undefined,
+        codePostal: factureCodePostal.trim() || undefined,
+        ville: factureVille.trim() || undefined,
+        email: factureEmail.trim() || undefined,
+      };
+      const existing = ((client as any).contactsSupplementaires as any[]) ?? [];
+      // Éviter un doublon exact (même nom)
+      if (existing.some((c) => [c.nom, c.prenom].filter(Boolean).join(" ") === factureNom.trim())) {
+        showToast("Ce contact existe déjà"); setSavingContact(false); return;
+      }
+      const updated = [...existing, newContact];
+      await updateClient(client.id, { contactsSupplementaires: updated } as any);
+      setClient((p) => p ? ({ ...p, contactsSupplementaires: updated } as any) : p);
+      showToast("Contact enregistré pour réutilisation");
+    } catch { showToast("Erreur lors de l'enregistrement du contact", false); }
+    finally { setSavingContact(false); }
+  };
+
   // ── Items ─────────────────────────────────────────────────
   const updateItem = (i: number, field: keyof FactureItem, value: string | number) =>
     setItems((p) => p.map((it, idx) => (idx === i ? { ...it, [field]: value } : it)));
   const addItem = () => setItems((p) => [...p, { label: "", quantity: 1, price: 0 }]);
   const removeItem = (i: number) => { if (items.length > 1) setItems((p) => p.filter((_, idx) => idx !== i)); };
+  const duplicateItem = (i: number) => setItems((p) => { const copy = [...p]; copy.splice(i + 1, 0, { ...p[i] }); return copy; });
   const toggleDiscountType = (i: number) =>
     setItems((p) => p.map((it, idx) =>
       idx === i ? { ...it, discountType: it.discountType === "percent" ? "amount" : "percent" } : it
@@ -303,17 +396,30 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
 
   type DraftEcheance = { label: string; date: string; montant: string; manualMontant?: boolean };
   const [showEcheancierBuilder, setShowEcheancierBuilder] = useState(false);
+  const [editingEcheanceRefMontant, setEditingEcheanceRefMontant] = useState(false);
+  const [draftEcheanceRefMontant, setDraftEcheanceRefMontant] = useState("");
   const [draftEcheances, setDraftEcheances] = useState<DraftEcheance[]>([
     { label: "Acompte 50%", date: "", montant: "" },
     { label: "Solde 50%", date: "", montant: "" },
   ]);
   const [autoBalance, setAutoBalance] = useState(true);
+  const [copiedMontant, setCopiedMontant] = useState<string | null>(null);
 
   const distributeEvenly = (rows: DraftEcheance[], t: number): DraftEcheance[] => {
     if (rows.length === 0 || t <= 0) return rows;
     const share = Math.floor((t / rows.length) * 100) / 100;
     const last = Math.round((t - share * (rows.length - 1)) * 100) / 100;
     return rows.map((e, idx) => ({ ...e, montant: String(idx === rows.length - 1 ? last : share), manualMontant: false }));
+  };
+
+  const addOneMonth = (dateStr: string): string => {
+    if (!dateStr) return "";
+    const [y, m, dayStr] = dateStr.split("-").map(Number);
+    const newMonth = m % 12;
+    const newYear = m === 12 ? y + 1 : y;
+    const daysInMonth = new Date(newYear, newMonth + 1, 0).getDate();
+    const finalDay = Math.min(dayStr, daysInMonth);
+    return `${newYear}-${String(newMonth + 1).padStart(2, "0")}-${String(finalDay).padStart(2, "0")}`;
   };
 
   const updateDraft = (i: number, field: keyof DraftEcheance, value: string) => {
@@ -324,7 +430,10 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
   };
   const addDraftRow = () =>
     setDraftEcheances((p) => {
-      const next = [...p, { label: "", date: "", montant: "" }];
+      const n = p.length + 1;
+      const lastDate = p[p.length - 1]?.date ?? "";
+      const nextDate = lastDate ? addOneMonth(lastDate) : "";
+      const next = [...p, { label: mensualiteLabel(n), date: nextDate, montant: "" }];
       return autoBalance ? distributeEvenly(next, total) : next;
     });
   const removeDraftRow = (i: number) =>
@@ -384,6 +493,22 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
   };
 
   const echeanceRef = (facture as any)?.echeanceRef as EcheanceRef | undefined;
+
+  const saveEcheanceRefMontant = async () => {
+    if (!echeanceRef) return;
+    const newMontant = parseFloat(draftEcheanceRefMontant.replace(",", "."));
+    if (isNaN(newMontant) || newMontant < 0) { setEditingEcheanceRefMontant(false); return; }
+    const updated = { ...echeanceRef, montant: newMontant };
+    setSaving(true);
+    try {
+      await updateFacture(id, { echeanceRef: updated, total: newMontant });
+      setFacture((p) => p ? { ...p, echeanceRef: updated as any, total: newMontant } : null);
+      const idx = siblingIds.indexOf(id);
+      if (idx !== -1) setSiblingTotals((prev) => { const next = [...prev]; next[idx] = newMontant; return next; });
+      showToast("Montant mis à jour.");
+    } catch { showToast("Erreur lors de la sauvegarde.", false); }
+    finally { setSaving(false); setEditingEcheanceRefMontant(false); }
+  };
   const itemsTotal = items.reduce((acc, i) => acc + itemNetTotal(i), 0);
   // Factures issues d'un devis à échéancier : le total à facturer est l'échéance, pas la somme des lignes
   const total = echeanceRef ? echeanceRef.montant : itemsTotal;
@@ -403,8 +528,9 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
         factureAdresse: factureAdresse.trim() || undefined,
         factureCodePostal: factureCodePostal.trim() || undefined,
         factureVille: factureVille.trim() || undefined,
+        factureEmail: factureEmail.trim() || undefined,
       });
-      setFacture((p) => p ? { ...p, items, total, echeances, notes, ...(dateTs ? { date: dateTs } : {}) } : null);
+      setFacture((p) => p ? { ...p, items, total, echeances, notes, factureNom: factureNom.trim() || undefined, factureEmail: factureEmail.trim() || undefined, ...(dateTs ? { date: dateTs } : {}) } : null);
       showToast("Sauvegardé");
     } catch {
       showToast("Erreur lors de la sauvegarde", false);
@@ -417,7 +543,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
     try {
       await updateFacture(id, { status });
       setFacture((p) => p ? { ...p, status } : null);
-      showToast(`Statut : ${STATUS_LABEL[status]}`);
+      showToast(`Statut : ${statusLabels[status]}`);
     } catch {
       showToast("Erreur lors du changement de statut", false);
     }
@@ -513,6 +639,20 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
 
   const isDevis = facture.type === "devis";
   const docLabel = isDevis ? "Devis" : "Facture";
+  const statusLabels: Record<FactureStatus, string> = { ...STATUS_LABEL, sent: isDevis ? "Envoyé" : "Envoyée", pending: "En attente" };
+
+  const echeanceIsPaid = (i: number): boolean => {
+    if (!isDevis) return echeances[i]?.statut === "payé";
+    const lf = linkedFactures.find((f) => (f.echeanceRef as any)?.index === i);
+    return lf?.status === "paid";
+  };
+  const displayPaidTotal = isDevis
+    ? echeances.reduce((sum, e, i) => {
+        const lf = linkedFactures.find((f) => (f.echeanceRef as any)?.index === i);
+        return sum + (lf?.status === "paid" ? e.montant : 0);
+      }, 0)
+    : paidTotal;
+  const displayPendingTotal = total - displayPaidTotal;
   const docDate = documentDate ? new Date(documentDate) : (facture.createdAt ? new Date(facture.createdAt.seconds * 1000) : new Date());
 
   const gcalAdd = (title: string, date: Date, details: string) =>
@@ -522,12 +662,67 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
     });
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen">
       {signModal && (
         <SignaturePad
           onConfirm={handleSignConfirm}
           onCancel={() => setSignModal(false)}
         />
+      )}
+      {emailModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setEmailModal(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-gray-900 mb-1">Envoyer par email</h3>
+            <p className="text-xs text-gray-500 mb-4">{docLabel} {facture.number}</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Destinataire</label>
+                <input type="email" value={emailModal.to} onChange={(e) => setEmailModal({ ...emailModal, to: e.target.value })}
+                  placeholder="destinataire@email.com"
+                  className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">CC <span className="text-gray-400 font-normal">(séparés par des virgules)</span></label>
+                <input type="text" value={emailModal.cc} onChange={(e) => setEmailModal({ ...emailModal, cc: e.target.value })}
+                  placeholder="copie@email.com, autre@email.com"
+                  className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">CCI <span className="text-gray-400 font-normal">(copie cachée)</span></label>
+                <input type="text" value={emailModal.cci} onChange={(e) => setEmailModal({ ...emailModal, cci: e.target.value })}
+                  placeholder="copie-cachee@email.com"
+                  className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition" />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setEmailModal(null)} className="flex-1 border rounded-lg py-2.5 text-sm text-gray-600 hover:bg-gray-50 transition">Annuler</button>
+              <button
+                onClick={() => {
+                  const clientName = client
+                    ? `${(client.nom ?? "").toUpperCase()} ${client.prenom ?? ""}`.trim()
+                    : (facture.clientName || "");
+                  const dateEnvoi = fmtDate((facture.dateEcheance ?? facture.date ?? facture.createdAt) ?? null);
+                  const subject = encodeURIComponent(`${docLabel} ${facture.number} — Solutions & Connect`);
+                  const body = encodeURIComponent(buildInvoiceEmailText({
+                    clientName, docLabel, number: facture.number,
+                    dateEnvoi, pdfUrl: facture.pdfUrl,
+                  }));
+                  const params: string[] = [`subject=${subject}`, `body=${body}`];
+                  const cleanList = (s: string) => s.split(",").map((e) => e.trim()).filter(Boolean).join(",");
+                  const cc = cleanList(emailModal.cc);
+                  const cci = cleanList(emailModal.cci);
+                  if (cc) params.push(`cc=${encodeURIComponent(cc)}`);
+                  if (cci) params.push(`bcc=${encodeURIComponent(cci)}`);
+                  window.open(`mailto:${encodeURIComponent(emailModal.to)}?${params.join("&")}`, "_blank");
+                  setEmailModal(null);
+                }}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg py-2.5 text-sm font-medium transition"
+              >
+                Ouvrir l'email
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {toast && (
         <div className={`fixed top-5 right-5 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium ${toast.ok ? "bg-green-600 text-white" : "bg-red-600 text-white"}`}>
@@ -539,6 +734,28 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <button onClick={() => router.push(`/facturation${facture.type === "devis" ? "?tab=devis" : ""}`)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-500 transition">←</button>
+          {siblingIds.length > 1 && (() => {
+            const idx = siblingIds.indexOf(id);
+            const prev = siblingIds[idx - 1];
+            const next = siblingIds[idx + 1];
+            return (
+              <div className="flex items-center gap-1 bg-gray-100 rounded-lg px-1 py-0.5">
+                <button
+                  onClick={() => router.push(`/facturation/${prev}`)}
+                  disabled={!prev}
+                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-white disabled:opacity-30 text-gray-600 transition text-sm font-medium"
+                  title="Facture précédente"
+                >‹</button>
+                <span className="text-xs font-medium text-gray-500 px-1 tabular-nums">{idx + 1}/{siblingIds.length}</span>
+                <button
+                  onClick={() => router.push(`/facturation/${next}`)}
+                  disabled={!next}
+                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-white disabled:opacity-30 text-gray-600 transition text-sm font-medium"
+                  title="Facture suivante"
+                >›</button>
+              </div>
+            );
+          })()}
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
               {editingNumber ? (
@@ -577,7 +794,11 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
             </div>
             <p className="text-sm text-gray-500 mt-0.5">
               {facture.clientName || "—"} · {fmtDate((facture.date ?? facture.createdAt) ?? null)}
-              {facture.devisNumber && !isDevis && <span className="ml-2 text-xs text-purple-600">Réf. devis : {facture.devisNumber}</span>}
+              {facture.devisNumber && facture.devisRef && !isDevis && (
+                <button onClick={() => router.push(`/facturation/${facture.devisRef}`)} className="ml-2 text-xs text-purple-600 hover:text-purple-800 hover:underline transition">
+                  ← Devis {facture.devisNumber}
+                </button>
+              )}
               {isDevis && facture.convertedToFactureIds && facture.convertedToFactureIds.length > 1 ? (
                 <span className="ml-2 flex items-center gap-1.5 flex-wrap">
                   {facture.convertedToFactureIds.map((fid, i) => (
@@ -601,6 +822,12 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             {generatingPdf ? "Génération…" : "PDF"}
           </button>
+          {facture.pdfUrl && (
+            <a href={facture.pdfUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+              Voir PDF
+            </a>
+          )}
 
           {isDevis && !facture.signed && (
             <button onClick={() => setSignModal(true)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition">
@@ -610,9 +837,32 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
 
           {isDevis && !facture.convertedToFactureId && !confirmConvert && facture.status !== 'rejected' && (
             <button onClick={() => setConfirmConvert(true)} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
-              → {echeances.length > 1 ? `Convertir en ${echeances.length} factures` : "Convertir en facture"}
+              → {echeances.length > 1 ? `Convertir (1ère échéance sur ${echeances.length})` : "Convertir en facture"}
             </button>
           )}
+          {isDevis && facture.convertedToFactureId && echeances.length > 0 && (() => {
+            const already = (facture.convertedToFactureIds ?? [facture.convertedToFactureId]).length
+            const nextIndex = already
+            if (nextIndex >= echeances.length) return null
+            const next = echeances[nextIndex]
+            const label = next.label || `Règlement ${nextIndex + 1}/${echeances.length}`
+            return (
+              <button
+                onClick={async () => {
+                  if (!currentUser) return
+                  setGeneratingNextEcheance(true)
+                  try {
+                    const newId = await generateNextEcheanceFacture(facture.id, currentUser.uid)
+                    if (newId) router.push(`/facturation/${newId}`)
+                  } finally { setGeneratingNextEcheance(false) }
+                }}
+                disabled={generatingNextEcheance}
+                className="px-3 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition"
+              >
+                {generatingNextEcheance ? "…" : `→ Émettre ${label}`}
+              </button>
+            )
+          })()}
           {isDevis && confirmConvert && (
             <div className="flex gap-1.5">
               <button onClick={handleConvert} className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">Confirmer</button>
@@ -624,6 +874,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
             current={facture.status}
             statuses={isDevis ? STATUSES_DEVIS : STATUSES_FACTURE}
             onChange={changeStatus}
+            labels={statusLabels}
           />
 
           {!confirmDelete ? (
@@ -649,6 +900,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               type="date"
               value={documentDate}
               onChange={(e) => setDocumentDate(e.target.value)}
+              onBlur={save}
               className="border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition"
             />
             <p className="text-xs text-gray-400 mt-1.5">Modifiable (ex : facturation groupée envoyée ultérieurement)</p>
@@ -697,10 +949,11 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                             type="button"
                             key={i}
                             onClick={() => {
-                              setFactureNom([c.nom, c.prenom].filter(Boolean).join(" "));
+                              setFactureNom([c.nom, c.prenom].filter(Boolean).join(" ") || c.label || "");
                               setFactureAdresse(c.adresse ?? "");
                               setFactureCodePostal(c.codePostal ?? "");
                               setFactureVille(c.ville ?? "");
+                              setFactureEmail(c.email ?? "");
                             }}
                             className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition ${factureNom === [c.nom, c.prenom].filter(Boolean).join(" ") ? "bg-indigo-600 text-white border-indigo-600" : "text-gray-600 border-gray-200 hover:bg-gray-50"}`}
                           >
@@ -741,15 +994,45 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                           className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
                         />
                       </div>
-                      {hasOverride && (
-                        <button
-                          type="button"
-                          onClick={() => { setFactureNom(""); setFactureAdresse(""); setFactureCodePostal(""); setFactureVille(""); }}
-                          className="text-xs text-red-400 hover:text-red-600 transition"
-                        >
-                          Réinitialiser — utiliser les coordonnées du client
-                        </button>
-                      )}
+                      <input
+                        type="email"
+                        placeholder={`Email de facturation (défaut : ${client?.email || "—"})`}
+                        value={factureEmail}
+                        onChange={(e) => setFactureEmail(e.target.value)}
+                        className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
+                      />
+                      <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+                        {hasOverride ? (
+                          <button
+                            type="button"
+                            onClick={() => { setFactureNom(""); setFactureAdresse(""); setFactureCodePostal(""); setFactureVille(""); setFactureEmail(""); }}
+                            className="text-xs text-red-400 hover:text-red-600 transition"
+                          >
+                            Réinitialiser — utiliser les coordonnées du client
+                          </button>
+                        ) : <span />}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {hasOverride && (
+                            <button
+                              type="button"
+                              onClick={saveAsReusableContact}
+                              disabled={savingContact}
+                              className="text-xs font-medium border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 px-3 py-1.5 rounded-lg transition"
+                              title="Enregistrer ce contact sur le client pour le réutiliser sur d'autres factures"
+                            >
+                              {savingContact ? "…" : "Enregistrer comme contact"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={saveFactureA}
+                            disabled={savingFactureA}
+                            className="text-xs font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg transition"
+                          >
+                            {savingFactureA ? "Enregistrement…" : "Enregistrer le « Facturé à »"}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -773,29 +1056,75 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
             <div className="space-y-3">
               {items.map((item, i) => {
                 const net = itemNetTotal(item);
+                const isSaved = item.label.trim() ? priceMap[item.label.trim()] === item.price : false;
+                const pinBtn = (
+                  <button
+                    type="button"
+                    onClick={() => isSaved ? removePriceForLabel(item.label) : savePriceForLabel(item.label, item.price)}
+                    title={isSaved ? "Tarif mémorisé — cliquer pour oublier" : "Mémoriser ce tarif"}
+                    className={`shrink-0 w-6 h-6 flex items-center justify-center rounded transition ${isSaved ? "text-amber-500 hover:text-gray-400" : "text-gray-300 hover:text-amber-500"}`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill={isSaved ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                    </svg>
+                  </button>
+                );
                 return (
-                  <div key={i} className="space-y-1.5">
-                    <div className="grid grid-cols-12 gap-2 items-center">
+                  <div key={i} className="space-y-1.5 pb-3 border-b last:border-b-0 last:pb-0">
+                    {/* Mobile layout */}
+                    <div className="sm:hidden space-y-1.5">
+                      <div className="flex gap-2 items-center">
+                        <SuggestDropdown
+                          value={item.label}
+                          onChange={(v) => updateItem(i, "label", v)}
+                          options={allPrestations}
+                          placeholder="Description"
+                          wrapperClassName="flex-1"
+                          inputClassName="w-full border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition"
+                          onCommit={(v) => { addCustomLabel(v); const p = priceMap[v.trim()]; if (p !== undefined) updateItem(i, "price", p); }}
+                          removableLabels={customLabels}
+                          onRemoveOption={removeCustomLabel}
+                        />
+                        <button type="button" onClick={() => duplicateItem(i)} title="Dupliquer" className="shrink-0 w-7 h-7 flex items-center justify-center text-gray-300 hover:text-blue-500 transition rounded-lg hover:bg-blue-50">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                        </button>
+                        <button onClick={() => removeItem(i)} disabled={items.length === 1} className="shrink-0 w-7 h-7 flex items-center justify-center text-gray-300 hover:text-red-500 disabled:opacity-0 transition rounded-lg hover:bg-red-50">✕</button>
+                      </div>
+                      <div className="flex gap-2 items-center">
+                        <input className="w-14 shrink-0 border rounded-lg px-2 py-2 text-sm text-center outline-none focus:border-blue-400 transition" type="number" min="1" value={item.quantity} onChange={(e) => updateItem(i, "quantity", Math.max(1, Number(e.target.value)))} />
+                        <input className="min-w-0 flex-1 border rounded-lg px-2 py-2 text-sm text-right outline-none focus:border-blue-400 transition" type="number" min="0" step="0.01" value={item.price} onChange={(e) => updateItem(i, "price", Number(e.target.value))} />
+                        {item.label.trim() && pinBtn}
+                        <span className="text-sm font-semibold text-gray-700 shrink-0 text-right">{fmtMoney(net)}</span>
+                      </div>
+                    </div>
+                    {/* Desktop layout */}
+                    <div className="hidden sm:grid grid-cols-12 gap-2 items-center">
                       <SuggestDropdown
                         value={item.label}
                         onChange={(v) => updateItem(i, "label", v)}
                         options={allPrestations}
                         placeholder="Description"
-                        wrapperClassName="col-span-5"
+                        wrapperClassName="col-span-4"
                         inputClassName="w-full border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition"
-                        onCommit={addCustomLabel}
+                        onCommit={(v) => { addCustomLabel(v); const p = priceMap[v.trim()]; if (p !== undefined) updateItem(i, "price", p); }}
                         removableLabels={customLabels}
                         onRemoveOption={removeCustomLabel}
                       />
                       <input className="col-span-2 border rounded-lg px-3 py-2.5 text-sm text-center outline-none focus:border-blue-400 transition" type="number" min="1" value={item.quantity} onChange={(e) => updateItem(i, "quantity", Math.max(1, Number(e.target.value)))} />
-                      <input className="col-span-2 border rounded-lg px-3 py-2.5 text-sm text-right outline-none focus:border-blue-400 transition" type="number" min="0" step="0.01" value={item.price} onChange={(e) => updateItem(i, "price", Number(e.target.value))} />
+                      <div className="col-span-2 flex items-center gap-1">
+                        <input className="min-w-0 flex-1 border rounded-lg px-2 py-2.5 text-sm text-right outline-none focus:border-blue-400 transition" type="number" min="0" step="0.01" value={item.price} onChange={(e) => updateItem(i, "price", Number(e.target.value))} />
+                        {item.label.trim() && pinBtn}
+                      </div>
                       <span className="col-span-2 text-xs font-semibold text-gray-700 text-right pr-1">{fmtMoney(net)}</span>
+                      <button type="button" onClick={() => duplicateItem(i)} title="Dupliquer" className="col-span-1 flex justify-center text-gray-300 hover:text-blue-500 transition rounded-lg hover:bg-blue-50">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                      </button>
                       <button onClick={() => removeItem(i)} disabled={items.length === 1} className="col-span-1 flex justify-center text-gray-300 hover:text-red-500 disabled:opacity-0 transition">✕</button>
                     </div>
                     {/* Ligne remise */}
-                    <div className="grid grid-cols-12 gap-2 items-center ml-1">
-                      <span className="col-span-5 text-xs text-gray-400">Remise :</span>
-                      <div className="col-span-4 flex items-center gap-1">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 items-center ml-1">
+                      <span className="text-xs text-gray-400 shrink-0">Remise :</span>
+                      <div className="flex items-center gap-1">
                         <button
                           onClick={() => toggleDiscountType(i)}
                           className="px-2 py-1 rounded border text-xs font-medium text-gray-600 hover:bg-gray-100 transition shrink-0"
@@ -812,11 +1141,11 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                             updateItem(i, "discountValue", v);
                             if (!item.discountType) updateItem(i, "discountType", "percent");
                           }}
-                          className="flex-1 border rounded-lg px-2 py-1 text-xs text-right outline-none focus:border-blue-400 transition"
+                          className="w-20 border rounded-lg px-2 py-1 text-xs text-right outline-none focus:border-blue-400 transition"
                         />
                       </div>
                       {item.discountValue ? (
-                        <span className="col-span-3 text-xs text-orange-500 text-right">
+                        <span className="text-xs text-orange-500">
                           - {item.discountType === "percent"
                             ? `${item.discountValue}% = ${fmtMoney(item.quantity * item.price * item.discountValue / 100)}`
                             : fmtMoney(item.discountValue)}
@@ -848,11 +1177,54 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-blue-900 font-medium">{echeanceRef.label}</span>
-                  <span className="text-2xl font-bold text-blue-900">{fmtMoney(echeanceRef.montant)}</span>
+                  {editingEcheanceRefMontant ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        autoFocus
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={draftEcheanceRefMontant}
+                        onChange={(e) => setDraftEcheanceRefMontant(e.target.value)}
+                        onBlur={saveEcheanceRefMontant}
+                        onKeyDown={(e) => { if (e.key === "Enter") saveEcheanceRefMontant(); if (e.key === "Escape") setEditingEcheanceRefMontant(false); }}
+                        className="w-32 text-right text-xl font-bold border-b-2 border-blue-400 bg-transparent outline-none text-blue-900"
+                      />
+                      <span className="text-blue-900 font-bold">€</span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setDraftEcheanceRefMontant(String(echeanceRef.montant)); setEditingEcheanceRefMontant(true); }}
+                      title="Modifier le montant"
+                      className="text-2xl font-bold text-blue-900 hover:text-blue-600 transition cursor-text"
+                    >
+                      {fmtMoney(echeanceRef.montant)}
+                    </button>
+                  )}
                 </div>
-                {facture.date && (
-                  <p className="text-xs text-blue-500 mt-1.5">Règlement attendu le {fmtDate(facture.date)}</p>
+                {(facture.dateEcheance ?? facture.date) && (
+                  <p className="text-xs text-blue-500 mt-1.5">Règlement attendu le {fmtDate((facture.dateEcheance ?? facture.date)!)}</p>
                 )}
+                {devisExpectedTotal !== null && siblingTotals.length > 0 && (() => {
+                  const billed = siblingTotals.reduce((s, t) => s + t, 0);
+                  const diff = Math.round((billed - devisExpectedTotal) * 100) / 100;
+                  const balanced = Math.abs(diff) <= 0.01;
+                  return (
+                    <div className={`mt-3 pt-3 border-t flex items-center justify-between text-xs ${balanced ? "border-blue-200" : "border-orange-300"}`}>
+                      <span className={balanced ? "text-blue-600" : "text-orange-700"}>
+                        Total facturé sur ce devis
+                      </span>
+                      <span className={`font-semibold ${balanced ? "text-green-600" : "text-orange-700"}`}>
+                        {fmtMoney(billed)} {balanced
+                          ? "✓ équilibré"
+                          : diff > 0
+                            ? `(+${fmtMoney(diff)} excédent)`
+                            : `(manque ${fmtMoney(-diff)})`
+                        }
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -874,54 +1246,65 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               {/* Barre de progression */}
               <div className="mb-4">
                 <div className="flex justify-between text-xs text-gray-500 mb-1">
-                  <span className="text-green-600 font-medium">Reçu : {fmtMoney(paidTotal)}</span>
-                  <span className="text-orange-500 font-medium">Restant : {fmtMoney(pendingTotal)}</span>
+                  <span className="text-green-600 font-medium">Reçu : {fmtMoney(displayPaidTotal)}</span>
+                  <span className="text-orange-500 font-medium">Restant : {fmtMoney(displayPendingTotal)}</span>
                 </div>
                 <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-green-500 rounded-full transition-all"
-                    style={{ width: total > 0 ? `${Math.min(100, paidTotal / total * 100)}%` : "0%" }}
+                    style={{ width: total > 0 ? `${Math.min(100, displayPaidTotal / total * 100)}%` : "0%" }}
                   />
                 </div>
               </div>
               <div className="space-y-2">
                 {echeances.map((e, i) => {
-                  const isPaid = e.statut === "payé";
+                  const isPaid = echeanceIsPaid(i);
                   const echDate = e.date ? new Date(e.date.seconds * 1000) : new Date();
                   return (
-                    <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-lg border transition ${isPaid ? "bg-green-50 border-green-200" : "bg-orange-50 border-orange-200"}`}>
-                      <button onClick={() => toggleEcheance(i)} className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition ${isPaid ? "bg-green-500 border-green-500" : "border-orange-400"}`} title={isPaid ? "Marquer non payé" : "Marquer payé"}>
-                        {isPaid && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                      </button>
+                    <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-lg border transition ${isPaid ? "bg-green-50 border-green-200" : "bg-gray-50 border-gray-200"}`}>
+                      {!isDevis && (
+                        <button onClick={() => toggleEcheance(i)} className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition ${isPaid ? "bg-green-500 border-green-500" : "border-gray-400"}`} title={isPaid ? "Marquer non payé" : "Marquer payé"}>
+                          {isPaid && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                        </button>
+                      )}
+                      {isDevis && (
+                        <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${isPaid ? "bg-green-500 border-green-500" : "border-gray-300 bg-white"}`}>
+                          {isPaid && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                        </span>
+                      )}
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-gray-900">{e.label || `Échéance ${i + 1}`}</div>
                         <div className="text-xs text-gray-500 mt-0.5">{fmtDateShort(e.date ?? null)}</div>
                       </div>
                       <div className="text-sm font-semibold text-gray-900 shrink-0">{fmtMoney(e.montant)}</div>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${isPaid ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"}`}>
-                        {isPaid ? "Payé" : "En attente"}
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${isPaid ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                        {isPaid ? "Payée" : "En attente"}
                       </span>
-                      <button
-                        onClick={() => {
-                          const mm = String(echDate.getMonth() + 1).padStart(2, '0')
-                          const yyyy = echDate.getFullYear()
-                          gcalAdd(
-                            `Encaiss ${fmtMoney(e.montant)} ${facture.clientName} (${i + 1}/${echeances.length}) ${mm}/${yyyy} ${calNum(facture.number)}`,
-                            echDate,
-                            `Montant : ${fmtMoney(e.montant)} · ${facture.clientName}`
-                          )
-                        }}
-                        className="shrink-0 text-gray-400 hover:text-blue-600 transition" title="Ajouter à Google Agenda"
-                      >
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                      </button>
+                      {!isDevis && (
+                        <button
+                          onClick={() => {
+                            const mm = String(echDate.getMonth() + 1).padStart(2, '0')
+                            const yyyy = echDate.getFullYear()
+                            gcalAdd(
+                              `Encaiss ${fmtMoney(e.montant)} ${facture.clientName} (${i + 1}/${echeances.length}) ${mm}/${yyyy} ${calNum(facture.number)}`,
+                              echDate,
+                              `Montant : ${fmtMoney(e.montant)} · ${facture.clientName}`
+                            )
+                          }}
+                          className="shrink-0 text-gray-400 hover:text-blue-600 transition" title="Ajouter à Google Agenda"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                        </button>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              <button onClick={save} disabled={saving} className="mt-4 w-full border border-blue-200 text-blue-600 hover:bg-blue-50 py-2 rounded-lg text-sm font-medium transition">
-                {saving ? "Sauvegarde…" : "Sauvegarder l'échéancier"}
-              </button>
+              {!isDevis && (
+                <button onClick={save} disabled={saving} className="mt-4 w-full border border-blue-200 text-blue-600 hover:bg-blue-50 py-2 rounded-lg text-sm font-medium transition">
+                  {saving ? "Sauvegarde…" : "Sauvegarder l'échéancier"}
+                </button>
+              )}
             </div>
           )}
 
@@ -931,9 +1314,11 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               {!showEcheancierBuilder ? (
                 <button
                   onClick={() => {
+                    const date1 = documentDate || "";
+                    const date2 = date1 ? addOneMonth(date1) : "";
                     const initialRows: DraftEcheance[] = [
-                      { label: "Acompte 50%", date: "", montant: "" },
-                      { label: "Solde 50%", date: "", montant: "" },
+                      { label: "1ère mensualité", date: date1, montant: "" },
+                      { label: "2ème mensualité", date: date2, montant: "" },
                     ];
                     setAutoBalance(true);
                     setDraftEcheances(total > 0 ? distributeEvenly(initialRows, total) : initialRows);
@@ -964,56 +1349,139 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                   </div>
                   <div className="space-y-3">
                     {draftEcheances.map((e, i) => (
-                      <div key={i} className="grid grid-cols-12 gap-2 items-start">
-                        <div className="col-span-4">
-                          <SuggestDropdown
-                            value={e.label}
-                            onChange={(v) => {
-                              updateDraft(i, "label", v);
-                              if (!autoBalance && !draftEcheances[i].manualMontant) {
-                                const pct = Number(v.match(/(\d+)\s*%/)?.[1] ?? 0);
-                                if (pct > 0) setDraftEcheances((p) => p.map((r, idx) =>
-                                  idx === i ? { ...r, label: v, montant: String(Math.round(total * pct) / 100) } : r
-                                ));
-                              }
-                            }}
-                            options={ECHEANCE_LABELS}
-                            placeholder="Libellé"
-                            inputClassName="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
+                      <div key={i} className="space-y-1.5 pb-3 border-b last:border-b-0 last:pb-0 sm:pb-0 sm:border-b-0">
+                        {/* Mobile layout */}
+                        <div className="sm:hidden space-y-1.5">
+                          <div className="flex gap-2 items-center">
+                            <SuggestDropdown
+                              value={e.label}
+                              onChange={(v) => {
+                                updateDraft(i, "label", v);
+                                if (!autoBalance && !draftEcheances[i].manualMontant) {
+                                  const pct = Number(v.match(/(\d+)\s*%/)?.[1] ?? 0);
+                                  if (pct > 0) setDraftEcheances((p) => p.map((r, idx) =>
+                                    idx === i ? { ...r, label: v, montant: String(Math.round(total * pct) / 100) } : r
+                                  ));
+                                }
+                              }}
+                              options={ECHEANCE_LABELS}
+                              placeholder="Libellé"
+                              wrapperClassName="flex-1"
+                              inputClassName="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                            {draftEcheances.length > 1 && (
+                              <button onClick={() => removeDraftRow(i)} className="text-gray-400 hover:text-red-500 transition p-1 shrink-0">
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex gap-2 items-center">
+                            <input
+                              type="date"
+                              value={e.date}
+                              onChange={(ev) => updateDraft(i, "date", ev.target.value)}
+                              className="flex-1 border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                            <div className="flex items-center gap-1 flex-1">
+                              <input
+                                type="number"
+                                value={e.montant}
+                                onChange={(ev) => updateDraft(i, "montant", ev.target.value)}
+                                placeholder="Montant"
+                                className="flex-1 border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              />
+                              {e.manualMontant && !autoBalance && /\d+\s*%/.test(e.label) && (
+                                <button type="button" onClick={() => recalcDraft(i)} title="Recalculer d'après le %"
+                                  className="text-xs text-blue-500 hover:text-blue-700 px-1">↻</button>
+                              )}
+                              {e.montant && (
+                                <button type="button" onClick={() => setCopiedMontant(copiedMontant === e.montant ? null : e.montant)} title={copiedMontant === e.montant ? "Copié — cliquer pour effacer" : "Copier ce montant"} className={`shrink-0 transition ${copiedMontant === e.montant ? "text-blue-500" : "text-gray-300 hover:text-gray-500"}`}>
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                                </button>
+                              )}
+                              {copiedMontant !== null && copiedMontant !== e.montant && (
+                                <button type="button" onClick={() => { updateDraft(i, "montant", copiedMontant); setAutoBalance(false); }} title={`Coller ${copiedMontant} €`} className="shrink-0 text-blue-400 hover:text-blue-600 transition">
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <div className="col-span-3">
-                          <input
-                            type="date"
-                            value={e.date}
-                            onChange={(ev) => updateDraft(i, "date", ev.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
-                        </div>
-                        <div className="col-span-3 flex items-center gap-1">
-                          <input
-                            type="number"
-                            value={e.montant}
-                            onChange={(ev) => updateDraft(i, "montant", ev.target.value)}
-                            placeholder="Montant"
-                            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
-                          {e.manualMontant && !autoBalance && /\d+\s*%/.test(e.label) && (
-                            <button type="button" onClick={() => recalcDraft(i)} title="Recalculer d'après le %"
-                              className="text-xs text-blue-500 hover:text-blue-700 px-1">↻</button>
-                          )}
-                        </div>
-                        <div className="col-span-2 flex justify-end">
-                          {draftEcheances.length > 1 && (
-                            <button onClick={() => removeDraftRow(i)} className="text-gray-400 hover:text-red-500 transition p-1">
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                            </button>
-                          )}
+                        {/* Desktop layout */}
+                        <div className="hidden sm:grid grid-cols-12 gap-2 items-start">
+                          <div className="col-span-4">
+                            <SuggestDropdown
+                              value={e.label}
+                              onChange={(v) => {
+                                updateDraft(i, "label", v);
+                                if (!autoBalance && !draftEcheances[i].manualMontant) {
+                                  const pct = Number(v.match(/(\d+)\s*%/)?.[1] ?? 0);
+                                  if (pct > 0) setDraftEcheances((p) => p.map((r, idx) =>
+                                    idx === i ? { ...r, label: v, montant: String(Math.round(total * pct) / 100) } : r
+                                  ));
+                                }
+                              }}
+                              options={ECHEANCE_LABELS}
+                              placeholder="Libellé"
+                              inputClassName="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                          </div>
+                          <div className="col-span-3">
+                            <input
+                              type="date"
+                              value={e.date}
+                              onChange={(ev) => updateDraft(i, "date", ev.target.value)}
+                              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                          </div>
+                          <div className="col-span-3 flex items-center gap-1">
+                            <input
+                              type="number"
+                              value={e.montant}
+                              onChange={(ev) => updateDraft(i, "montant", ev.target.value)}
+                              placeholder="Montant"
+                              className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                            {e.manualMontant && !autoBalance && /\d+\s*%/.test(e.label) && (
+                              <button type="button" onClick={() => recalcDraft(i)} title="Recalculer d'après le %"
+                                className="text-xs text-blue-500 hover:text-blue-700 px-1">↻</button>
+                            )}
+                            {e.montant && (
+                              <button type="button" onClick={() => setCopiedMontant(copiedMontant === e.montant ? null : e.montant)} title={copiedMontant === e.montant ? "Copié — cliquer pour effacer" : "Copier ce montant"} className={`shrink-0 transition ${copiedMontant === e.montant ? "text-blue-500" : "text-gray-300 hover:text-gray-500"}`}>
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                              </button>
+                            )}
+                            {copiedMontant !== null && copiedMontant !== e.montant && (
+                              <button type="button" onClick={() => { updateDraft(i, "montant", copiedMontant); setAutoBalance(false); }} title={`Coller ${copiedMontant} €`} className="shrink-0 text-blue-400 hover:text-blue-600 transition">
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                              </button>
+                            )}
+                          </div>
+                          <div className="col-span-2 flex justify-end">
+                            {draftEcheances.length > 1 && (
+                              <button onClick={() => removeDraftRow(i)} className="text-gray-400 hover:text-red-500 transition p-1">
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
                   <button onClick={addDraftRow} className="mt-3 text-sm text-blue-600 hover:underline">+ Ajouter une échéance</button>
+                  {total > 0 && (() => {
+                    const draftSum = draftEcheances.reduce((s, e) => s + (Number(e.montant) || 0), 0);
+                    const diff = total - draftSum;
+                    const balanced = Math.abs(diff) <= 0.01;
+                    return (
+                      <div className="mt-3 pt-3 border-t flex justify-between text-sm">
+                        <span className="text-gray-500">Total échéances</span>
+                        <span className={`font-semibold ${balanced ? "text-green-600" : "text-red-500"}`}>
+                          {fmtMoney(draftSum)}{!balanced && ` (manque ${fmtMoney(diff)})`}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <div className="flex gap-3 mt-4">
                     <button onClick={() => setShowEcheancierBuilder(false)} className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
                       Annuler
@@ -1043,8 +1511,8 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               <div className="flex justify-between text-gray-600"><span>Total HT</span><span>{fmtMoney(total)}</span></div>
               {echeances.length > 0 && (
                 <>
-                  <div className="flex justify-between text-gray-500 text-xs"><span>Reçu</span><span className="text-green-600 font-medium">{fmtMoney(paidTotal)}</span></div>
-                  <div className="flex justify-between text-gray-500 text-xs"><span>Restant</span><span className="text-orange-600 font-medium">{fmtMoney(pendingTotal)}</span></div>
+                  <div className="flex justify-between text-gray-500 text-xs"><span>Reçu</span><span className="text-green-600 font-medium">{fmtMoney(displayPaidTotal)}</span></div>
+                  <div className="flex justify-between text-gray-500 text-xs"><span>Restant</span><span className="text-orange-600 font-medium">{fmtMoney(displayPendingTotal)}</span></div>
                 </>
               )}
               <div className="border-t pt-3 flex justify-between font-bold text-gray-900">
@@ -1061,15 +1529,90 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               <InfoRow label="Type" value={docLabel} />
               <InfoRow label="Client" value={facture.clientName || "—"} />
               <InfoRow label="Date doc." value={fmtDate((facture.date ?? facture.createdAt) ?? null)} />
-              {facture.devisNumber && <InfoRow label="Réf. devis" value={facture.devisNumber} />}
+              {facture.devisNumber && facture.devisRef && (
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-500">Réf. devis</span>
+                  <button onClick={() => router.push(`/facturation/${facture.devisRef}`)} className="text-purple-600 hover:text-purple-800 hover:underline font-medium transition">
+                    {facture.devisNumber}
+                  </button>
+                </div>
+              )}
               {facture.abonnementTitre && <InfoRow label="Abonnement" value={facture.abonnementTitre} />}
               {company && <InfoRow label="Société" value={company.nom} />}
-              <InfoRow label="Statut" value={STATUS_LABEL[facture.status]} />
+              <InfoRow label="Statut" value={statusLabels[facture.status]} />
               <InfoRow label="Lignes" value={`${items.length} prestation${items.length > 1 ? "s" : ""}`} />
-              {echeances.length > 0 && <InfoRow label="Échéances" value={`${echeances.filter((e) => e.statut === "payé").length}/${echeances.length} payées`} />}
+              {echeances.length > 0 && <InfoRow label="Échéances" value={`${echeances.filter((_, i) => echeanceIsPaid(i)).length}/${echeances.length} payées`} />}
+              {echeanceRef && (() => {
+                const grandTotal = itemsTotal;
+                const dejaRegle = echeanceRef.cumulPrecedent ?? (echeanceRef.count > 0 ? (grandTotal / echeanceRef.count) * echeanceRef.index : 0);
+                const reste = grandTotal - dejaRegle - echeanceRef.montant;
+                return (
+                  <>
+                    <InfoRow label="Règlement actuel" value={fmtMoney(echeanceRef.montant)} />
+                    {dejaRegle > 0.005 && <InfoRow label="Déjà réglé précédemment" value={fmtMoney(dejaRegle)} />}
+                    {reste > 0.005 && <InfoRow label="Restera à régler ensuite" value={fmtMoney(reste)} />}
+                  </>
+                );
+              })()}
               {facture.signed && <InfoRow label="Signé le" value={fmtDate(facture.signedAt ?? null)} />}
             </div>
           </div>
+
+          {/* RÈGLEMENT */}
+          {!isDevis && (
+            <div className="bg-white border rounded-xl shadow-sm p-5">
+              <h2 className="text-sm font-semibold text-gray-700 mb-3">Règlement</h2>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Date de paiement</label>
+                  <input
+                    type="date"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    onBlur={async () => {
+                      const ts = paymentDate ? Timestamp.fromDate(new Date(paymentDate)) : undefined;
+                      await updateFacture(id, { paymentDate: ts ?? null as any });
+                      setFacture((p) => p ? { ...p, paymentDate: ts } : null);
+                    }}
+                    className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Mode de paiement</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={async (e) => {
+                      const v = e.target.value;
+                      setPaymentMethod(v);
+                      await updateFacture(id, { paymentMethod: v || null as any });
+                      setFacture((p) => p ? { ...p, paymentMethod: v || undefined } : null);
+                    }}
+                    className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition bg-white"
+                  >
+                    <option value="">— Non renseigné —</option>
+                    <option value="Virement bancaire">Virement bancaire</option>
+                    <option value="Chèque">Chèque</option>
+                    <option value="Espèces">Espèces</option>
+                    <option value="Carte bancaire">Carte bancaire</option>
+                    <option value="Prélèvement automatique">Prélèvement automatique</option>
+                    <option value="Autre">Autre</option>
+                  </select>
+                </div>
+                {(paymentDate || paymentMethod) && (
+                  <button
+                    onClick={async () => {
+                      setPaymentDate(""); setPaymentMethod("");
+                      await updateFacture(id, { paymentDate: null as any, paymentMethod: null as any });
+                      setFacture((p) => p ? { ...p, paymentDate: undefined, paymentMethod: undefined } : null);
+                    }}
+                    className="text-xs text-red-400 hover:text-red-600 transition"
+                  >
+                    Effacer
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* GOOGLE AGENDA */}
           <div className="bg-white border rounded-xl shadow-sm p-5">
@@ -1102,17 +1645,24 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
 
           {/* TÉLÉCHARGER + PARTAGER PDF */}
           <div className="space-y-2">
+            {facture.pdfUrl && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-xl">
+                <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <span className="text-xs font-semibold text-green-700">PDF stocké en ligne</span>
+                <a href={facture.pdfUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-green-600 hover:text-green-800 underline transition">Voir</a>
+              </div>
+            )}
             <button onClick={handlePDF} disabled={generatingPdf} className="w-full flex items-center justify-center gap-2 py-3 bg-gray-800 hover:bg-gray-900 disabled:opacity-60 text-white rounded-xl text-sm font-semibold transition">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-              {generatingPdf ? "Génération…" : `Télécharger le ${docLabel.toLowerCase()} PDF`}
+              {generatingPdf ? "Génération…" : `Télécharger ${docLabel.toLowerCase()} PDF`}
             </button>
             <button onClick={handleUploadAndShare} disabled={pdfUploading} className="w-full flex items-center justify-center gap-2 py-2.5 border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-60 rounded-xl text-sm font-medium transition">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-              {pdfUploading ? "Upload en cours…" : "Stocker & Partager"}
+              {pdfUploading ? "Upload en cours…" : facture.pdfUrl ? "Mettre à jour & Partager" : "Stocker & Partager"}
             </button>
             {facture.pdfUrl && (
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-2">
-                <p className="text-xs font-medium text-blue-700">Document en ligne — partager :</p>
+                <p className="text-xs font-medium text-blue-700">Partager :</p>
                 <div className="flex gap-2">
                   <button
                     onClick={() => {
@@ -1127,10 +1677,15 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                   </button>
                   <button
                     onClick={() => {
-                      const email = client?.email ?? "";
-                      const subject = encodeURIComponent(`${docLabel} ${facture.number}`);
-                      const body = encodeURIComponent(`Bonjour,\n\nVeuillez trouver votre ${docLabel.toLowerCase()} ${facture.number} en cliquant sur le lien ci-dessous :\n\n${facture.pdfUrl}\n\nCordialement`);
-                      window.open(`mailto:${email}?subject=${subject}&body=${body}`, "_blank");
+                      const clientEmail = client?.email ?? "";
+                      const billingEmail = facture.factureEmail ?? "";
+                      const billingSet = !!facture.factureNom;
+                      // "Facturé à" renseigné avec un email → destinataire = facturé à, client en CC
+                      if (billingSet && billingEmail) {
+                        setEmailModal({ to: billingEmail, cc: clientEmail && clientEmail !== billingEmail ? clientEmail : "", cci: "" });
+                      } else {
+                        setEmailModal({ to: clientEmail, cc: "", cci: "" });
+                      }
                     }}
                     className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition"
                   >

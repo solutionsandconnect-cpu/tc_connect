@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useMessagerieUnread } from '@/hooks/useMessagerieUnread'
+import { usePendingSubscriptions } from '@/hooks/usePendingSubscriptions'
 import {
   HomeIcon, CalendarIcon, BellIcon, UserIcon,
   UsersIcon, ClipboardDocumentListIcon, BookOpenIcon,
@@ -95,6 +96,7 @@ export default function Navbar() {
 
   const { unreadCount } = useNotifications()
   const messagerieUnread = useMessagerieUnread()
+  const pendingSubscriptions = usePendingSubscriptions()
 
   const handleLogout = async () => {
     await logout()
@@ -162,7 +164,8 @@ export default function Navbar() {
                     const Icon = isActive ? item.iconActive : item.icon
                     const isNotif = item.href === '/notifications'
                     const isMsg = item.href === '/messagerie'
-                    const badgeCount = isNotif ? unreadCount : isMsg ? messagerieUnread : 0
+                    const isBoutique = item.href === '/boutique'
+                    const badgeCount = isNotif ? unreadCount : isMsg ? messagerieUnread : isBoutique ? pendingSubscriptions : 0
                     return (
                       <button
                         key={item.href}
@@ -225,7 +228,8 @@ export default function Navbar() {
               const Icon = isActive ? item.iconActive : item.icon
               const isNotif = item.href === '/notifications'
               const isMsg = item.href === '/messagerie'
-              const mobileBadge = isNotif ? unreadCount : isMsg ? messagerieUnread : 0
+              const isBoutique = item.href === '/boutique'
+              const mobileBadge = isNotif ? unreadCount : isMsg ? messagerieUnread : isBoutique ? pendingSubscriptions : 0
               return (
                 <button
                   key={item.href}

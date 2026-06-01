@@ -3,7 +3,10 @@ import type { Facture, FactureItem, Company, EcheanceRef } from "@/types";
 // ── Utilitaires ───────────────────────────────────────────────────────────────
 
 function fmt(n: number) {
-  return n.toLocaleString("fr-FR", { minimumFractionDigits: 2 }) + " €";
+  const sign = n < 0 ? "-" : "";
+  const [intStr, dec] = Math.abs(n).toFixed(2).split(".");
+  const intFmt = intStr.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return `${sign}${intFmt},${dec} €`;
 }
 
 function fmtDate(ts?: { seconds: number } | null) {
@@ -22,7 +25,7 @@ export function itemNetTotal(item: FactureItem): number {
   const gross = item.quantity * item.price;
   if (!item.discountType || !item.discountValue) return gross;
   if (item.discountType === "percent") return gross * (1 - item.discountValue / 100);
-  return Math.max(0, gross - item.discountValue);
+  return gross - item.discountValue;
 }
 
 async function fetchImageAsDataUrl(url: string): Promise<string | null> {
@@ -83,7 +86,7 @@ async function buildPDF(facture: Facture, company?: Company | null) {
   const lightGray: [number, number, number] = [243, 244, 246];
   const dark: [number, number, number] = [17, 24, 39];
   const green: [number, number, number] = [22, 163, 74];
-  const orange: [number, number, number] = [234, 88, 12];
+  const orange: [number, number, number] = blue;
 
   // ── Charger le logo ─────────────────────────────────────────────
   let logoDataUrl: string | null = null;
@@ -226,8 +229,8 @@ async function buildPDF(facture: Facture, company?: Company | null) {
   // Colonnes : desc | qté | prix | remise | total
   const hasDiscount = facture.items.some((i) => i.discountType && i.discountValue);
   const cols = hasDiscount
-    ? [contentW * 0.40, contentW * 0.10, contentW * 0.15, contentW * 0.17, contentW * 0.18]
-    : [contentW * 0.50, contentW * 0.12, contentW * 0.19, contentW * 0.19];
+    ? [contentW * 0.38, contentW * 0.09, contentW * 0.15, contentW * 0.13, contentW * 0.25]
+    : [contentW * 0.50, contentW * 0.10, contentW * 0.17, contentW * 0.23];
   const headers = hasDiscount
     ? ["Description", "Qté", "Prix unit.", "Remise", "Total net"]
     : ["Description", "Qté", "Prix unit.", "Total"];
@@ -239,8 +242,11 @@ async function buildPDF(facture: Facture, company?: Company | null) {
   doc.setFont("helvetica", "bold");
   let cx = margin + 3;
   for (let i = 0; i < headers.length; i++) {
-    const right = i >= 2;
-    doc.text(headers[i], right ? cx + cols[i] - 4 : cx, y + 5.5, { align: right ? "right" : "left" });
+    if (i === 0) {
+      doc.text(headers[i], cx, y + 5.5, { align: "left" });
+    } else {
+      doc.text(headers[i], cx + cols[i] / 2, y + 5.5, { align: "center" });
+    }
     cx += cols[i];
   }
 
@@ -269,10 +275,10 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     doc.text(label, cx, y + 5.5);
     cx += cols[0];
 
-    doc.text(String(item.quantity), cx + cols[1] - 4, y + 5.5, { align: "right" });
+    doc.text(String(item.quantity), cx + cols[1] / 2, y + 5.5, { align: "center" });
     cx += cols[1];
 
-    doc.text(fmt(item.price), cx + cols[2] - 4, y + 5.5, { align: "right" });
+    doc.text(fmt(item.price), cx + cols[2] / 2, y + 5.5, { align: "center" });
     cx += cols[2];
 
     if (hasDiscount) {
@@ -281,14 +287,14 @@ async function buildPDF(facture: Facture, company?: Company | null) {
         const dLabel = item.discountType === "percent"
           ? `-${item.discountValue}%`
           : `-${fmt(item.discountValue)}`;
-        doc.text(dLabel, cx + cols[3] - 4, y + 5.5, { align: "right" });
+        doc.text(dLabel, cx + cols[3] / 2, y + 5.5, { align: "center" });
         doc.setTextColor(...dark);
       }
       cx += cols[3];
     }
 
     doc.setFont("helvetica", "bold");
-    doc.text(fmt(net), cx + cols[cols.length - 1] - 4, y + 5.5, { align: "right" });
+    doc.text(fmt(net), cx + cols[cols.length - 1] / 2, y + 5.5, { align: "center" });
     y += 8;
   }
 
@@ -345,8 +351,21 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     doc.text(fmt(echeanceRef.montant), totalX + totalW - 4, y + 10, { align: "right" });
     y += 19;
 
-    const reste = grandTotal - echeanceRef.montant;
-    if (reste > 0) {
+    // Déjà réglé avant cette échéance (cumul des échéances précédentes).
+    // Fallback pour les anciennes factures sans cumulPrecedent : répartition équitable.
+    const dejaRegle = echeanceRef.cumulPrecedent ?? (echeanceRef.count > 0 ? (grandTotal / echeanceRef.count) * echeanceRef.index : 0);
+    if (dejaRegle > 0) {
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(...gray);
+      doc.text("Déjà réglé précédemment", totalX + 4, y + 5.5);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(...dark);
+      doc.text(fmt(dejaRegle), totalX + totalW - 4, y + 5.5, { align: "right" });
+      y += 8;
+    }
+    const reste = grandTotal - dejaRegle - echeanceRef.montant;
+    if (reste > 0.005) {
       doc.setFontSize(8.5);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(...orange);
@@ -365,6 +384,39 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     doc.text("TOTAL HT", totalX + 4, y + 9);
     doc.text(fmt(grandTotal), totalX + totalW - 4, y + 9, { align: "right" });
     y += 20;
+  }
+
+  // ── Référence de paiement (factures uniquement) ─────────────────
+  if (!isDevis) {
+    const hasRib = company?.iban || company?.bic;
+    const boxH = hasRib ? 22 : 14;
+    if (y > 260) { doc.addPage(); y = 20; }
+    doc.setDrawColor(...blue);
+    doc.setLineWidth(0.5);
+    doc.setFillColor(239, 246, 255);
+    doc.roundedRect(margin, y, contentW, boxH, 2, 2, "FD");
+    // Titre + numéro facture
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...blue);
+    doc.text("Référence à indiquer pour tout virement :", margin + 4, y + 5.5);
+    doc.setFontSize(9.5);
+    doc.text(facture.number, margin + 4, y + 11);
+    // Info virement à droite
+    // IBAN + BIC
+    if (hasRib) {
+      doc.setFontSize(7.5);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(...blue);
+      doc.text("Coordonnées bancaires :", margin + 4, y + 17.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(...dark);
+      const ribParts: string[] = [];
+      if (company?.iban) ribParts.push(`IBAN : ${company.iban}`);
+      if (company?.bic) ribParts.push(`BIC : ${company.bic}`);
+      doc.text(ribParts.join("   "), margin + 46, y + 17.5);
+    }
+    y += boxH + 4;
   }
 
   // ── Échéancier ──────────────────────────────────────────────────
@@ -493,8 +545,12 @@ async function buildPDF(facture: Facture, company?: Company | null) {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(8);
   doc.setFont("helvetica", "normal");
+  const ribInfo = [
+    company?.iban ? `IBAN : ${company.iban}` : null,
+    company?.bic ? `BIC : ${company.bic}` : null,
+  ].filter(Boolean).join(" · ");
   const footerMain = company
-    ? `${company.nom}${company.iban ? ` · IBAN : ${company.iban}` : ""}`
+    ? `${company.nom}${ribInfo ? ` · ${ribInfo}` : ""}`
     : "Merci de votre confiance.";
   doc.text(footerMain, W / 2, footerY + 5.5, { align: "center" });
   doc.setFontSize(7);

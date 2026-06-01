@@ -145,7 +145,18 @@ export default function OverviewSeancePage() {
   }, [userProfile, isAdmin, router])
 
   const [loading, setLoading] = useState(true)
+  const [accessBlocked, setAccessBlocked] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+
+  // Vérifier si l'accès aux séances est expiré pour les non-admins
+  useEffect(() => {
+    if (!currentUser || isAdmin) return
+    getDocs(query(collection(db, 'clients'), where('linkedUserId', '==', currentUser.uid))).then((snap) => {
+      if (snap.empty) return
+      const expiry = (snap.docs[0].data() as any).seanceAccessExpiry
+      if (expiry && expiry.toMillis() < Date.now()) setAccessBlocked(true)
+    }).catch(() => {})
+  }, [currentUser, isAdmin])
 
   // Add circuit modal
   const [showAddCircuit, setShowAddCircuit] = useState(false)
@@ -355,6 +366,19 @@ export default function OverviewSeancePage() {
   if (loading) return (
     <div className="flex items-center justify-center min-h-screen">
       <div className="w-8 h-8 border-4 border-gray-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+
+  if (accessBlocked) return (
+    <div className="flex flex-col items-center justify-center min-h-screen gap-4 px-6 text-center">
+      <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-3xl">🔒</div>
+      <h2 className="text-xl font-bold text-gray-800">Accès aux séances expiré</h2>
+      <p className="text-sm text-gray-500 max-w-xs">
+        Votre période d'accès aux séances en ligne a pris fin. Contactez votre coach pour renouveler votre abonnement.
+      </p>
+      <button onClick={() => router.push('/accueil')} className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+        Retour à l'accueil
+      </button>
     </div>
   )
 

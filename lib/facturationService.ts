@@ -36,8 +36,7 @@ export const createFacture = async (
   const prefix = isDevis ? "DEV" : "FAC";
   const q = query(col, where("userId", "==", data.userId), where("type", "==", data.type));
   const snap = await getDocs(q);
-  const docDate = data.date ? (data.date as Timestamp).toDate() : new Date();
-  const number = `${prefix}_${String(snap.size + 1).padStart(3, "0")}_${dateSuffix(docDate)}`;
+  const number = `${prefix}_${String(snap.size + 1).padStart(3, "0")}_${dateSuffix()}`;
 
   // Strip undefined values before writing to Firestore
   const clean = Object.fromEntries(
@@ -60,53 +59,46 @@ export const convertDevisToFacture = async (id: string, userId: string): Promise
   const typeQ = query(col, where("userId", "==", userId), where("type", "==", "facture"));
 
   if (devisData.echeances && devisData.echeances.length > 0) {
+    // Option A : on ne crée que la première facture — les suivantes seront émises au fil de l'eau
     const echeanceCount = devisData.echeances.length
-
-    // One facture per échéance — keeps the original devis items (real lines)
-    // + stores an echeanceRef so the page knows which échéance this bill covers
-    for (let i = 0; i < echeanceCount; i++) {
-      const echeance = devisData.echeances[i]
-      const snap = await getDocs(typeQ);
-      const echeanceDate = echeance.date ? (echeance.date as Timestamp).toDate() : new Date();
-      const number = `FAC_${String(snap.size + 1).padStart(3, "0")}_${dateSuffix(echeanceDate)}`;
-      const echeanceLabel = echeance.label || `Règlement ${i + 1}/${echeanceCount}`
-      const clean = Object.fromEntries(
-        Object.entries({
-          ...devisData,
-          type: "facture" as const,
-          number,
-          status: "draft" as const,
-          devisRef: id,
-          devisNumber: devisData.number,
-          // Keep all original devis lines — shown as "what was contracted"
-          items: devisData.items,
-          // total = this échéance's amount (NOT the sum of all items)
-          total: echeance.montant,
-          // Echéance metadata — used by the page to render "Facturation actuelle"
-          echeanceRef: {
-            label: echeanceLabel,
-            montant: echeance.montant,
-            index: i,
-            count: echeanceCount,
-          },
-          date: echeance.date,
-          echeances: undefined,
-          signed: undefined,
-          signedAt: undefined,
-          convertedToFactureId: undefined,
-          convertedToFactureIds: undefined,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-        }).filter(([, v]) => v !== undefined)
-      );
-      const ref = await addDoc(col, clean);
-      factureIds.push(ref.id);
-    }
+    const echeance = devisData.echeances[0]
+    const snap = await getDocs(typeQ);
+    const number = `FAC_${String(snap.size + 1).padStart(3, "0")}_${dateSuffix()}`;
+    const echeanceLabel = echeance.label || `Règlement 1/${echeanceCount}`
+    const clean = Object.fromEntries(
+      Object.entries({
+        ...devisData,
+        type: "facture" as const,
+        number,
+        status: "draft" as const,
+        devisRef: id,
+        devisNumber: devisData.number,
+        items: devisData.items,
+        total: echeance.montant,
+        echeanceRef: {
+          label: echeanceLabel,
+          montant: echeance.montant,
+          index: 0,
+          count: echeanceCount,
+          cumulPrecedent: 0,
+        },
+        date: Timestamp.now(),
+        dateEcheance: echeance.date,
+        echeances: undefined,
+        signed: undefined,
+        signedAt: undefined,
+        convertedToFactureId: undefined,
+        convertedToFactureIds: undefined,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      }).filter(([, v]) => v !== undefined)
+    );
+    const ref = await addDoc(col, clean);
+    factureIds.push(ref.id);
   } else {
     // No écheancier — single facture as before
     const snap = await getDocs(typeQ);
-    const docDate = devisData.date ? (devisData.date as Timestamp).toDate() : new Date();
-    const number = `FAC_${String(snap.size + 1).padStart(3, "0")}_${dateSuffix(docDate)}`;
+    const number = `FAC_${String(snap.size + 1).padStart(3, "0")}_${dateSuffix()}`;
     const clean = Object.fromEntries(
       Object.entries({
         ...devisData,
@@ -145,6 +137,57 @@ export const updateFacture = async (id: string, data: Partial<Omit<Facture, "id"
     ...clean,
     updatedAt: Timestamp.now(),
   });
+};
+
+// Émet la prochaine facture d'un devis à échéancier (option A — au fil de l'eau)
+export const generateNextEcheanceFacture = async (devisId: string, userId: string): Promise<string | null> => {
+  const devisSnap = await getDoc(doc(db, "factures", devisId));
+  const devisData = { id: devisSnap.id, ...devisSnap.data() } as Facture;
+  if (!devisData.echeances || devisData.echeances.length === 0) return null;
+
+  const already = (devisData.convertedToFactureIds ?? (devisData.convertedToFactureId ? [devisData.convertedToFactureId] : [])).length;
+  const nextIndex = already;
+  if (nextIndex >= devisData.echeances.length) return null; // toutes déjà émises
+
+  const echeance = devisData.echeances[nextIndex];
+  const echeanceCount = devisData.echeances.length;
+  // Somme des échéances précédentes (déjà réglées avant celle-ci)
+  const cumulPrecedent = devisData.echeances.slice(0, nextIndex).reduce((acc, e) => acc + (e.montant ?? 0), 0);
+  const typeQ = query(col, where("userId", "==", userId), where("type", "==", "facture"));
+  const snap = await getDocs(typeQ);
+  const number = `FAC_${String(snap.size + 1).padStart(3, "0")}_${dateSuffix()}`;
+  const echeanceLabel = echeance.label || `Règlement ${nextIndex + 1}/${echeanceCount}`;
+  const { id: _id, ...rest } = devisData;
+  const clean = Object.fromEntries(
+    Object.entries({
+      ...rest,
+      type: "facture" as const,
+      number,
+      status: "draft" as const,
+      devisRef: devisId,
+      devisNumber: devisData.number,
+      items: devisData.items,
+      total: echeance.montant,
+      echeanceRef: { label: echeanceLabel, montant: echeance.montant, index: nextIndex, count: echeanceCount, cumulPrecedent },
+      date: Timestamp.now(),
+      dateEcheance: echeance.date,
+      echeances: undefined,
+      signed: undefined,
+      signedAt: undefined,
+      convertedToFactureId: undefined,
+      convertedToFactureIds: undefined,
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    }).filter(([, v]) => v !== undefined)
+  );
+  const newRef = await addDoc(col, clean);
+  const allIds = [...(devisData.convertedToFactureIds ?? (devisData.convertedToFactureId ? [devisData.convertedToFactureId] : [])), newRef.id];
+  await updateDoc(doc(db, "factures", devisId), {
+    convertedToFactureId: allIds[0],
+    convertedToFactureIds: allIds,
+    updatedAt: Timestamp.now(),
+  });
+  return newRef.id;
 };
 
 export const deleteFacture = async (id: string) => {

@@ -20,6 +20,7 @@ import {
 import { PhoneIcon, EnvelopeIcon, ChatBubbleLeftEllipsisIcon } from "@heroicons/react/24/outline";
 import type { Client, Abonnement, AbonnementEtat, Objectif, AntecedentMedical, AntecedentSportif, MaterialItem, StructureItem, AutreCoachItem, PlanningSlot, MouvementDetail, ZoneCorporelle } from "@/types";
 import AdresseAutocomplete from "@/components/ui/AdresseAutocomplete";
+import MaterielSelect from "@/components/ui/MaterielSelect";
 import SuggestInput from "@/components/ui/SuggestInput";
 import {
   SPORTS, NIVEAUX, PRIORITE_STYLE, parseFlexDate, calcArretSport, BODY_ZONES,
@@ -28,6 +29,18 @@ import {
 import ClientEditModal from "@/components/ui/ClientEditModal";
 import { AbonnementModal } from "@/components/ui/AbonnementModal";
 import { buildWhatsAppUrl } from "@/components/ui/PhoneInput";
+import { useAbonnementsByClientId } from "@/hooks/useAbonnementsByClientId";
+
+// ── Constantes planning ───────────────────────────────────────────────────────
+const TYPES_RDV_CLIENTS = [
+  { groupe: 'TC', options: ['Séance', 'Programme', 'Rendez-vous informations', 'Rendez-vous bilan', 'Règlement TC', 'Séance en autonomie', 'Autre activité', 'Parcours sportif'] },
+  { groupe: 'S&C', options: ['Rendez-vous infos S&C', 'Rendez-vous bilan S&C', 'Règlement S&C'] },
+  { groupe: 'FFD', options: ['Détection', 'Règlement FFD'] },
+  { groupe: 'EMF', options: ['Séminaire', 'Règlement EMF'] },
+]
+const MATERIEL_DEFAUT_CLIENTS = ['Sac', 'Tapis', 'Enceinte', 'Chrono']
+const ETATS_RDV = ['Non calé', 'Calé', 'Annulé', 'Effectué']
+const MODES_RDV = ['Présentiel', 'Visioconférence', 'Téléphone']
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1201,6 +1214,13 @@ function AboCard({ abo, onEdit, onDelete, onClick, displayName, isHighlighted }:
           {expiryAlert && <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0 ${expiryAlert.cls}`}>{expiryAlert.label}</span>}
         </div>
         {abo.companyNom && <div className="text-xs text-blue-600 mt-0.5">{abo.companyNom}</div>}
+        {(abo.dateDebut || abo.dateFin) && (
+          <div className="text-xs text-gray-400 mt-0.5">
+            {abo.dateDebut ? abo.dateDebut.toDate().toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : "—"}
+            {" → "}
+            {abo.dateFin ? abo.dateFin.toDate().toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : "—"}
+          </div>
+        )}
         {abo.typeSuivi && <div className="text-xs text-gray-500">{abo.typeSuivi}{abo.frequence ? ` · ${abo.frequence}` : ""}</div>}
         {abo.resumeSuivi && <div className="text-xs text-gray-500 mt-0.5 italic line-clamp-2">{abo.resumeSuivi}</div>}
         {abo.tarifUnitaire != null && abo.tarifUnitaire > 0 && (
@@ -1516,9 +1536,9 @@ export default function ClientsPage() {
     }
   }, [rdvCountsMap, allAbosMap, clients, currentUser]);
 
-  // Exclure les clients inactifs (actif === false) du bilan "à renouveler"
+  // Exclure les clients inactifs (actif === false) et les abos orphelins (client supprimé) du bilan "à renouveler"
   const filteredExpiringAbos = useMemo(() =>
-    expiringAbos.filter((a) => clients.find((c) => c.id === a.clientId)?.actif !== false),
+    expiringAbos.filter((a) => { const cl = clients.find((c) => c.id === a.clientId); return cl != null && cl.actif !== false; }),
     [expiringAbos, clients]
   );
 
@@ -1655,6 +1675,7 @@ export default function ClientsPage() {
     } catch { setAboError("Erreur lors de l'enregistrement."); }
     finally { setAboSaving(false); }
   };
+
 
   if (!userProfile || !isAdmin) return null;
 
@@ -1826,10 +1847,26 @@ export default function ClientsPage() {
       <AbonnementModal
         isOpen={aboModal.open}
         onClose={() => setAboModal({ open: false, clientId: "", editing: null })}
-        onSaved={(id) => {
-          const c = clients.find((cl) => cl.id === aboModal.clientId);
+        onSaved={(id, etat, arretSuivi, resumeSuivi) => {
           setHighlightAbo({ clientId: aboModal.clientId, aboId: id });
           setAboModal({ open: false, clientId: "", editing: null });
+          // Sync arret_suivi + resume_suivi vers database_users_details
+          const linkedClient = clients.find((c) => c.id === aboModal.clientId);
+          const linkedUserId = (linkedClient as any)?.linkedUserId as string | undefined;
+          if (linkedUserId) {
+            getDocs(query(collection(db, "database_users_details"), where("refUsers", "==", doc(db, "users", linkedUserId))))
+              .then((snap) => {
+                snap.docs.forEach((d) => {
+                  const updates: Record<string, any> = {};
+                  if (arretSuivi !== undefined) updates.arret_suivi = arretSuivi;
+                  if (resumeSuivi !== undefined) updates.resume_suivi = resumeSuivi;
+                  if (Object.keys(updates).length > 0) {
+                    updateDoc(doc(db, "database_users_details", d.id), updates).catch(() => {});
+                  }
+                });
+              })
+              .catch(() => {});
+          }
         }}
         clientId={aboModal.clientId}
         userId={currentUser!.uid}
@@ -1842,6 +1879,7 @@ export default function ClientsPage() {
         <AboDetailModal
           abo={aboDetail.abo}
           linkedUserId={aboDetail.linkedUserId}
+          clientAddress={(() => { const c = clients.find((cl) => cl.id === aboDetail.abo.clientId); return [c?.adresse, c?.codePostal, c?.ville].filter(Boolean).join(', '); })()}
           onClose={() => setAboDetail(null)}
           onEdit={() => { openEditAbo(aboDetail.abo); setAboDetail(null); }}
           onDelete={() => { setConfirmDeleteAbo(aboDetail.abo.id); setAboDetail(null); }}
@@ -1908,37 +1946,155 @@ function ModalActions({ onCancel, onSubmit, saving, label }: { onCancel: () => v
   );
 }
 
-function AboDetailModal({ abo, linkedUserId, onClose, onEdit, onDelete }: {
-  abo: Abonnement; linkedUserId: string | null;
+const EMPTY_RDV_FORM = {
+  date: '', heure_debut: '', heure_fin: '',
+  type_planning: 'Séance', mode_rdv: 'Présentiel',
+  adresse_rdv: '', etat_planning_rdv: 'Non calé',
+  observations_rdv: '', materiel: [...MATERIEL_DEFAUT_CLIENTS],
+  abonnement_id: '',
+};
+
+function AboDetailModal({ abo, linkedUserId, clientAddress, onClose, onEdit, onDelete }: {
+  abo: Abonnement; linkedUserId: string | null; clientAddress: string;
   onClose: () => void; onEdit: () => void; onDelete: () => void;
 }) {
-  const router = useRouter();
+  const { currentUser } = useAuth();
   const [rdvs, setRdvs] = useState<any[]>([]);
   const [loadingRdvs, setLoadingRdvs] = useState(false);
+  const [rdvForm, setRdvForm] = useState<typeof EMPTY_RDV_FORM | null>(null); // null = liste, object = form
+  const [editingRdvId, setEditingRdvId] = useState<string | null>(null);
+  const [savingRdv, setSavingRdv] = useState(false);
+  const { abonnements: clientAbos } = useAbonnementsByClientId(abo.clientId);
 
-  useEffect(() => {
+  const loadRdvs = async () => {
     if (!linkedUserId) { setRdvs([]); return; }
     setLoadingRdvs(true);
-    getDocs(query(
-      collection(db, "planning_pro"),
-      where("ref_users", "==", doc(db, "users", linkedUserId))
-    )).then((snap) => {
-      const startMs = abo.dateDebut?.toMillis?.() ?? 0;
-      const endMs = abo.dateFin?.toMillis?.() ?? Infinity;
+    try {
+      // ref_users peut être stocké comme référence Firestore OU comme chaîne — on interroge les deux
+      const userRef = doc(db, "users", linkedUserId);
+      const [snapRef, snapStr] = await Promise.all([
+        getDocs(query(collection(db, "planning_pro"), where("ref_users", "==", userRef))),
+        getDocs(query(collection(db, "planning_pro"), where("ref_users", "==", linkedUserId))).catch(() => ({ docs: [] as any[] })),
+      ]);
+      const seen = new Set<string>();
+      const all = [...snapRef.docs, ...snapStr.docs]
+        .filter((d) => { if (seen.has(d.id)) return false; seen.add(d.id); return true; })
+        .map((d) => ({ id: d.id, ...d.data() as any }));
+      const sod = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime() };
+      const eod = (ms: number) => { const d = new Date(ms); d.setHours(23, 59, 59, 999); return d.getTime() };
+      const startMs = abo.dateDebut?.toMillis ? sod(abo.dateDebut.toMillis()) : 0;
+      const endMs = abo.dateFin?.toMillis ? eod(abo.dateFin.toMillis()) : Infinity;
       setRdvs(
-        snap.docs
-          .map((d) => ({ id: d.id, ...d.data() as any }))
-          .filter((r) => { const ms = r.date_planning?.toMillis?.() ?? 0; return ms >= startMs && ms <= endMs; })
+        all
+          // Inclure si lié explicitement à cet abonnement OU si dans la période de l'abonnement (comparaison par jour)
+          .filter((r) => {
+            if (r.abonnementId === abo.id) return true;
+            const ms = r.date_planning?.toMillis ? sod(r.date_planning.toMillis()) : 0;
+            return ms >= startMs && ms <= endMs;
+          })
           .sort((a, b) => (a.date_planning?.toMillis?.() ?? 0) - (b.date_planning?.toMillis?.() ?? 0))
       );
-    }).catch(console.error).finally(() => setLoadingRdvs(false));
-  }, [linkedUserId, abo.id]);
+    } catch (e) { console.error(e); }
+    finally { setLoadingRdvs(false); }
+  };
+
+  useEffect(() => { loadRdvs(); }, [linkedUserId, abo.id]);
 
   const fmtDate = (ts: any) => ts?.toDate?.()?.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short", year: "numeric" }) ?? "—";
   const fmtTime = (ts: any) => { const d = ts?.toDate?.(); return d ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : ""; };
   const ETAT_RDV: Record<string, string> = {
     "Effectué": "bg-blue-100 text-blue-700", "Calé": "bg-green-100 text-green-700",
     "Non calé": "bg-orange-100 text-orange-700", "Annulé": "bg-red-100 text-red-600",
+  };
+
+  const addMinutesToTime = (time: string, minutes: number): string => {
+    if (!time) return time;
+    const [h, m] = time.split(':').map(Number);
+    const total = h * 60 + m + minutes;
+    return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  };
+
+  const openCreate = () => {
+    const d = new Date();
+    const now = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    setRdvForm({
+      ...EMPTY_RDV_FORM,
+      date: d.toISOString().slice(0, 10),
+      heure_debut: now,
+      heure_fin: addMinutesToTime(now, 60),
+      adresse_rdv: clientAddress,
+      abonnement_id: abo.id,
+    });
+    setEditingRdvId(null);
+  };
+
+  const openEdit = (rdv: any) => {
+    const date = rdv.date_planning?.toDate?.();
+    const debut = rdv.heure_planning_debut?.toDate?.();
+    const fin = rdv.heure_planning_fin?.toDate?.();
+    // Si pas d'abonnementId, essayer de trouver l'abonnement actif à la date du RDV
+    let abonnementId = rdv.abonnementId || '';
+    if (!abonnementId && rdv.date_planning) {
+      const rdvMs = rdv.date_planning.toMillis?.() ?? 0;
+      const match = clientAbos.find((a) => {
+        const start = a.dateDebut?.toMillis?.() ?? 0;
+        const end = a.dateFin?.toMillis?.() ?? Infinity;
+        return rdvMs >= start && rdvMs <= end;
+      });
+      if (match) abonnementId = match.id;
+    }
+    setRdvForm({
+      date: date ? date.toISOString().slice(0, 10) : '',
+      heure_debut: debut ? `${String(debut.getHours()).padStart(2,'0')}:${String(debut.getMinutes()).padStart(2,'0')}` : '',
+      heure_fin: fin ? `${String(fin.getHours()).padStart(2,'0')}:${String(fin.getMinutes()).padStart(2,'0')}` : '',
+      type_planning: rdv.type_planning || 'Séance',
+      mode_rdv: rdv.mode_rdv || 'Présentiel',
+      adresse_rdv: rdv.adresse_rdv || '',
+      etat_planning_rdv: rdv.etat_planning_rdv || 'Non calé',
+      observations_rdv: rdv.observations_rdv || '',
+      materiel: Array.isArray(rdv.materiel) ? rdv.materiel : rdv.materiel ? [rdv.materiel] : [...MATERIEL_DEFAUT_CLIENTS],
+      abonnement_id: abonnementId,
+    });
+    setEditingRdvId(rdv.id);
+  };
+
+  const saveRdv = async () => {
+    if (!rdvForm || !currentUser || !linkedUserId) return;
+    setSavingRdv(true);
+    try {
+      const [y, m, d] = rdvForm.date.split('-').map(Number);
+      const dateObj = new Date(y, m - 1, d);
+      const [hD, mD] = (rdvForm.heure_debut || '09:00').split(':').map(Number);
+      const [hF, mF] = (rdvForm.heure_fin || '10:00').split(':').map(Number);
+      const dateDebut = new Date(dateObj); dateDebut.setHours(hD, mD, 0);
+      const dateFin = new Date(dateObj); dateFin.setHours(hF, mF, 0);
+      const userRef = doc(db, 'users', linkedUserId);
+      const payload: any = {
+        date_planning: Timestamp.fromDate(dateObj),
+        heure_planning_debut: Timestamp.fromDate(dateDebut),
+        heure_planning_fin: Timestamp.fromDate(dateFin),
+        ref_users: userRef, ref_client: userRef,
+        type_planning: rdvForm.type_planning,
+        mode_rdv: rdvForm.mode_rdv,
+        adresse_rdv: rdvForm.adresse_rdv,
+        etat_planning_rdv: rdvForm.etat_planning_rdv,
+        observations_rdv: rdvForm.observations_rdv,
+        materiel: rdvForm.materiel,
+        rdv_cree_par: doc(db, 'users', currentUser.uid),
+      };
+      if (rdvForm.abonnement_id) payload.abonnementId = rdvForm.abonnement_id;
+      if (editingRdvId) {
+        await updateDoc(doc(db, 'planning_pro', editingRdvId), payload);
+      } else {
+        payload.rdv_pret = ''; payload.rdv_effectue = ''; payload.questionnaire_rempli = false;
+        payload.date_create = Timestamp.now();
+        await addDoc(collection(db, 'planning_pro'), payload);
+      }
+      setRdvForm(null);
+      setEditingRdvId(null);
+      loadRdvs();
+    } catch (e) { console.error(e); }
+    finally { setSavingRdv(false); }
   };
 
   return (
@@ -1987,25 +2143,131 @@ function AboDetailModal({ abo, linkedUserId, onClose, onEdit, onDelete }: {
           </div>
         )}
         {abo.resumeSuivi && (<div><p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Résumé du suivi</p><p className="text-sm text-gray-700 bg-gray-50 rounded-xl p-3 whitespace-pre-wrap">{abo.resumeSuivi}</p></div>)}
+        {/* ── FORMULAIRE RDV ── */}
+        {rdvForm !== null ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-sm font-semibold text-gray-700">{editingRdvId ? "Modifier le RDV" : "Nouveau RDV"}</p>
+              <button onClick={() => { setRdvForm(null); setEditingRdvId(null); }} className="text-xs text-gray-400 hover:text-gray-600 transition">← Retour</button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-1">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+                <input type="date" value={rdvForm.date} onChange={(e) => setRdvForm({ ...rdvForm, date: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Début</label>
+                <input type="time" value={rdvForm.heure_debut} onChange={(e) => {
+                  const debut = e.target.value;
+                  setRdvForm({ ...rdvForm, heure_debut: debut, heure_fin: rdvForm.heure_fin || addMinutesToTime(debut, 60) });
+                }} className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Fin</label>
+                <input type="time" value={rdvForm.heure_fin} onChange={(e) => setRdvForm({ ...rdvForm, heure_fin: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition" />
+                {rdvForm.heure_debut && (
+                  <div className="flex gap-1 mt-1">
+                    {[15, 30, 60].map((min) => (
+                      <button key={min} type="button"
+                        onClick={() => setRdvForm({ ...rdvForm, heure_fin: addMinutesToTime(rdvForm.heure_debut, min) })}
+                        className="flex-1 text-xs py-0.5 rounded bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-500 transition">
+                        +{min < 60 ? `${min}min` : '1h'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Type de RDV</label>
+                <select value={rdvForm.type_planning} onChange={(e) => setRdvForm({ ...rdvForm, type_planning: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition bg-white">
+                  {TYPES_RDV_CLIENTS.map((g) => (
+                    <optgroup key={g.groupe} label={g.groupe}>
+                      {g.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Mode</label>
+                <select value={rdvForm.mode_rdv} onChange={(e) => setRdvForm({ ...rdvForm, mode_rdv: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition bg-white">
+                  {MODES_RDV.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Adresse</label>
+              <AdresseAutocomplete value={rdvForm.adresse_rdv} onChange={(v) => setRdvForm({ ...rdvForm, adresse_rdv: v })} placeholder="Rechercher une adresse..." />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">État</label>
+                <select value={rdvForm.etat_planning_rdv} onChange={(e) => setRdvForm({ ...rdvForm, etat_planning_rdv: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition bg-white">
+                  {ETATS_RDV.map((e) => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </div>
+              {clientAbos.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Abonnement</label>
+                  <select value={rdvForm.abonnement_id} onChange={(e) => setRdvForm({ ...rdvForm, abonnement_id: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition bg-white">
+                    <option value="">— Aucun —</option>
+                    {clientAbos.map((a, i) => <option key={a.id} value={a.id}>N°{i + 1} — {a.categorie} ({a.etat})</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Matériel</label>
+              <MaterielSelect value={rdvForm.materiel} onChange={(v) => setRdvForm({ ...rdvForm, materiel: v })} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Observations</label>
+              <textarea rows={2} value={rdvForm.observations_rdv} onChange={(e) => setRdvForm({ ...rdvForm, observations_rdv: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition resize-none" />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={saveRdv} disabled={!rdvForm.date || savingRdv} className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2.5 rounded-lg text-sm font-medium transition">
+                {savingRdv ? "Enregistrement…" : editingRdvId ? "Enregistrer" : "Créer le RDV"}
+              </button>
+              <button onClick={() => { setRdvForm(null); setEditingRdvId(null); }} className="border px-4 py-2.5 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">Annuler</button>
+            </div>
+          </div>
+        ) : (
         <div>
-          <div className="flex items-center gap-2 mb-2"><CalendarDaysIcon className="w-4 h-4 text-gray-400" /><p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Rendez-vous{abo.dateDebut || abo.dateFin ? " de la période" : ""}</p></div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <CalendarDaysIcon className="w-4 h-4 text-gray-400" />
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Rendez-vous{abo.dateDebut || abo.dateFin ? " de la période" : ""}</p>
+              {!loadingRdvs && rdvs.length > 0 && (
+                <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">{rdvs.length}</span>
+              )}
+            </div>
+            {linkedUserId && (
+              <button onClick={openCreate} className="text-xs text-blue-600 border border-blue-200 hover:bg-blue-50 px-2.5 py-1 rounded-lg transition">
+                + Nouveau RDV
+              </button>
+            )}
+          </div>
           {!linkedUserId ? (<p className="text-xs text-gray-400 italic">Client non lié à un compte — aucun RDV disponible.</p>)
             : loadingRdvs ? (<div className="space-y-2">{[1, 2, 3].map((i) => <div key={i} className="h-10 bg-gray-100 rounded-xl animate-pulse" />)}</div>)
             : rdvs.length === 0 ? (<p className="text-xs text-gray-400 italic">Aucun rendez-vous sur cette période.</p>)
             : (
               <div className="space-y-1.5">
                 {rdvs.map((rdv) => (
-                  <div key={rdv.id} onClick={() => { onClose(); router.push(`/planning/${rdv.id}`); }}
-                    className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-gray-50 border border-gray-100 cursor-pointer hover:bg-blue-50 hover:border-blue-100 transition">
-                    <div className="flex items-center gap-3">
+                  <div key={rdv.id}
+                    className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-gray-50 border border-gray-100 hover:bg-blue-50 hover:border-blue-100 transition">
+                    <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={() => openEdit(rdv)}>
                       <CalendarDaysIcon className="w-4 h-4 text-gray-300 shrink-0" />
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-xs font-semibold text-gray-800">{fmtDate(rdv.date_planning)}{rdv.heure_planning_debut ? ` · ${fmtTime(rdv.heure_planning_debut)}` : ""}</p>
                         {rdv.type_planning && <p className="text-xs text-gray-500">{rdv.type_planning}</p>}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {rdv.etat_planning_rdv && (<span className={`text-xs font-medium px-2 py-0.5 rounded-full ${ETAT_RDV[rdv.etat_planning_rdv] ?? "bg-gray-100 text-gray-500"}`}>{rdv.etat_planning_rdv}</span>)}
+                      <button onClick={() => openEdit(rdv)} title="Modifier" className="p-1 hover:bg-gray-200 rounded-lg transition">
+                        <PencilIcon className="w-3.5 h-3.5 text-gray-400" />
+                      </button>
                       <ChevronRightIcon className="w-3.5 h-3.5 text-gray-400" />
                     </div>
                   </div>
@@ -2013,10 +2275,13 @@ function AboDetailModal({ abo, linkedUserId, onClose, onEdit, onDelete }: {
               </div>
             )}
         </div>
-        <div className="flex gap-3 pt-1 border-t border-gray-100">
-          <button onClick={onEdit} className="flex-1 border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-lg py-2.5 text-sm font-medium transition">Modifier</button>
-          <button onClick={onDelete} className="border border-red-200 text-red-600 hover:bg-red-50 rounded-lg px-4 py-2.5 text-sm font-medium transition">Supprimer</button>
-        </div>
+        )}
+        {rdvForm === null && (
+          <div className="flex gap-3 pt-1 border-t border-gray-100">
+            <button onClick={onEdit} className="flex-1 border border-blue-200 text-blue-700 hover:bg-blue-50 rounded-lg py-2.5 text-sm font-medium transition">Modifier</button>
+            <button onClick={onDelete} className="border border-red-200 text-red-600 hover:bg-red-50 rounded-lg px-4 py-2.5 text-sm font-medium transition">Supprimer</button>
+          </div>
+        )}
       </div>
     </Modal>
   );

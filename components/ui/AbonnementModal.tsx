@@ -25,9 +25,9 @@ const ETAT_OPTIONS: AbonnementEtat[] = ['Prospect', 'Actif', 'Inactif']
 
 const RAISONS_ARRET_SUIVI = [
   'Objectif atteint', 'Raisons financières', 'Manque de temps', 'Déménagement',
-  'Changement de coach', 'Blessure / Problème de santé', 'Reprise autonome',
-  'Pause temporaire', 'Insatisfaction', 'Fin de contrat', 'Non-renouvellement client',
-  'Décès', 'Autre',
+  'Changement de coach', 'Blessure / Problème de santé', 'Raison médicale',
+  'Reprise autonome', 'Pause temporaire', 'Insatisfaction', 'Fin de contrat',
+  'Non-renouvellement client', 'Décès', 'Autre',
 ]
 
 const NOTE_TYPES = ['Observation', 'Alerte', 'Bilan', 'Objectif', 'Absence/Vacances', 'Autre']
@@ -106,7 +106,7 @@ function AboNotesPanel({ value, onChange }: { value: AboNoteItem[]; onChange: (v
 interface Props {
   isOpen: boolean
   onClose: () => void
-  onSaved?: (id: string) => void
+  onSaved?: (id: string, etat: AbonnementEtat, arretSuivi?: string, resumeSuivi?: string) => void
   clientId: string
   userId: string
   editing?: Abonnement | null
@@ -169,10 +169,10 @@ export function AbonnementModal({ isOpen, onClose, onSaved, clientId, userId, ed
       }
       if (editing) {
         await updateAbonnement(editing.id, base)
-        onSaved?.(editing.id)
+        onSaved?.(editing.id, form.etat, form.arretSuivi || undefined, form.resumeSuivi || undefined)
       } else {
         const ref = await createAbonnement(base as Omit<Abonnement, 'id' | 'createdAt' | 'updatedAt'>)
-        onSaved?.(ref.id)
+        onSaved?.(ref.id, form.etat, form.arretSuivi || undefined, form.resumeSuivi || undefined)
       }
       onClose()
     } catch {

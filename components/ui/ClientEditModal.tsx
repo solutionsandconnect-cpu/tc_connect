@@ -155,6 +155,7 @@ type ClientForm = {
   decouverte: string[]
   pendingNotes: Array<{ texte: string; type_note: string; date_max?: string }>
   contactsSupplementaires: ContactSupplementaire[]
+  seanceAccessExpiry: string  // date ISO "YYYY-MM-DD" ou ""
 }
 
 const EMPTY_CLIENT: ClientForm = {
@@ -167,7 +168,7 @@ const EMPTY_CLIENT: ClientForm = {
   lieuSeance: "", lieuSeanceLat: null, lieuSeanceLng: null, distanceKm: null, tempsRouteSeance: "",
   nbSeancesMin: "", nbSeancesMax: "", planningSlots: {}, planningDispoSlots: {},
   joursTravail: [], positionTravail: "", tempsRouteTravail: "", tempsTravailSemaine: "",
-  napCategorie: "", decouverte: [], pendingNotes: [], contactsSupplementaires: [],
+  napCategorie: "", decouverte: [], pendingNotes: [], contactsSupplementaires: [], seanceAccessExpiry: "",
 }
 
 type FormTab = "identite" | "sport" | "sante" | "conditions" | "notes"
@@ -431,22 +432,33 @@ function SuivisPassesList({ value, onChange }: { value: SuiviPasse[]; onChange: 
 }
 
 function ContactsSupplementairesList({ value, onChange }: { value: ContactSupplementaire[]; onChange: (v: ContactSupplementaire[]) => void }) {
-  const empty: ContactSupplementaire = { label: "", nom: "", prenom: "", adresse: "", codePostal: "", ville: "", telephone: "", email: "" }
+  const empty: ContactSupplementaire = { label: "", nom: "", prenom: "", adresse: "", codePostal: "", ville: "", telephone: "", email: "", factureParDefaut: false }
   const [form, setForm] = useState<ContactSupplementaire>(empty)
   const [open, setOpen] = useState(false)
   const [editIdx, setEditIdx] = useState<number | null>(null)
   const submit = () => {
-    if (!form.nom?.trim() && !form.prenom?.trim()) return
-    if (editIdx !== null) { onChange(value.map((v, i) => (i === editIdx ? form : v))); setEditIdx(null) }
-    else onChange([...value, form])
-    setForm(empty); setOpen(false)
+    // Accepter si au moins un champ identifiant est rempli
+    if (!form.nom?.trim() && !form.prenom?.trim() && !form.label?.trim() && !form.email?.trim()) return
+    let next = editIdx !== null ? value.map((v, i) => (i === editIdx ? form : v)) : [...value, form]
+    // Un seul contact "par défaut" : si celui-ci l'est, retirer le flag des autres
+    if (form.factureParDefaut) {
+      next = next.map((v, i) => {
+        const isCurrent = editIdx !== null ? i === editIdx : i === next.length - 1
+        return isCurrent ? v : { ...v, factureParDefaut: false }
+      })
+    }
+    onChange(next)
+    setEditIdx(null); setForm(empty); setOpen(false)
   }
   return (
     <div className="space-y-2">
       {value.map((c, i) => (
         <div key={i} className="flex items-start gap-2 p-2.5 bg-gray-50 rounded-lg border text-sm">
           <div className="flex-1 min-w-0">
-            {c.label && <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium mb-0.5 inline-block">{c.label}</span>}
+            <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+              {c.label && <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium inline-block">{c.label}</span>}
+              {c.factureParDefaut && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium inline-block">★ Facturation par défaut</span>}
+            </div>
             <p className="font-medium text-gray-800">{[c.nom, c.prenom].filter(Boolean).join(" ")}</p>
             {(c.adresse || c.codePostal || c.ville) && (
               <p className="text-xs text-gray-500 mt-0.5 flex items-start gap-1">
@@ -484,6 +496,10 @@ function ContactsSupplementairesList({ value, onChange }: { value: ContactSupple
             <input type="tel" placeholder="Téléphone" value={form.telephone ?? ""} onChange={(e) => setForm((f) => ({ ...f, telephone: e.target.value }))} className="w-full border rounded-lg px-2 py-2 text-sm outline-none focus:border-indigo-400" />
             <input type="email" placeholder="Email" value={form.email ?? ""} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} className="w-full border rounded-lg px-2 py-2 text-sm outline-none focus:border-indigo-400" />
           </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer py-1">
+            <input type="checkbox" checked={!!form.factureParDefaut} onChange={(e) => setForm((f) => ({ ...f, factureParDefaut: e.target.checked }))} className="accent-green-600 w-4 h-4" />
+            Utiliser ces coordonnées par défaut pour la facturation
+          </label>
           <div className="flex gap-2">
             <button type="button" onClick={() => { setOpen(false); setEditIdx(null); setForm(empty) }} className="flex-1 border rounded-lg py-1.5 text-sm text-gray-600 hover:bg-gray-100 transition">Annuler</button>
             <button type="button" onClick={submit} className="flex-1 bg-indigo-600 text-white rounded-lg py-1.5 text-sm hover:bg-indigo-700 transition">{editIdx !== null ? "Modifier" : "Ajouter"}</button>
@@ -901,6 +917,7 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
       decouverte: Array.isArray(cc.decouverte) ? cc.decouverte : cc.decouverte ? [cc.decouverte] : [],
       pendingNotes: [],
       contactsSupplementaires: Array.isArray(cc.contactsSupplementaires) ? cc.contactsSupplementaires : [],
+      seanceAccessExpiry: client.seanceAccessExpiry ? client.seanceAccessExpiry.toDate().toISOString().slice(0, 10) : "",
     })
     setShowEntreprise(!!(cc.siret || cc.nomEntreprise || cc.adresseEntreprise))
   }, [isOpen, client?.id])
@@ -968,6 +985,7 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
         napCategorie: f.napCategorie || undefined,
         decouverte: f.decouverte.length ? f.decouverte : undefined,
         contactsSupplementaires: f.contactsSupplementaires.length ? f.contactsSupplementaires : undefined,
+        seanceAccessExpiry: f.seanceAccessExpiry ? Timestamp.fromDate(new Date(f.seanceAccessExpiry)) : null,
       }
       if (client) {
         await updateClient(client.id, data)
@@ -1149,6 +1167,21 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${form.actif ? "translate-x-6" : "translate-x-1"}`} />
                   </button>
                 </div>
+                <Field label={<span>Date butoire d'accès aux séances <span className="text-gray-300 font-normal">(optionnel)</span></span>}>
+                  <input type="date" className={inputCls} value={form.seanceAccessExpiry}
+                    onChange={(e) => setForm((f) => ({ ...f, seanceAccessExpiry: e.target.value }))} />
+                  {form.seanceAccessExpiry && (
+                    <div className="flex items-center justify-between mt-1">
+                      <p className="text-xs text-gray-400">
+                        {new Date(form.seanceAccessExpiry) < new Date()
+                          ? "🔒 Accès expiré — client bloqué"
+                          : `⏱ Accès jusqu'au ${new Date(form.seanceAccessExpiry).toLocaleDateString("fr-FR")}`}
+                      </p>
+                      <button type="button" onClick={() => setForm((f) => ({ ...f, seanceAccessExpiry: "" }))}
+                        className="text-xs text-red-400 hover:text-red-600 transition">Supprimer</button>
+                    </div>
+                  )}
+                </Field>
               </Section>
             </>}
 

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   collection, query, where, orderBy,
-  getDocs, getCountFromServer, doc, Timestamp, addDoc,
+  getDocs, getCountFromServer, doc, Timestamp, addDoc, updateDoc,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
@@ -29,6 +29,8 @@ export default function AccueilPage() {
   const [totalClients, setTotalClients] = useState(0)
   const [totalSeances, setTotalSeances] = useState(0)
   const [prochainsRdv, setProchainsRdv] = useState<any[]>([])
+  const [pendingEcheances, setPendingEcheances] = useState<{ devis: any; echeance: any; index: number; daysLeft: number | null }[]>([])
+  const [seanceAccessAlerts, setSeanceAccessAlerts] = useState<{ client: any; type: 'to_configure' | 'expiring_soon' | 'expired' | 'to_restore' }[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -36,6 +38,93 @@ export default function AccueilPage() {
     fetchStats()
     checkAndCreateNotifications()
   }, [currentUser])
+
+  useEffect(() => {
+    if (!currentUser || !isAdmin) return
+    getDocs(query(
+      collection(db, 'factures'),
+      where('userId', '==', currentUser.uid),
+      where('type', '==', 'devis'),
+      where('status', '==', 'accepted'),
+    )).then((snap) => {
+      const pending: { devis: any; echeance: any; index: number; daysLeft: number | null }[] = []
+      snap.docs.forEach((d) => {
+        const devis = { id: d.id, ...d.data() as any }
+        if (!devis.echeances || devis.echeances.length === 0) return
+        const already = (devis.convertedToFactureIds ?? (devis.convertedToFactureId ? [devis.convertedToFactureId] : [])).length
+        devis.echeances.slice(already).forEach((ech: any, i: number) => {
+          const daysLeft = ech.date ? Math.round((ech.date.toMillis() - Date.now()) / 86400000) : null
+          if (daysLeft === null || daysLeft <= 7) {
+            pending.push({ devis, echeance: ech, index: already + i, daysLeft })
+          }
+        })
+      })
+      pending.sort((a, b) => (a.echeance.date?.toMillis() ?? 0) - (b.echeance.date?.toMillis() ?? 0))
+      setPendingEcheances(pending)
+    }).catch(() => {})
+  }, [currentUser, isAdmin])
+
+  // Alertes accès séances pour les clients avec abonnements inactifs
+  useEffect(() => {
+    if (!currentUser || !isAdmin) return
+    ;(async () => {
+      try {
+        const now = Date.now()
+        const in7days = now + 7 * 86400000
+        // Charger tous les clients avec un linkedUserId (compte app)
+        const clientsSnap = await getDocs(query(
+          collection(db, 'clients'),
+          where('userId', '==', currentUser.uid),
+        ))
+        const linkedClients = clientsSnap.docs
+          .map((d) => ({ id: d.id, ...d.data() as any }))
+          .filter((c) => c.linkedUserId)
+        if (linkedClients.length === 0) return
+
+        // Abonnements par clientId
+        const abosSnap = await getDocs(query(collection(db, 'abonnements'), where('userId', '==', currentUser.uid)))
+        const abosByClient: Record<string, any[]> = {}
+        abosSnap.docs.forEach((d) => {
+          const a = d.data() as any
+          if (!abosByClient[a.clientId]) abosByClient[a.clientId] = []
+          abosByClient[a.clientId].push(a)
+        })
+
+        // Clients ayant au moins une vraie séance (collection seance, pas les simples RDV)
+        const seancesSnap = await getDocs(query(collection(db, 'seance')))
+        const userIdsWithSeances = new Set<string>()
+        seancesSnap.docs.forEach((d) => {
+          const uid = (d.data() as any).ref_users?.id
+          if (uid) userIdsWithSeances.add(uid)
+        })
+
+        const alerts: { client: any; type: 'to_configure' | 'expiring_soon' | 'expired' | 'to_restore' }[] = []
+        for (const client of linkedClients) {
+          const hasSeances = userIdsWithSeances.has(client.linkedUserId)
+          if (!hasSeances) continue // pas de séances en ligne → pas concerné par l'accès séances
+
+          const abos = abosByClient[client.id] ?? []
+          const hasActif = abos.some((a) => a.etat === 'Actif')
+          const hasInactif = abos.some((a) => a.etat === 'Inactif')
+          const expiry = client.seanceAccessExpiry?.toMillis?.() ?? null
+
+          if (hasActif && expiry !== null) {
+            // Abonnement redevenu actif mais une date butoire est encore configurée
+            alerts.push({ client, type: 'to_restore' })
+          } else if (!hasActif && hasInactif) {
+            if (expiry === null) {
+              alerts.push({ client, type: 'to_configure' })
+            } else if (expiry < now) {
+              alerts.push({ client, type: 'expired' })
+            } else if (expiry <= in7days) {
+              alerts.push({ client, type: 'expiring_soon' })
+            }
+          }
+        }
+        setSeanceAccessAlerts(alerts)
+      } catch {}
+    })()
+  }, [currentUser, isAdmin])
 
   const checkAndCreateNotifications = async () => {
     if (!currentUser) return
@@ -250,6 +339,117 @@ export default function AccueilPage() {
           />
         )}
       </div>
+
+      {/* ALERTE ÉCHÉANCES À ÉMETTRE — admin uniquement */}
+      {isAdmin && pendingEcheances.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-orange-500">⚠</span>
+            <p className="text-sm font-semibold text-orange-800">
+              {pendingEcheances.length} facture{pendingEcheances.length > 1 ? 's' : ''} à émettre (échéancier)
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            {pendingEcheances.map(({ devis, echeance, index, daysLeft }) => {
+              const label = echeance.label || `Règlement ${index + 1}/${devis.echeances.length}`
+              const dateStr = echeance.date
+                ? echeance.date.toDate().toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
+                : '—'
+              const tag = daysLeft === null ? '' : daysLeft < 0 ? ` · en retard de ${-daysLeft}j` : daysLeft === 0 ? ' · aujourd\'hui' : ` · dans ${daysLeft}j`
+              return (
+                <div key={`${devis.id}-${index}`}
+                  onClick={() => router.push('/facturation?tab=devis')}
+                  className="flex items-center justify-between gap-2 text-xs py-1.5 px-2 rounded-lg bg-white/60 border border-orange-100 cursor-pointer hover:bg-white transition">
+                  <span className="text-gray-700 truncate">
+                    <span className="font-medium">{devis.clientName || '—'}</span>
+                    <span className="text-gray-400 mx-1">·</span>{label}
+                    <span className="text-gray-400 mx-1">·</span>{dateStr}
+                    {tag && <span className="text-orange-600">{tag}</span>}
+                  </span>
+                  <span className="text-blue-600 shrink-0 hover:underline">Facturation →</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ALERTES ACCÈS SÉANCES — admin uniquement */}
+      {isAdmin && seanceAccessAlerts.length > 0 && (
+        <div className="space-y-2">
+          {seanceAccessAlerts.map(({ client, type }) => {
+            const name = `${(client.nom ?? '').toUpperCase()} ${client.prenom ?? ''}`.trim()
+            const expiry = client.seanceAccessExpiry?.toDate?.()?.toLocaleDateString('fr-FR') ?? null
+            const set3months = async () => {
+              const d = new Date(); d.setMonth(d.getMonth() + 3)
+              await updateDoc(doc(db, 'clients', client.id), { seanceAccessExpiry: Timestamp.fromDate(d) })
+              setSeanceAccessAlerts((prev) => prev.map((a) => a.client.id === client.id ? { ...a, client: { ...a.client, seanceAccessExpiry: Timestamp.fromDate(d) }, type: 'expiring_soon' as const } : a))
+            }
+            const clearExpiry = async () => {
+              await updateDoc(doc(db, 'clients', client.id), { seanceAccessExpiry: null })
+              setSeanceAccessAlerts((prev) => prev.filter((a) => a.client.id !== client.id))
+            }
+
+            if (type === 'to_configure') return (
+              <div key={client.id} className="flex items-center justify-between gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-500 text-sm shrink-0">⏱</span>
+                  <div>
+                    <p className="text-sm font-semibold text-blue-800">{name} — Accès séances à configurer</p>
+                    <p className="text-xs text-blue-600">Abonnement inactif · aucune date butoire définie</p>
+                  </div>
+                </div>
+                <button onClick={set3months} className="shrink-0 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap">
+                  Définir 3 mois
+                </button>
+              </div>
+            )
+            if (type === 'expiring_soon') return (
+              <div key={client.id} className="flex items-center justify-between gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-orange-500 text-sm shrink-0">⚠</span>
+                  <div>
+                    <p className="text-sm font-semibold text-orange-800">{name} — Accès séances expire bientôt</p>
+                    <p className="text-xs text-orange-600">Date butoire : {expiry}</p>
+                  </div>
+                </div>
+                <button onClick={clearExpiry} className="shrink-0 text-xs border border-orange-300 text-orange-700 hover:bg-orange-100 px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap">
+                  Rétablir
+                </button>
+              </div>
+            )
+            if (type === 'expired') return (
+              <div key={client.id} className="flex items-center justify-between gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-red-500 text-sm shrink-0">🔒</span>
+                  <div>
+                    <p className="text-sm font-semibold text-red-800">{name} — Accès séances expiré</p>
+                    <p className="text-xs text-red-600">Expiration : {expiry} · l'accès est automatiquement bloqué</p>
+                  </div>
+                </div>
+                <button onClick={clearExpiry} className="shrink-0 text-xs border border-red-300 text-red-700 hover:bg-red-100 px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap">
+                  Rétablir l'accès
+                </button>
+              </div>
+            )
+            if (type === 'to_restore') return (
+              <div key={client.id} className="flex items-center justify-between gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-green-500 text-sm shrink-0">✅</span>
+                  <div>
+                    <p className="text-sm font-semibold text-green-800">{name} — Abonnement redevenu actif</p>
+                    <p className="text-xs text-green-600">Une date butoire est encore configurée ({expiry}) · pensez à la supprimer</p>
+                  </div>
+                </div>
+                <button onClick={clearExpiry} className="shrink-0 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap">
+                  Rétablir l'accès
+                </button>
+              </div>
+            )
+            return null
+          })}
+        </div>
+      )}
 
       {/* RDV du jour */}
       <section>

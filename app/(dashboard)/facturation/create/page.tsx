@@ -164,6 +164,7 @@ export default function CreateFacturePage() {
   const [notes, setNotes] = useState("");
   const [useEcheancier, setUseEcheancier] = useState(false);
   const [autoBalance, setAutoBalance] = useState(true);
+  const [copiedMontant, setCopiedMontant] = useState<string | null>(null);
   const [echeances, setEcheances] = useState<{ label: string; date: string; montant: string; manualMontant?: boolean }[]>([
     { label: "1ère mensualité", date: "", montant: "" },
     { label: "2ème mensualité", date: "", montant: "" },
@@ -209,6 +210,16 @@ export default function CreateFacturePage() {
     setClientSearch("");
     setClientFocused(false);
     setItems([{ label: "", quantity: 1, price: 0 }]);
+    // Pré-sélectionner les coordonnées de facturation par défaut si définies
+    const contacts = (c as any).contactsSupplementaires as import("@/types").ContactSupplementaire[] | undefined ?? [];
+    const defaultIdx = contacts.findIndex((ct) => ct.factureParDefaut);
+    if (defaultIdx >= 0) {
+      setFactureMode("contact");
+      setSelectedContactIdx(defaultIdx);
+    } else {
+      setFactureMode("client");
+      setSelectedContactIdx(0);
+    }
   };
 
   // Auto-sélection du client après création via ClientEditModal
@@ -337,6 +348,7 @@ export default function CreateFacturePage() {
         userId: currentUser!.uid,
         clientId: selectedClient.id,
         clientName: [selectedClient.nom, selectedClient.prenom].filter(Boolean).join(" "),
+        clientLinkedUserId: (selectedClient as any).linkedUserId ?? undefined,
         clientAddress: selectedClient.adresse,
         clientVille: selectedClient.ville,
         clientCodePostal: selectedClient.codePostal,
@@ -345,10 +357,11 @@ export default function CreateFacturePage() {
           if (factureMode === "contact" && contacts[selectedContactIdx]) {
             const c = contacts[selectedContactIdx];
             return {
-              factureNom: [c.nom, c.prenom].filter(Boolean).join(" ") || undefined,
+              factureNom: [c.nom, c.prenom].filter(Boolean).join(" ") || c.label || undefined,
               factureAdresse: c.adresse || undefined,
               factureCodePostal: c.codePostal || undefined,
               factureVille: c.ville || undefined,
+              factureEmail: c.email || undefined,
             };
           }
           if (factureMode === "manual" && manualFactureNom.trim()) {
@@ -765,6 +778,16 @@ export default function CreateFacturePage() {
                           <input type="number" min="0" step="0.01" className="flex-1 min-w-0 border rounded-lg px-3 py-2 text-sm text-right outline-none focus:border-blue-400 transition" placeholder="0.00" value={e.montant} onChange={(ev) => updateEcheance(i, "montant", ev.target.value)} />
                           {e.manualMontant && !autoBalance && /\d+\s*%/.test(e.label) && (
                             <button type="button" onClick={() => recalcEcheance(i)} title="Recalculer d'après le %" className="shrink-0 text-blue-500 hover:text-blue-700 text-base leading-none">↻</button>
+                          )}
+                          {e.montant && (
+                            <button type="button" onClick={() => setCopiedMontant(copiedMontant === e.montant ? null : e.montant)} title={copiedMontant === e.montant ? "Copié — cliquer pour effacer" : "Copier ce montant"} className={`shrink-0 transition ${copiedMontant === e.montant ? "text-blue-500" : "text-gray-300 hover:text-gray-500"}`}>
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                            </button>
+                          )}
+                          {copiedMontant !== null && copiedMontant !== e.montant && (
+                            <button type="button" onClick={() => { updateEcheance(i, "montant", copiedMontant); setAutoBalance(false); }} title={`Coller ${copiedMontant} €`} className="shrink-0 text-blue-400 hover:text-blue-600 transition">
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                            </button>
                           )}
                         </div>
                         <button onClick={() => removeEcheance(i)} disabled={echeances.length === 1} className="col-span-1 flex justify-center text-gray-300 hover:text-red-500 disabled:opacity-0 transition">✕</button>

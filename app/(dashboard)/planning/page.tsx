@@ -1,13 +1,13 @@
 'use client'
 
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { Timestamp, doc, collection, query, where, getDocs } from 'firebase/firestore'
+import { Timestamp, doc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { usePlanning } from '@/hooks/usePlanning'
 import { useUsers } from '@/hooks/useUsers'
-import { useUserDetails } from '@/hooks/useUserDetails'
+import { useClients } from '@/hooks/useClients'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import AdresseAutocomplete from '@/components/ui/AdresseAutocomplete'
@@ -23,20 +23,40 @@ import { useActivites } from '@/hooks/useActivites'
 
 const ETATS = ['Non calé', 'Calé', 'Annulé', 'Effectué']
 
-function getAboId(p: any) {
-  return p?.refDatabaseUser?.id || p?.refDatabaseUser?.path?.split('/').pop() ||
-    p?.ref_database_user?.id || p?.ref_database_user?.path?.split('/').pop() || null
+// Map : linkedUserId (UID du compte client) → liste des périodes d'abonnement
+export type AboPeriods = Record<string, { id: string; start: number; end: number }[]>
+
+function getRdvUserId(p: any): string | null {
+  return p?.ref_users?.id || p?.ref_users?.path?.split('/').pop() ||
+    (typeof p?.ref_users === 'string' ? p.ref_users.split('/').pop() : null) ||
+    p?.ref_client?.id || p?.ref_client?.path?.split('/').pop() || null
 }
 
-function getRdvSequence(item: any, plannings: any[]) {
-  const aboId = getAboId(item)
-  if (!aboId) return null
+// Clé de regroupement d'un RDV : son client + l'abonnement (par période de dates) auquel il appartient.
+// Bornes de journée — pour comparer par jour (et non à la milliseconde près),
+// afin qu'un RDV le jour même de la date de début d'abonnement soit bien compté.
+export const startOfDayMs = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime() }
+export const endOfDayMs = (ms: number) => { const d = new Date(ms); d.setHours(23, 59, 59, 999); return d.getTime() }
+
+// On se base uniquement sur la collection "abonnements" et les dates — pas sur refDatabaseUser/abonnementId.
+function getRdvGroupKey(p: any, aboPeriods: AboPeriods): string | null {
+  const userId = getRdvUserId(p)
+  if (!userId) return null
+  const periods = aboPeriods[userId]
+  if (!periods || periods.length === 0) return null
+  const ms = startOfDayMs((p?.date_planning?.seconds ?? 0) * 1000)
+  const match = periods.find((per) => ms >= per.start && ms <= per.end)
+  return match ? `${userId}:${match.id}` : null
+}
+
+function getRdvSequence(item: any, plannings: any[], aboPeriods: AboPeriods) {
+  const key = getRdvGroupKey(item, aboPeriods)
+  if (!key) return null
   const group = plannings
-    .filter((p) => getAboId(p) === aboId)
+    .filter((p) => getRdvGroupKey(p, aboPeriods) === key)
     .sort((a, b) => {
       const dateDiff = (a.date_planning?.seconds ?? 0) - (b.date_planning?.seconds ?? 0)
       if (dateDiff !== 0) return dateDiff
-      // Same day: sort by start time
       return (a.heure_planning_debut?.seconds ?? 0) - (b.heure_planning_debut?.seconds ?? 0)
     })
   const idx = group.findIndex((p) => p.id === item.id)
@@ -174,7 +194,7 @@ const emptyForm = {
   type_planning: 'Séance',
   mode_rdv: 'Présentiel',
   materiel: [] as string[],
-  ref_database_user: '',
+  abonnement_id: '',
   participants_supplementaires: [] as { ref_client: string; ref_database_user: string }[],
   distance_km: null as number | null,
   temps_route: '',
@@ -184,6 +204,7 @@ type ViewMode = 'semaine' | 'mois'
 
 export default function PlanningPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { currentUser, userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
 
@@ -195,7 +216,64 @@ export default function PlanningPage() {
 
   const { plannings, loading, addPlanning, updatePlanning, deletePlanning } = usePlanning()
   const { users } = useUsers()
+  const { clients } = useClients()
   const { activites, addActivite, updateActivite, deleteActivite } = useActivites(isAdmin)
+
+  // Normalise un linkedUserId qui peut être "uid", "users/uid" ou une référence { id }
+  const normUid = (v: any): string | null => {
+    if (!v) return null
+    if (typeof v === 'string') return v.includes('/') ? v.split('/').pop() ?? null : v
+    return v.id ?? v.path?.split('/').pop() ?? null
+  }
+
+  // Charger tous les abonnements du coach
+  const [allAbos, setAllAbos] = useState<any[]>([])
+  useEffect(() => {
+    if (!currentUser) return
+    getDocs(query(collection(db, 'abonnements'), where('userId', '==', currentUser.uid)))
+      .then((snap) => setAllAbos(snap.docs.map((d) => ({ id: d.id, ...d.data() as any }))))
+      .catch(() => setAllAbos([]))
+  }, [currentUser])
+
+  // Abonnements indexés par identifiant client : on indexe chaque abonnement
+  // par le linkedUserId du client ET par l'id du client lui-même. Ainsi, quel que
+  // soit l'identifiant sélectionné dans le planning (UID app ou id client), et même
+  // si plusieurs fiches clients pointent vers le même user, on retrouve tous ses abonnements.
+  const abosByUserId = useMemo<Record<string, any[]>>(() => {
+    // Email du compte app → UID (filet de secours si linkedUserId absent)
+    const emailToUid: Record<string, string> = {}
+    users.forEach((u) => { const e = (u as any).email?.toLowerCase?.(); if (e) emailToUid[e] = u.id })
+    // clientId → liste des UID app (via linkedUserId ET email)
+    const clientToUids: Record<string, string[]> = {}
+    clients.forEach((c) => {
+      const set = new Set<string>()
+      const lu = normUid((c as any).linkedUserId); if (lu) set.add(lu)
+      const ce = (c as any).email?.toLowerCase?.(); if (ce && emailToUid[ce]) set.add(emailToUid[ce])
+      clientToUids[c.id] = [...set]
+    })
+    const map: Record<string, any[]> = {}
+    const push = (key: string, a: any) => { if (!map[key]) map[key] = []; if (!map[key].some((x) => x.id === a.id)) map[key].push(a) }
+    allAbos.forEach((a) => {
+      if (!a.clientId) return
+      push(a.clientId, a)                            // sélection directe par id client
+      ;(clientToUids[a.clientId] ?? []).forEach((uid) => push(uid, a))  // par UID app (linkedUserId ou email)
+    })
+    Object.values(map).forEach((list) => list.sort((x, y) => (x.dateDebut?.toMillis?.() ?? 0) - (y.dateDebut?.toMillis?.() ?? 0)))
+    return map
+  }, [allAbos, clients, users])
+
+  // Périodes d'abonnement (pour le compteur de RDV), même indexation
+  const aboPeriods = useMemo<AboPeriods>(() => {
+    const map: AboPeriods = {}
+    Object.entries(abosByUserId).forEach(([key, abos]) => {
+      map[key] = abos.map((a) => ({
+        id: a.id,
+        start: a.dateDebut?.toMillis ? startOfDayMs(a.dateDebut.toMillis()) : 0,
+        end: a.dateFin?.toMillis ? endOfDayMs(a.dateFin.toMillis()) : Infinity,
+      }))
+    })
+    return map
+  }, [abosByUserId])
 
   const today = new Date()
   const [selectedDate, setSelectedDate] = useState(new Date())
@@ -206,7 +284,44 @@ export default function PlanningPage() {
   const [searchClient, setSearchClient] = useState('')
   const [form, setForm] = useState({ ...emptyForm, materiel: [...MATERIEL_DEFAUT] })
 
-  const { details: clientDetails } = useUserDetails(form.ref_client || undefined)
+  const clientAbonnements = useMemo<any[]>(() => {
+    if (!form.ref_client) return []
+    let list = abosByUserId[form.ref_client] ?? []
+    // Fallback 1 : RDV déjà lié à un abonnement → lister tous les abos de ce client
+    if (list.length === 0 && (editItem as any)?.abonnementId) {
+      const abo = allAbos.find((a) => a.id === (editItem as any).abonnementId)
+      if (abo) list = allAbos.filter((a) => a.clientId === abo.clientId)
+    }
+    // Fallback 2 : matcher par nom complet du compte sélectionné
+    if (list.length === 0) {
+      const u = users.find((x) => x.id === form.ref_client)
+      if (u) {
+        const fullName = [u.nom, u.prenom].filter(Boolean).join(' ').toLowerCase().trim()
+        if (fullName) {
+          const ids = new Set(clients.filter((c) => [c.nom, c.prenom].filter(Boolean).join(' ').toLowerCase().trim() === fullName).map((c) => c.id))
+          list = allAbos.filter((a) => ids.has(a.clientId))
+        }
+      }
+    }
+    return [...list].sort((x, y) => (x.dateDebut?.toMillis?.() ?? 0) - (y.dateDebut?.toMillis?.() ?? 0))
+  }, [form.ref_client, abosByUserId, editItem, allAbos, users, clients])
+
+  // Ouvrir le modal "Nouveau RDV" avec client pré-sélectionné si ?client=<uid> dans l'URL
+  useEffect(() => {
+    const clientUid = searchParams.get('client')
+    if (!clientUid || !users.length) return
+    const d = new Date()
+    setEditItem(null)
+    setForm({
+      ...emptyForm,
+      ref_client: clientUid,
+      date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+      materiel: [...MATERIEL_DEFAUT],
+    })
+    setShowModal(true)
+    // Nettoyer le param de l'URL sans rechargement
+    router.replace('/planning', { scroll: false })
+  }, [searchParams.get('client'), users.length])
 
   const [calcDistance, setCalcDistance] = useState(false)
   const [showActiviteModal, setShowActiviteModal] = useState(false)
@@ -250,7 +365,7 @@ export default function PlanningPage() {
 
   const handleClientChange = (clientId: string) => {
     const client = users.find((u) => u.id === clientId)
-    setForm({ ...form, ref_client: clientId, adresse_rdv: (client as any)?.adresse_postale || form.adresse_rdv, ref_database_user: '' })
+    setForm({ ...form, ref_client: clientId, adresse_rdv: (client as any)?.adresse_postale || form.adresse_rdv, abonnement_id: '' })
   }
 
   // ── Vue semaine ────────────────────────────────────────────────
@@ -399,7 +514,7 @@ export default function PlanningPage() {
     }))
     existingParts.forEach((p) => { if (p.ref_client) loadExtraDetails(p.ref_client) })
     setForm({
-      ref_client: item.ref_client?.id || item.ref_users?.id || item.ref_users?.path?.split('/').pop() || (typeof item.ref_users === 'string' ? item.ref_users.split('/').pop() : '') || '',
+      ref_client: item.ref_users?.id || item.ref_users?.path?.split('/').pop() || (typeof item.ref_users === 'string' ? item.ref_users.split('/').pop() : '') || item.ref_client?.id || item.ref_client?.path?.split('/').pop() || '',
       date: date ? `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}` : '',
       heure_debut: debut ? `${String(debut.getHours()).padStart(2,'0')}:${String(debut.getMinutes()).padStart(2,'0')}` : '',
       heure_fin: fin ? `${String(fin.getHours()).padStart(2,'0')}:${String(fin.getMinutes()).padStart(2,'0')}` : '',
@@ -409,7 +524,7 @@ export default function PlanningPage() {
       type_planning: item.type_planning || 'Séance',
       mode_rdv: item.mode_rdv || 'Présentiel',
       materiel: Array.isArray(item.materiel) ? item.materiel : item.materiel ? [item.materiel] : [...MATERIEL_DEFAUT],
-      ref_database_user: item.refDatabaseUser?.id || '',
+      abonnement_id: (item as any).abonnementId || '',
       participants_supplementaires: existingParts,
       distance_km: (item as any).distance_km ?? null,
       temps_route: (item as any).temps_route || '',
@@ -453,7 +568,7 @@ export default function PlanningPage() {
     }
     if (form.distance_km != null) payload.distance_km = form.distance_km
     if (form.temps_route) payload.temps_route = form.temps_route
-    if (form.ref_database_user) payload.refDatabaseUser = doc(db, 'database_users_details', form.ref_database_user)
+    if (form.abonnement_id) payload.abonnementId = form.abonnement_id
     payload.participants_supplementaires = form.participants_supplementaires
       .filter((p) => p.ref_client)
       .map((p) => ({
@@ -567,7 +682,7 @@ export default function PlanningPage() {
 
           {/* Aujourd'hui + toggle vue */}
           <div className="flex items-center gap-2">
-            {!(view === 'semaine' ? isThisWeek : isThisMonth) && (
+            {selectedDate.toDateString() !== today.toDateString() && (
               <button
                 onClick={goToday}
                 className="text-xs font-medium text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition"
@@ -702,7 +817,7 @@ export default function PlanningPage() {
                       <div className="w-4 h-4 rounded-full bg-green-200 text-green-700 flex items-center justify-center shrink-0">
                         <UserIcon className="w-3 h-3" />
                       </div>
-                      <p className="text-xs text-green-700 font-medium">{client.prenom} {client.nom}</p>
+                      <p className="text-xs text-green-700 font-medium">{client.nom} {client.prenom}</p>
                     </div>
                   )}
                   {(act.distance_km != null && act.distance_km > 0 || act.calories) && (
@@ -764,7 +879,7 @@ export default function PlanningPage() {
           planningsDuJour.map((item) => {
             const etat = getEtatBadgeLocal(item.etat_planning_rdv)
             const client = users.find((u) => u.id === ((item as any).ref_users?.id || (item as any).ref_client?.id))
-            const seq = getRdvSequence(item, plannings)
+            const seq = getRdvSequence(item, plannings, aboPeriods)
             return (
               <div
                 key={item.id}
@@ -788,7 +903,7 @@ export default function PlanningPage() {
                             <UserIcon className="w-3 h-3" />
                           </div>
                         )}
-                        <p className="text-xs text-blue-600 font-medium">{client.prenom} {client.nom}</p>
+                        <p className="text-xs text-blue-600 font-medium">{client.nom} {client.prenom}</p>
                       </div>
                     )}
                     {((item as any).participants_supplementaires as any[])?.filter((p: any) => p.ref_users).map((p: any, i: number) => {
@@ -879,25 +994,18 @@ export default function PlanningPage() {
           {form.ref_client && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Abonnement</label>
-              {clientDetails.length === 0 ? (
+              {clientAbonnements.length === 0 ? (
                 <p className="text-xs text-gray-400 italic">Aucun abonnement trouvé pour ce client</p>
               ) : (
-                <select value={form.ref_database_user} onChange={(e) => setForm({ ...form, ref_database_user: e.target.value })}
+                <select value={form.abonnement_id} onChange={(e) => setForm({ ...form, abonnement_id: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                   <option value="">— Sélectionner un abonnement —</option>
                   {(() => {
-                    const sorted = [...clientDetails].sort((a, b) => {
-                      const aActive = a.etat === 'Actif' ? 0 : 1
-                      const bActive = b.etat === 'Actif' ? 0 : 1
-                      if (aActive !== bActive) return aActive - bActive
-                      return ((b as any).date_debut?.seconds ?? 0) - ((a as any).date_debut?.seconds ?? 0)
-                    })
-                    const actifs = sorted.filter((d) => d.etat === 'Actif')
-                    const autres = sorted.filter((d) => d.etat !== 'Actif')
-                    const opt = (d: (typeof clientDetails)[number]) => (
-                      <option key={d.id} value={d.id}>
-                        {d.titre_abo || d.categorie_prestation || d.type_suivi || 'Abonnement sans titre'}
-                        {d.etat ? ` — ${d.etat}` : ''}
+                    const actifs = clientAbonnements.filter((a) => a.etat === 'Actif')
+                    const autres = clientAbonnements.filter((a) => a.etat !== 'Actif')
+                    const opt = (a: typeof clientAbonnements[number], i: number) => (
+                      <option key={a.id} value={a.id}>
+                        N°{clientAbonnements.indexOf(a) + 1} — {a.categorie}{a.typeSuivi ? ` · ${a.typeSuivi}` : ''} ({a.etat})
                       </option>
                     )
                     return <>
@@ -1017,6 +1125,21 @@ export default function PlanningPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Heure fin</label>
               <input type="time" value={form.heure_fin} onChange={(e) => setForm({ ...form, heure_fin: e.target.value })} required
                 className="w-full min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              {form.heure_debut && (
+                <div className="flex gap-1 mt-1">
+                  {([15, 30, 60] as const).map((min) => {
+                    const [h, m] = form.heure_debut.split(':').map(Number)
+                    const total = h * 60 + m + min
+                    const fin = `${String(Math.floor(total / 60) % 24).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`
+                    return (
+                      <button key={min} type="button" onClick={() => setForm({ ...form, heure_fin: fin })}
+                        className="flex-1 text-xs py-0.5 rounded bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-500 transition">
+                        +{min < 60 ? `${min}min` : '1h'}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
           <div>

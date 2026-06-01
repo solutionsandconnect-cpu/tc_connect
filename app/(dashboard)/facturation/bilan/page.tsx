@@ -193,14 +193,16 @@ export default function BilanUrssafPage() {
 
       {/* TABLE */}
       <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+        <div className="min-w-[620px]">
         {/* Column headers */}
-        <div className="grid grid-cols-[1fr_1fr_auto_1fr_1fr_1fr] px-4 py-2.5 text-xs font-medium text-gray-400 uppercase tracking-wide border-b bg-gray-50 gap-3">
+        <div className="grid grid-cols-[110px_1fr_80px_1fr_130px_140px] px-4 py-2.5 text-xs font-medium text-gray-400 uppercase tracking-wide border-b bg-gray-50 gap-3">
           <span>Mois</span>
           <span>CA encaissé</span>
-          <span className="w-20 text-center">Taux</span>
-          <span>Cotisations est.</span>
+          <span className="text-center">Taux</span>
+          <span>Cotisations</span>
           <span>Déclaré URSSAF</span>
-          <span>Cotisations réglées</span>
+          <span>Réglé</span>
         </div>
 
         <div className="divide-y">
@@ -224,7 +226,7 @@ export default function BilanUrssafPage() {
               return (
                 <div
                   key={mois}
-                  className={`grid grid-cols-[1fr_1fr_auto_1fr_1fr_1fr] px-4 py-3.5 gap-3 items-center text-sm transition-colors ${
+                  className={`grid grid-cols-[110px_1fr_80px_1fr_130px_140px] px-4 py-3.5 gap-3 items-center text-sm transition-colors ${
                     isCurrentMonth ? "bg-blue-50/50" : ""
                   } ${isFuture ? "opacity-40" : ""}`}
                 >
@@ -342,10 +344,10 @@ export default function BilanUrssafPage() {
 
         {/* TOTAL ROW */}
         {!loading && (
-          <div className="grid grid-cols-[1fr_1fr_auto_1fr_1fr_1fr] px-4 py-3.5 gap-3 items-center border-t bg-gray-50">
+          <div className="grid grid-cols-[110px_1fr_80px_1fr_130px_140px] px-4 py-3.5 gap-3 items-center border-t bg-gray-50">
             <span className="text-sm font-semibold text-gray-700">Total {annee}</span>
             <span className="text-sm font-bold text-green-700">{fmt(totalCA)} €</span>
-            <span className="w-20" />
+            <span />
             <span className="text-sm font-bold text-orange-600">{fmt(totalCotisations)} €</span>
             <span className="text-xs text-gray-500">
               {months.filter((m) => m.periode?.declare).length} mois déclaré(s)
@@ -355,6 +357,8 @@ export default function BilanUrssafPage() {
             </span>
           </div>
         )}
+        </div>{/* min-w */}
+        </div>{/* overflow-x-auto */}
       </div>
 
       {/* INFOS BAS */}
