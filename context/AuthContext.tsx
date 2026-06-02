@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react'
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -52,14 +52,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { authUnsub(); if (profileUnsub) profileUnsub() }
   }, [])
 
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     const { user } = await signInWithEmailAndPassword(auth, email, password)
     try {
       await updateDoc(doc(db, 'users', user.uid), { last_login: serverTimestamp(), lastLoginAt: serverTimestamp() })
     } catch {}
-  }
+  }, [])
 
-  const register = async (email: string, password: string) => {
+  const register = useCallback(async (email: string, password: string) => {
     const { user } = await createUserWithEmailAndPassword(auth, email, password)
 
     const userData: Record<string, any> = {
@@ -110,18 +110,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
       ))
     } catch {}
-  }
+  }, [])
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await signOut(auth)
-  }
+  }, [])
 
-  const resetPassword = async (email: string) => {
+  const resetPassword = useCallback(async (email: string) => {
     await sendPasswordResetEmail(auth, email)
-  }
+  }, [])
+
+  const value = useMemo(
+    () => ({ currentUser, userProfile, loading, login, register, logout, resetPassword }),
+    [currentUser, userProfile, loading, login, register, logout, resetPassword]
+  )
 
   return (
-  <AuthContext.Provider value={{ currentUser, userProfile, loading, login, register, logout, resetPassword }}>
+  <AuthContext.Provider value={value}>
     {loading ? (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />

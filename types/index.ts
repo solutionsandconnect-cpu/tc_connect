@@ -17,6 +17,7 @@ export interface Droits {
   exercices: boolean       // Bibliothèque d'exercices (opt-in)
   modifierProfil: boolean  // Modifier ses informations personnelles
   boutique: boolean        // Accès à la boutique
+  parcoursSportif: boolean // Accès aux Parcours Sportifs (Mes Parcours)
 }
 
 export const DEFAULT_DROITS: Droits = {
@@ -28,6 +29,7 @@ export const DEFAULT_DROITS: Droits = {
   exercices: false,       // opt-in : désactivé par défaut
   modifierProfil: true,
   boutique: true,
+  parcoursSportif: true,
 }
 
 // Collection : users

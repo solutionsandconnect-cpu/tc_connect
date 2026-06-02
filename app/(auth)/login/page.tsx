@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
@@ -10,19 +10,24 @@ import { EyeIcon, EyeSlashIcon, XMarkIcon } from '@heroicons/react/24/outline'
 type Tab = 'creer' | 'connexion'
 
 export default function LoginPage() {
-  const [tab, setTab] = useState<Tab>('connexion')
+  const searchParams = useSearchParams()
+  const redirectTo = searchParams.get('redirect') ?? '/accueil'
+  const prefillEmail = searchParams.get('email') ?? ''
+  const initialTab: Tab = searchParams.get('tab') === 'creer' ? 'creer' : 'connexion'
+
+  const [tab, setTab] = useState<Tab>(initialTab)
   const { login, register, resetPassword } = useAuth()
   const router = useRouter()
 
   // Connexion
-  const [loginEmail, setLoginEmail] = useState('')
+  const [loginEmail, setLoginEmail] = useState(prefillEmail)
   const [loginPassword, setLoginPassword] = useState('')
   const [showLoginPwd, setShowLoginPwd] = useState(false)
   const [loginError, setLoginError] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
 
   // Créer un compte
-  const [regEmail, setRegEmail] = useState('')
+  const [regEmail, setRegEmail] = useState(prefillEmail)
   const [regPassword, setRegPassword] = useState('')
   const [regConfirm, setRegConfirm] = useState('')
   const [showRegPwd, setShowRegPwd] = useState(false)
@@ -44,7 +49,7 @@ export default function LoginPage() {
     try {
       await login(loginEmail, loginPassword)
       localStorage.removeItem('tc_impersonation')
-      router.push('/accueil')
+      router.push(redirectTo)
     } catch {
       setLoginError('Email ou mot de passe incorrect')
     } finally {
@@ -67,7 +72,7 @@ export default function LoginPage() {
     try {
       await register(regEmail, regPassword)
       localStorage.removeItem('tc_impersonation')
-      router.push('/profil?setup=1')
+      router.push(redirectTo === '/accueil' ? '/profil?setup=1' : redirectTo)
     } catch (err: any) {
       if (err?.code === 'auth/email-already-in-use') {
         setRegError('Cette adresse email est déjà utilisée')

@@ -21,7 +21,6 @@ import {
 } from '@heroicons/react/24/outline'
 import { formatDate, formatHeure } from '@/lib/planningUtils'
 import { useAuth } from '@/context/AuthContext'
-import { addToCalendar, RDV_CAL_ID } from '@/lib/googleCalendar'
 import { useClients } from '@/hooks/useClients'
 import type { Client, PainPoint } from '@/types'
 import ClientEditModal from '@/components/ui/ClientEditModal'
@@ -330,13 +329,14 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     if (!abo) { setRdvSequence(null); return }
     const start = aboStart(abo)
     const end = aboEnd(abo)
-    // Tous les RDVs du même client dans cette période
+    // Tous les RDVs du même client, même type, dans cette période
+    const type = (planning as any).type_planning || 'Séance'
     const grouped = plannings
       .filter((p) => {
         const uid = (p as any).ref_users?.id || (p as any).ref_users?.path?.split('/').pop() || (p as any).ref_client?.id
         if (uid !== clientId) return false
         const pms = startOfDayMs(((p as any).date_planning?.seconds ?? 0) * 1000)
-        return pms >= start && pms <= end
+        return pms >= start && pms <= end && ((p as any).type_planning || 'Séance') === type
       })
       .sort((a, b) => ((a as any).date_planning?.seconds ?? 0) - ((b as any).date_planning?.seconds ?? 0))
     const idx = grouped.findIndex((p) => p.id === id)
@@ -757,23 +757,43 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     window.open(smsUrl, '_blank')
   }
 
-  const handleAddToCalendar = async () => {
+  const handleAddToCalendar = () => {
     if (!planning) return
-    try {
-      const debut = (planning.heure_planning_debut as any)?.toDate()
-      const fin = (planning.heure_planning_fin as any)?.toDate()
-      if (!debut || !fin) return
-      await addToCalendar(RDV_CAL_ID, {
-        summary: `${(planning as any).type_planning || 'Séance'} — ${client ? [client.nom, client.prenom].filter(Boolean).join(" ") : 'Client'}`,
-        start: debut,
-        end: fin,
-        location: planning.adresse_rdv || '',
-        description: planning.observations_rdv || '',
-      })
-      alert('Événement ajouté à Google Agenda !')
-    } catch (err: any) {
-      alert(`Erreur Google Agenda : ${err?.message ?? 'inconnue'}`)
-    }
+    const debut = (planning.heure_planning_debut as any)?.toDate?.()
+    const fin = (planning.heure_planning_fin as any)?.toDate?.()
+    if (!debut || !fin) return
+
+    const toGcal = (d: Date) =>
+      d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+
+    const type = (planning as any).type_planning || 'Séance'
+
+    // Numéro cumulatif : nb de RDV du même type pour ce client jusqu'à ce RDV inclus
+    // On compare heure_planning_debut (date + heure) pour gérer correctement plusieurs RDVs le même jour
+    const currentHeureSec = (planning as any).heure_planning_debut?.seconds ?? (planning as any).date_planning?.seconds ?? 0
+    const cumulativeNum = plannings.filter((p) => {
+      const uid = (p as any).ref_users?.id ?? (p as any).ref_users?.path?.split('/').pop() ?? (p as any).ref_client?.id
+      const pSec = (p as any).heure_planning_debut?.seconds ?? (p as any).date_planning?.seconds ?? 0
+      return uid === clientId &&
+             ((p as any).type_planning || 'Séance') === type &&
+             pSec <= currentHeureSec
+    }).length
+    const seq = rdvSequence ? `(${rdvSequence.index}/${rdvSequence.total})` : ''
+    const clientName = client
+      ? `${(client.nom ?? '').toUpperCase()} ${client.prenom ?? ''}`.trim()
+      : ''
+
+    const parts = [type, cumulativeNum > 0 ? String(cumulativeNum) : '', seq, clientName]
+    const title = parts.filter(Boolean).join(' ')
+
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: title,
+      dates: `${toGcal(debut)}/${toGcal(fin)}`,
+    })
+    if (planning.adresse_rdv) params.set('location', planning.adresse_rdv)
+
+    window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, '_blank')
   }
 
   if (!planning) {

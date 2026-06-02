@@ -11,7 +11,7 @@ import {
   DocumentTextIcon, ArrowRightOnRectangleIcon,
   BuildingOfficeIcon, UserGroupIcon, DocumentDuplicateIcon,
   ShieldCheckIcon, ChatBubbleLeftRightIcon, FolderOpenIcon,
-  ShoppingBagIcon,
+  ShoppingBagIcon, FireIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeSolid, CalendarIcon as CalendarSolid,
@@ -27,6 +27,7 @@ import {
   DocumentDuplicateIcon as DocumentDupSolid,
   FolderOpenIcon as FolderSolid,
   ShoppingBagIcon as ShoppingBagSolid,
+  FireIcon as FireSolid,
 } from '@heroicons/react/24/solid'
 
 // Structure organisée par sections
@@ -34,13 +35,14 @@ export const navSections = [
   {
     label: null, // pas de titre pour la section principale
     items: [
-      { label: 'Accueil',       href: '/accueil',       icon: HomeIcon,                  iconActive: HomeSolid,         adminOnly: false, droit: null },
-      { label: 'Planning',      href: '/planning',      icon: CalendarIcon,              iconActive: CalendarSolid,     adminOnly: false, droit: 'planning' as const },
-      { label: 'Notifications', href: '/notifications', icon: BellIcon,                  iconActive: BellSolid,         adminOnly: false, droit: 'notifications' as const },
-      { label: 'Messagerie',    href: '/messagerie',    icon: ChatBubbleLeftRightIcon,   iconActive: ChatSolid,         adminOnly: false, droit: null },
-      { label: 'Documents',     href: '/documents',     icon: FolderOpenIcon,            iconActive: FolderSolid,       adminOnly: false, droit: null },
-      { label: 'Boutique',      href: '/boutique',      icon: ShoppingBagIcon,           iconActive: ShoppingBagSolid,  adminOnly: false, droit: 'boutique' as const },
-      { label: 'Mon profil',    href: '/profil',        icon: UserIcon,                  iconActive: UserSolid,         adminOnly: false, droit: null },
+      { label: 'Accueil',           href: '/accueil',        icon: HomeIcon,                  iconActive: HomeSolid,         adminOnly: false, droit: null },
+      { label: 'Planning',          href: '/planning',       icon: CalendarIcon,              iconActive: CalendarSolid,     adminOnly: false, droit: 'planning' as const },
+      { label: 'Mes Parcours',      href: '/mes-parcours',   icon: FireIcon,                  iconActive: FireSolid,         adminOnly: false, nonAdminOnly: true, droit: 'parcoursSportif' as const },
+      { label: 'Notifications',     href: '/notifications',  icon: BellIcon,                  iconActive: BellSolid,         adminOnly: false, droit: 'notifications' as const },
+      { label: 'Messagerie',        href: '/messagerie',     icon: ChatBubbleLeftRightIcon,   iconActive: ChatSolid,         adminOnly: false, droit: null },
+      { label: 'Documents',         href: '/documents',      icon: FolderOpenIcon,            iconActive: FolderSolid,       adminOnly: false, droit: null },
+      { label: 'Boutique',          href: '/boutique',       icon: ShoppingBagIcon,           iconActive: ShoppingBagSolid,  adminOnly: false, droit: 'boutique' as const },
+      { label: 'Mon profil',        href: '/profil',         icon: UserIcon,                  iconActive: UserSolid,         adminOnly: false, droit: null },
     ],
   },
   {
@@ -56,8 +58,9 @@ export const navSections = [
     label: 'Coaching',
     adminOnly: true,
     items: [
-      { label: 'Séances',       href: '/seances',       icon: ClipboardDocumentListIcon, iconActive: ClipboardSolid,    adminOnly: true, droit: null },
-      { label: 'Exercices',     href: '/exercices',     icon: BookOpenIcon,              iconActive: BookSolid,         adminOnly: false, droit: 'exercices' as const },
+      { label: 'Séances',          href: '/seances',                    icon: ClipboardDocumentListIcon, iconActive: ClipboardSolid, adminOnly: true,  droit: null },
+      { label: 'Exercices',        href: '/exercices',                  icon: BookOpenIcon,              iconActive: BookSolid,      adminOnly: false, droit: 'exercices' as const },
+      { label: 'Parcours Sportif', href: '/admin/parcours-sportif',     icon: FireIcon,                  iconActive: FireSolid,     adminOnly: true,  droit: null },
       // Équipes accessible uniquement via la Boutique (StoreGate sur les pages)
     ],
   },
@@ -141,6 +144,7 @@ export default function Navbar() {
             // Filter section items by role and droits
             const visibleItems = section.items.filter((item) => {
               if (item.adminOnly && !isAdmin) return false
+              if ((item as any).nonAdminOnly && isAdmin) return false
               if (!isAdmin && item.droit) {
                 if (item.droit === 'exercices') return (droits as any)?.exercices === true
                 return (droits as any)?.[item.droit] !== false

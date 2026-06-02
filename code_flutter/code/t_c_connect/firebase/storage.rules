@@ -8,5 +8,19 @@ service firebase.storage {
       allow read: if true;
       allow write: if request.auth.uid == userId;
     }
+    // Certificats médicaux Parcours Sportif — upload public (inscription sans compte),
+    // lecture réservée aux admins authentifiés. Limité aux PDF/images < 10 Mo.
+    match /medical_certs/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
+    }
+    // Photos d'avis Parcours Sportif — lecture publique, upload public (images < 10 Mo)
+    match /parcours_reviews/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
   }
 }

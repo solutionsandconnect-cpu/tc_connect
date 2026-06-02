@@ -52,8 +52,9 @@ function getRdvGroupKey(p: any, aboPeriods: AboPeriods): string | null {
 function getRdvSequence(item: any, plannings: any[], aboPeriods: AboPeriods) {
   const key = getRdvGroupKey(item, aboPeriods)
   if (!key) return null
+  const type = item.type_planning || 'Séance'
   const group = plannings
-    .filter((p) => getRdvGroupKey(p, aboPeriods) === key)
+    .filter((p) => getRdvGroupKey(p, aboPeriods) === key && (p.type_planning || 'Séance') === type)
     .sort((a, b) => {
       const dateDiff = (a.date_planning?.seconds ?? 0) - (b.date_planning?.seconds ?? 0)
       if (dateDiff !== 0) return dateDiff
@@ -403,14 +404,18 @@ export default function PlanningPage() {
   }
   const goToday = () => setSelectedDate(new Date())
 
+  const tsMs = (ts: any): number => {
+    if (!ts) return 0
+    if (typeof ts.toDate === 'function') return ts.toDate().getTime()
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000
+    return 0
+  }
+
   // Plannings du jour sélectionné, triés par heure de début
   const planningsDuJour = plannings
     .filter((p) => p.date_planning && isSameDay(p.date_planning as any, selectedDate))
-    .sort((a, b) => {
-      const aT = (a.heure_planning_debut as any)?.toDate?.()?.getTime() ?? 0
-      const bT = (b.heure_planning_debut as any)?.toDate?.()?.getTime() ?? 0
-      return aT - bT
-    })
+    .slice()
+    .sort((a, b) => tsMs((a as any).heure_planning_debut) - tsMs((b as any).heure_planning_debut))
 
   const activitesDuJour = activites.filter(
     (a) => a.date_activite && isSameDay(a.date_activite as any, selectedDate)
