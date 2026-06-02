@@ -1,9 +1,9 @@
 import { db } from "@/lib/firebase";
 import {
   collection, addDoc, doc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, where, Timestamp,
+  onSnapshot, query, orderBy, where, Timestamp, getDocs,
 } from "firebase/firestore";
-import type { StoreApp, StoreSubscription } from "@/types";
+import type { StoreApp, StoreSubscription, StoreReview } from "@/types";
 
 const appsCol = collection(db, "store_apps");
 const subsCol = collection(db, "store_subscriptions");
@@ -56,3 +56,28 @@ export const updateStoreSubscription = (id: string, data: Partial<StoreSubscript
 
 export const deleteStoreSubscription = (id: string) =>
   deleteDoc(doc(db, "store_subscriptions", id));
+
+// ── Reviews ───────────────────────────────────────────────────────────────────
+
+const reviewsCol = collection(db, "store_reviews");
+
+export const listenAppReviews = (appId: string, cb: (reviews: StoreReview[]) => void) => {
+  const q = query(reviewsCol, where("appId", "==", appId), orderBy("createdAt", "desc"));
+  return onSnapshot(q, (snap) => {
+    cb(snap.docs.map((d) => ({ id: d.id, ...d.data() } as StoreReview)));
+  });
+};
+
+export const upsertReview = async (
+  data: Omit<StoreReview, "id" | "createdAt" | "updatedAt">
+): Promise<void> => {
+  const q = query(reviewsCol, where("appId", "==", data.appId), where("userUid", "==", data.userUid));
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    await updateDoc(snap.docs[0].ref, { ...data, updatedAt: Timestamp.now() });
+  } else {
+    await addDoc(reviewsCol, { ...data, createdAt: Timestamp.now() });
+  }
+};
+
+export const deleteReview = (id: string) => deleteDoc(doc(db, "store_reviews", id));

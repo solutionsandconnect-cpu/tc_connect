@@ -5,19 +5,7 @@ import { useParams } from 'next/navigation'
 import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import type { PainPoint } from '@/types'
-
-const ZONES_DOULEUR: { id: string; label: string }[] = [
-  { id: 'tete_cou', label: 'Tête / Cou' }, { id: 'nuque', label: 'Nuque' },
-  { id: 'epaule_g', label: 'Épaule G' }, { id: 'epaule_d', label: 'Épaule D' },
-  { id: 'thorax', label: 'Thorax' }, { id: 'bras_g', label: 'Bras G' },
-  { id: 'bras_d', label: 'Bras D' }, { id: 'av_bras_g', label: 'Avant-bras G' },
-  { id: 'av_bras_d', label: 'Avant-bras D' }, { id: 'abdomen', label: 'Abdomen' },
-  { id: 'lombaires', label: 'Lombaires' }, { id: 'hanches', label: 'Hanches' },
-  { id: 'fessier_g', label: 'Fessier G' }, { id: 'fessier_d', label: 'Fessier D' },
-  { id: 'cuisse_g', label: 'Cuisse G' }, { id: 'cuisse_d', label: 'Cuisse D' },
-  { id: 'genou_g', label: 'Genou G' }, { id: 'genou_d', label: 'Genou D' },
-  { id: 'mollet_g', label: 'Mollet G' }, { id: 'mollet_d', label: 'Mollet D' },
-]
+import { ZONES_DOULEUR } from '@/lib/painZones'
 
 function PainBodySelector({ value, onChange }: { value: PainPoint[]; onChange: (v: PainPoint[]) => void }) {
   const selMap = Object.fromEntries(value.map(p => [p.zone, p]))
@@ -255,6 +243,97 @@ export default function QuestionnairePage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <p className="text-gray-500">Questionnaire introuvable.</p>
+      </div>
+    )
+  }
+
+  // Déterminer si la modification est autorisée :
+  // - Questionnaire pas encore rempli → toujours éditable (premier remplissage)
+  // - Questionnaire déjà rempli + admin a défini une date future → éditable
+  // - Questionnaire déjà rempli + pas de permission → lecture seule
+  const alreadyFilled = !!(planning.questionnaire_rempli || planning.indice_hooper != null)
+  const editableUntil: Date | null = planning.questionnaire_editable_until?.toDate?.() ?? null
+  const canEdit = !alreadyFilled || (editableUntil !== null && editableUntil > new Date())
+
+  // ── Vue lecture seule ──────────────────────────────────────────────────────
+  if (alreadyFilled && !canEdit) {
+    const indiceHooper = planning.indice_hooper ?? null
+    const hooperColor = indiceHooper == null ? 'text-gray-500'
+      : indiceHooper <= 12 ? 'text-green-600'
+      : indiceHooper <= 18 ? 'text-orange-500'
+      : 'text-red-600'
+    const dateLabel = planning.date_planning
+      ? new Date(planning.date_planning.seconds * 1000).toLocaleDateString('fr-FR', {
+          weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+        })
+      : ''
+
+    return (
+      <div className="min-h-screen bg-gray-50 px-4 py-8">
+        <div className="max-w-lg mx-auto space-y-5">
+
+          {/* En-tête */}
+          <div className="text-center">
+            <p className="text-sm text-gray-500 capitalize">{dateLabel}</p>
+            <h1 className="text-xl font-bold text-gray-800 mt-1">Questionnaire de forme</h1>
+          </div>
+
+          {/* Indice Hooper */}
+          {indiceHooper != null && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 text-center">
+              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Indice Hooper</p>
+              <p className={`text-3xl font-bold ${hooperColor}`}>{indiceHooper}<span className="text-sm font-normal text-gray-400">/28</span></p>
+              <p className="text-xs text-gray-400 mt-1">
+                {indiceHooper <= 12 ? '✓ Très bien récupéré' : indiceHooper <= 18 ? '⚠ Récupération modérée' : '⛔ Mauvaise récupération'}
+              </p>
+            </div>
+          )}
+
+          {/* Réponses */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+            {QUESTIONS.map((q) => {
+              const val: number = (form as any)[q.key] ?? 0
+              const labelAnswer = val > 0 ? (q.labels[val - 1] ?? `${val}`) : '—'
+              return (
+                <div key={q.key}>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">{q.label}</p>
+                  <p className="text-sm font-medium text-gray-800">{labelAnswer}</p>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Informations complémentaires */}
+          {commentaire && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Infos complémentaires</p>
+              <p className="text-sm text-gray-800 whitespace-pre-wrap">{commentaire}</p>
+            </div>
+          )}
+
+          {/* Douleurs */}
+          {douleurs.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Douleurs signalées</p>
+              <div className="flex flex-wrap gap-1.5">
+                {douleurs.map((d, i) => (
+                  <span key={i} className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border ${
+                    d.intensite >= 7 ? 'bg-red-50 border-red-200 text-red-700' :
+                    d.intensite >= 4 ? 'bg-orange-50 border-orange-200 text-orange-700' :
+                    'bg-yellow-50 border-yellow-200 text-yellow-700'
+                  }`}>
+                    {d.zone}{d.type ? ` · ${d.type}` : ''}
+                    <span className="font-bold">{d.intensite}/10</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <p className="text-center text-xs text-gray-400">
+            Ce questionnaire est en lecture seule.
+          </p>
+        </div>
       </div>
     )
   }

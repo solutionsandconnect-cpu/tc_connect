@@ -4,19 +4,19 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   collection, query, where, orderBy,
-  getDocs, getCountFromServer, doc, Timestamp, addDoc, updateDoc,
+  getDocs, doc, Timestamp, addDoc, updateDoc,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useNotifications } from '@/hooks/useNotifications'
 import {
-  CalendarIcon, BellIcon, UsersIcon,
-  ClipboardDocumentListIcon, ChevronRightIcon,
+  CalendarIcon, BellIcon, ChevronRightIcon,
   MapPinIcon, GlobeAltIcon,
 } from '@heroicons/react/24/outline'
 import Badge from '@/components/ui/Badge'
 import { formatHeure, getEtatBadge } from '@/lib/planningUtils'
 import { navItems } from '@/components/layout/Navbar'
+import { useStoreApps } from '@/hooks/useStoreApps'
 
 export default function AccueilPage() {
   const { currentUser, userProfile } = useAuth()
@@ -26,9 +26,11 @@ export default function AccueilPage() {
   const droits = userProfile?.droits as any
 
   const [rdvAujourdhui, setRdvAujourdhui] = useState<any[]>([])
-  const [totalClients, setTotalClients] = useState(0)
-  const [totalSeances, setTotalSeances] = useState(0)
   const [prochainsRdv, setProchainsRdv] = useState<any[]>([])
+
+  const { apps: storeApps } = useStoreApps()
+  const shortcutAppIds = userProfile?.accueilShortcuts ?? []
+  const shortcutApps = storeApps.filter(app => shortcutAppIds.includes(app.id) && !!app.route)
   const [pendingEcheances, setPendingEcheances] = useState<{ devis: any; echeance: any; index: number; daysLeft: number | null }[]>([])
   const [seanceAccessAlerts, setSeanceAccessAlerts] = useState<{ client: any; type: 'to_configure' | 'expiring_soon' | 'expired' | 'to_restore' }[]>([])
   const [loading, setLoading] = useState(true)
@@ -228,48 +230,39 @@ export default function AccueilPage() {
   const fetchStats = async () => {
     if (!currentUser) return
 
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    const in7days = new Date(today)
-    in7days.setDate(in7days.getDate() + 7)
+    try {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const tomorrow = new Date(today)
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      const in7days = new Date(today)
+      in7days.setDate(in7days.getDate() + 7)
 
-    const userRef = doc(db, 'users', currentUser.uid)
+      const userRef = doc(db, 'users', currentUser.uid)
 
-    // RDV d'aujourd'hui
-    const rdvQuery = query(
-      collection(db, 'planning_pro'),
-      where('ref_users', '==', userRef),
-      where('date_planning', '>=', Timestamp.fromDate(today)),
-      where('date_planning', '<', Timestamp.fromDate(tomorrow)),
-      orderBy('date_planning', 'asc')
-    )
-    const rdvSnap = await getDocs(rdvQuery)
-    setRdvAujourdhui(rdvSnap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      // RDV d'aujourd'hui
+      const rdvQuery = query(
+        collection(db, 'planning_pro'),
+        where('ref_users', '==', userRef),
+        where('date_planning', '>=', Timestamp.fromDate(today)),
+        where('date_planning', '<', Timestamp.fromDate(tomorrow)),
+        orderBy('date_planning', 'asc')
+      )
+      const rdvSnap = await getDocs(rdvQuery)
+      setRdvAujourdhui(rdvSnap.docs.map((d) => ({ id: d.id, ...d.data() })))
 
-    // Prochains RDV (7 jours)
-    const prochainsQuery = query(
-      collection(db, 'planning_pro'),
-      where('ref_users', '==', userRef),
-      where('date_planning', '>=', Timestamp.fromDate(tomorrow)),
-      where('date_planning', '<', Timestamp.fromDate(in7days)),
-      orderBy('date_planning', 'asc')
-    )
-    const prochainsSnap = await getDocs(prochainsQuery)
-    setProchainsRdv(prochainsSnap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      // Prochains RDV (7 jours)
+      const prochainsQuery = query(
+        collection(db, 'planning_pro'),
+        where('ref_users', '==', userRef),
+        where('date_planning', '>=', Timestamp.fromDate(tomorrow)),
+        where('date_planning', '<', Timestamp.fromDate(in7days)),
+        orderBy('date_planning', 'asc')
+      )
+      const prochainsSnap = await getDocs(prochainsQuery)
+      setProchainsRdv(prochainsSnap.docs.map((d) => ({ id: d.id, ...d.data() })))
 
-    // Total clients — count only, no document reads
-    const clientsSnap = await getCountFromServer(query(collection(db, 'users')))
-    setTotalClients(clientsSnap.data().count)
-
-    // Total séances
-    const seancesQuery = query(
-      collection(db, 'seance'),
-      where('ref_users', '==', userRef)
-    )
-    const seancesSnap = await getDocs(seancesQuery)
-    setTotalSeances(seancesSnap.size)
+    } catch {}
 
     setLoading(false)
   }
@@ -305,7 +298,7 @@ export default function AccueilPage() {
       </div>
 
       {/* Statistiques */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <StatCard
           label="RDV aujourd'hui"
           value={rdvAujourdhui.length}
@@ -320,25 +313,31 @@ export default function AccueilPage() {
           color="orange"
           onClick={() => router.push('/notifications')}
         />
-        {isAdmin && (
-          <StatCard
-            label="Clients"
-            value={totalClients}
-            icon={<UsersIcon className="w-5 h-5" />}
-            color="green"
-            onClick={() => router.push('/equipes')}
-          />
-        )}
-        {isAdmin && (
-          <StatCard
-            label="Séances créées"
-            value={totalSeances}
-            icon={<ClipboardDocumentListIcon className="w-5 h-5" />}
-            color="purple"
-            onClick={() => router.push('/seances')}
-          />
-        )}
       </div>
+
+      {/* Raccourcis boutique */}
+      {shortcutApps.length > 0 && (
+        <section>
+          <h2 className="text-base font-semibold text-gray-700 mb-3">Mes raccourcis</h2>
+          <div className="grid grid-cols-3 gap-3">
+            {shortcutApps.map(app => (
+              <button
+                key={app.id}
+                onClick={() => router.push(app.route!)}
+                className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex flex-col items-center gap-2 hover:shadow-md transition"
+              >
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                  style={{ backgroundColor: app.couleur + '20' }}
+                >
+                  {app.icon}
+                </div>
+                <span className="text-xs font-medium text-gray-700 text-center leading-tight">{app.nom}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ALERTE ÉCHÉANCES À ÉMETTRE — admin uniquement */}
       {isAdmin && pendingEcheances.length > 0 && (
@@ -569,7 +568,10 @@ export default function AccueilPage() {
 
       {/* Navigation rapide — visible sur mobile, pour les pages hors barre du bas */}
       {(() => {
-        const mobileBarHrefs = ['/accueil', '/planning', '/notifications', '/messagerie', '/boutique', '/clients', '/profil']
+        // Boutique excluded from grid for non-admin (it's in their bottom bar), but kept for admin (bottom bar hides it via nonAdminOnly)
+        const mobileBarHrefs = isAdmin
+          ? ['/accueil', '/planning', '/notifications', '/messagerie', '/clients', '/profil']
+          : ['/accueil', '/planning', '/notifications', '/messagerie', '/boutique', '/clients', '/profil']
         const extraItems = (navItems as any[]).filter((item) => {
           if (mobileBarHrefs.includes(item.href)) return false
           if (item.adminOnly && !isAdmin) return false

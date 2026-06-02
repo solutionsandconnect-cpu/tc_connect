@@ -550,7 +550,7 @@ export default function DocumentsPage() {
             {isAdmin ? 'Partage de documents' : 'Mes documents'}
           </h1>
           <p className="text-sm text-gray-500">
-            {isAdmin ? 'Partagez des documents avec vos utilisateurs' : 'Tous vos documents partagés par votre coach'}
+            {isAdmin ? 'Partagez des documents avec vos utilisateurs' : 'Tous vos documents partagés'}
           </p>
         </div>
       </div>

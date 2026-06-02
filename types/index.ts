@@ -16,6 +16,7 @@ export interface Droits {
   compteRendu: boolean     // Voir le compte rendu du coach sur les RDVs
   exercices: boolean       // Bibliothèque d'exercices (opt-in)
   modifierProfil: boolean  // Modifier ses informations personnelles
+  boutique: boolean        // Accès à la boutique
 }
 
 export const DEFAULT_DROITS: Droits = {
@@ -26,6 +27,7 @@ export const DEFAULT_DROITS: Droits = {
   compteRendu: true,
   exercices: false,       // opt-in : désactivé par défaut
   modifierProfil: true,
+  boutique: true,
 }
 
 // Collection : users
@@ -48,6 +50,7 @@ export interface User {
   contactUrgenceTel?: string
   contactUrgenceRelation?: string
   lastLoginAt?: Timestamp
+  accueilShortcuts?: string[]
 }
 
 // Collection : team
@@ -136,6 +139,9 @@ export interface ProgrammeSeance {
   notes_utilisateur?: string
   nb_serie_effectuee?: number
   num_exercice?: number
+  alerte_exercice?: string
+  raison_alerte_exercice?: string
+  intensite_exercice?: string
 }
 
 // Collection : exercices
@@ -584,9 +590,38 @@ export interface StoreApp {
   ordre: number
   route?: string           // route interne e.g. "/boutique/belote"
   tags?: string[]
+  visibleUserIds?: string[]
+  hiddenUserIds?: string[]
+  changelogs?: StoreChangelog[]
+  limitesConfig?: StoreLimiteConfig[]
   createdBy: string
   createdAt: Timestamp
   updatedAt?: Timestamp
+}
+
+export interface StoreReview {
+  id: string
+  appId: string
+  userUid: string
+  clientNom: string
+  rating: number           // 1-5
+  comment?: string
+  createdAt: Timestamp
+  updatedAt?: Timestamp
+}
+
+export interface StoreChangelog {
+  id: string
+  title: string
+  description?: string
+  type: 'update' | 'upcoming'
+  date: Timestamp
+}
+
+export interface StoreLimiteConfig {
+  key: string
+  label: string
+  defaultValue: number
 }
 
 export type StoreSubStatut = 'active' | 'suspended' | 'cancelled' | 'pending'
@@ -605,7 +640,32 @@ export interface StoreSubscription {
   factureId?: string
   factureNumber?: string
   notes?: string
+  limites?: Record<string, number>
   createdBy: string
   createdAt: Timestamp
   updatedAt?: Timestamp
+}// ─── Suivi Bébé ───────────────────────────────────────────────────────────────
+
+/** Document Firestore : babies/{babyId} */
+export interface Bebe {
+  id: string
+  name: string
+  birthDate: Timestamp
+  members: string[]
+  createdBy: string
+  createdAt: Timestamp
+  /** Sommeil en cours — défini au "Start", supprimé au "Réveillé !" */
+  activeSleep?: { startTime: Timestamp } | null
+}
+
+export type BebeEventType = 'bottle' | 'diaper' | 'sleep' | 'meds'
+
+/** Document Firestore : babies/{babyId}/events/{eventId} */
+export interface BebeEvent {
+  id: string
+  type: BebeEventType
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: Record<string, any>
+  timestamp: Timestamp
+  createdBy: string
 }

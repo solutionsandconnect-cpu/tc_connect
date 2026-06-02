@@ -9,6 +9,7 @@ import {
   ShieldCheckIcon, CalendarIcon,
   ClipboardDocumentListIcon, BellIcon,
   ChatBubbleLeftEllipsisIcon, BookOpenIcon, PencilIcon, DocumentTextIcon,
+  ShoppingBagIcon,
 } from '@heroicons/react/24/outline'
 import type { Droits } from '@/types'
 import { DEFAULT_DROITS } from '@/types'
@@ -21,6 +22,7 @@ const MODULES: { key: keyof Droits; label: string; icon: React.ElementType; desc
   { key: 'compteRendu',    label: 'Compte rendu',     icon: ChatBubbleLeftEllipsisIcon, description: 'Compte rendu du coach' },
   { key: 'exercices',      label: 'Exercices',        icon: BookOpenIcon,               description: 'Bibliothèque (opt-in)' },
   { key: 'modifierProfil', label: 'Modifier profil',  icon: PencilIcon,                 description: 'Modifier ses infos' },
+  { key: 'boutique',      label: 'Boutique',         icon: ShoppingBagIcon,            description: 'Accès à la boutique' },
 ]
 
 export default function DroitsPage() {
@@ -50,6 +52,7 @@ export default function DroitsPage() {
         compteRendu:    u.droits?.compteRendu    ?? DEFAULT_DROITS.compteRendu,
         exercices:      u.droits?.exercices      ?? DEFAULT_DROITS.exercices,
         modifierProfil: u.droits?.modifierProfil ?? DEFAULT_DROITS.modifierProfil,
+        boutique:       u.droits?.boutique       ?? DEFAULT_DROITS.boutique,
       }
     })
     setDroitsMap(map)

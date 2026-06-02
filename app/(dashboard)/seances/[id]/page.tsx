@@ -19,6 +19,11 @@ const toFirestoreEffort = (v: string) =>
   v === 'Durée (sec)' ? 'Secondes' : v === 'Distance (m)' ? 'Mètres' : v
 const fromFirestoreEffort = (v: string) =>
   v === 'Secondes' ? 'Durée (sec)' : v === 'Mètres' ? 'Distance (m)' : v
+
+const TEMPO_PRESETS = [
+  { label: '0-0-0-0', values: [0, 0, 0, 0] },
+  { label: '3-1-1-1', values: [3, 1, 1, 1] },
+]
 const PARTIES_SEANCE_DETAIL = ['Échauffement','Corps de séance','Retour au calme','Séance complète']
 
 function getCircuitDefaults(type: string) {
@@ -91,6 +96,7 @@ export default function DetailSeancePage() {
     materiel: '',
     charge: 0,
     alerte_exercice: '',
+    raison_alerte_exercice: '',
     intensite_exercice: '🟡',
     explication_exercice: '',
     observations_exercice: '',
@@ -98,9 +104,9 @@ export default function DetailSeancePage() {
 
   const openAdd = () => {
     setEditItem(null)
-    const firstExo = exercices[0]
+    setSearch('')
     setForm({
-      exercice_id: firstExo?.id || '',
+      exercice_id: '',
       type_effort: fromFirestoreEffort((seance as any)?.type_effort_exo_default || 'Répétitions'),
       effort: (seance as any)?.tps_effort_exo_default || 10,
       recup_effort: (seance as any)?.tps_recup_exo_default || 60,
@@ -111,8 +117,9 @@ export default function DetailSeancePage() {
       materiel: '',
       charge: 0,
       alerte_exercice: '',
+      raison_alerte_exercice: '',
       intensite_exercice: '🟡',
-      explication_exercice: (firstExo as any)?.explications_commentees_exercice || '',
+      explication_exercice: '',
       observations_exercice: '',
     })
     setShowModal(true)
@@ -132,6 +139,7 @@ export default function DetailSeancePage() {
       materiel: item.materiel || '',
       charge: item.charge || 0,
       alerte_exercice: item.alerte_exercice || '',
+      raison_alerte_exercice: (item as any).raison_alerte_exercice || '',
       intensite_exercice: item.intensite_exercice ?? '',
       explication_exercice: item.explication_exercice || '',
       observations_exercice: item.observations_exercice || '',
@@ -256,6 +264,7 @@ export default function DetailSeancePage() {
         materiel: form.materiel,
         charge: Number(form.charge),
         alerte_exercice: form.alerte_exercice,
+        raison_alerte_exercice: form.raison_alerte_exercice,
         intensite_exercice: form.intensite_exercice,
         explication_exercice: form.explication_exercice,
         observations_exercice: form.observations_exercice,
@@ -330,9 +339,12 @@ export default function DetailSeancePage() {
         )}
       </div>
 
-      {/* Bilan circuit réalisé */}
-      {(seance as any)?.avancement_circuit >= 1 && ((seance as any)?.satisfaction_circuit || (seance as any)?.intensite_circuit > 0) && (
+      {/* RPE cible + bilan circuit */}
+      {((seance as any)?.intensite_circuit_planifie > 0 || ((seance as any)?.avancement_circuit >= 1 && ((seance as any)?.satisfaction_circuit || (seance as any)?.intensite_circuit > 0))) && (
         <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3 mb-4 space-y-1">
+          {(seance as any)?.intensite_circuit_planifie > 0 && (
+            <p className="text-xs font-semibold text-blue-600">RPE cible : {(seance as any).intensite_circuit_planifie}/10</p>
+          )}
           {(seance as any)?.intensite_circuit > 0 && (
             <p className="text-xs font-semibold text-gray-600">RPE ressenti : {(seance as any).intensite_circuit}/10</p>
           )}
@@ -445,9 +457,12 @@ export default function DetailSeancePage() {
                     {getExerciceName(item.exercice)}
                   </p>
                   {(item as any).alerte_exercice && (
-                    <p className="text-xs text-red-500 font-medium mt-0.5 truncate">
-                      ⚠ {(item as any).alerte_exercice}
-                    </p>
+                    <div className="mt-0.5">
+                      <p className="text-xs text-red-500 font-medium truncate">⚠ {(item as any).alerte_exercice}</p>
+                      {(item as any).raison_alerte_exercice && (
+                        <p className="text-xs text-red-400 truncate">{(item as any).raison_alerte_exercice}</p>
+                      )}
+                    </div>
                   )}
                   <p className="text-xs text-gray-500 mt-0.5">
                     {item.type_effort} : {item.effort} · Récup {item.recup_effort}s
@@ -743,9 +758,20 @@ export default function DetailSeancePage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tempo (Ph.1 / Ph.2 / Ph.3 / Ph.4)
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">
+                Tempo (Ph.1 / Ph.2 / Ph.3 / Ph.4)
+              </label>
+              <div className="flex gap-1">
+                {TEMPO_PRESETS.map(p => (
+                  <button key={p.label} type="button"
+                    onClick={() => setForm({ ...form, tempo_phase1: p.values[0], tempo_phase2: p.values[1], tempo_phase3: p.values[2], tempo_phase4: p.values[3] })}
+                    className="text-xs px-2 py-0.5 rounded-md border border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 transition font-mono">
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="grid grid-cols-4 gap-2">
               {(['tempo_phase1', 'tempo_phase2', 'tempo_phase3', 'tempo_phase4'] as const).map((key, i) => (
                 <input
@@ -815,9 +841,20 @@ export default function DetailSeancePage() {
             <input
               type="text" value={form.alerte_exercice}
               onChange={(e) => setForm({ ...form, alerte_exercice: e.target.value })}
-              placeholder="Douleur genou, contrainte..."
+              placeholder="Ex : Douleur genou, contrainte lombaire…"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            {form.alerte_exercice && (
+              <div className="mt-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Raison de l'alerte</label>
+                <textarea
+                  value={form.raison_alerte_exercice}
+                  onChange={(e) => setForm({ ...form, raison_alerte_exercice: e.target.value })}
+                  rows={2} placeholder="Expliquer pourquoi il y a une alerte sur cet exercice…"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+            )}
           </div>
 
           <div>

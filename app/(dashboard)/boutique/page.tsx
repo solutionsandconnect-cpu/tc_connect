@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useStoreApps } from "@/hooks/useStoreApps";
 import { useMyStoreSubscriptions } from "@/hooks/useStoreSubscriptions";
 import { usePendingSubscriptions } from "@/hooks/usePendingSubscriptions";
-import { createStoreSubscription } from "@/lib/storeService";
-import type { StoreApp, StoreSubStatut } from "@/types";
-import { Timestamp } from "firebase/firestore";
+import { createStoreSubscription, listenAppReviews, upsertReview } from "@/lib/storeService";
+import { doc, updateDoc, Timestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { DEFAULT_DROITS } from "@/types";
+import type { StoreApp, StoreSubStatut, StoreReview } from "@/types";
 
 const STATUT_LABEL: Record<StoreSubStatut, string> = {
   active: "Actif",
@@ -40,7 +42,64 @@ export default function BoutiquePage() {
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const pendingCount = usePendingSubscriptions();
 
-  const visibleApps = isAdmin ? apps : apps.filter((a) => a.actif);
+  // Check boutique access for non-admin
+  const boutiqueAccess = isAdmin || (userProfile?.droits?.boutique ?? DEFAULT_DROITS.boutique);
+
+  const shortcuts = userProfile?.accueilShortcuts ?? [];
+
+  // Reviews state
+  const [reviewAppId, setReviewAppId] = useState<string | null>(null);
+  const [appReviews, setAppReviews] = useState<Record<string, StoreReview[]>>({});
+  const [reviewForm, setReviewForm] = useState({ rating: 5, comment: "" });
+  const [savingReview, setSavingReview] = useState(false);
+
+  const loadReviews = useCallback((appId: string) => {
+    if (appReviews[appId] !== undefined) return;
+    return listenAppReviews(appId, (reviews) => {
+      setAppReviews(prev => ({ ...prev, [appId]: reviews }));
+    });
+  }, [appReviews]);
+
+  useEffect(() => {
+    // Pre-load reviews for active apps
+    const activeSubs = subscriptions.filter(s => s.statut === "active");
+    const unsubs: (() => void)[] = [];
+    activeSubs.forEach(s => {
+      const unsub = listenAppReviews(s.appId, (reviews) => {
+        setAppReviews(prev => ({ ...prev, [s.appId]: reviews }));
+      });
+      if (unsub) unsubs.push(unsub);
+    });
+    return () => unsubs.forEach(u => u());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscriptions.length]);
+
+  const visibleApps = apps.filter(app => {
+    if (isAdmin) return true;
+    if (!app.actif) return false;
+    const uid = currentUser?.uid;
+    if (uid && app.hiddenUserIds?.includes(uid)) return false;
+    if (app.visibleUserIds && app.visibleUserIds.length > 0) return app.visibleUserIds.includes(uid ?? "");
+    return true;
+  });
+
+  // Aggregate changelogs across all active apps
+  const allChangelogs = apps
+    .filter(app => app.actif || isAdmin)
+    .flatMap(app => (app.changelogs ?? []).map(c => ({
+      ...c,
+      appNom: app.nom,
+      appIcon: app.icon,
+      appCouleur: app.couleur,
+    })));
+  const recentUpdates = allChangelogs
+    .filter(c => c.type === "update")
+    .sort((a, b) => (b.date?.seconds ?? 0) - (a.date?.seconds ?? 0))
+    .slice(0, 5);
+  const upcoming = allChangelogs
+    .filter(c => c.type === "upcoming")
+    .sort((a, b) => (a.date?.seconds ?? 0) - (b.date?.seconds ?? 0));
+  const hasChangelogs = recentUpdates.length > 0 || upcoming.length > 0;
 
   const getMySub = (appId: string) =>
     subscriptions.find((s) => s.appId === appId) ?? null;
@@ -53,6 +112,9 @@ export default function BoutiquePage() {
   const handleRequest = async (app: StoreApp) => {
     if (!currentUser) return;
     setRequesting(app.id);
+    // Les apps gratuites sont activées directement, les payantes passent en attente
+    const isFree = app.prix === 0;
+    const statut = isFree ? "active" : "pending";
     try {
       await createStoreSubscription({
         appId: app.id,
@@ -60,28 +122,78 @@ export default function BoutiquePage() {
         clientNom: userProfile?.display_name || currentUser.email || "—",
         clientEmail: currentUser.email ?? undefined,
         userUid: currentUser.uid,
-        statut: "pending",
+        statut,
         dateDebut: Timestamp.now(),
         createdBy: currentUser.uid,
       });
-      // Notifier l'admin par push
-      fetch('/api/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      fetch("/api/push/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           toAdmins: true,
-          title: 'Nouvelle demande boutique',
-          body: `${userProfile?.display_name || currentUser.email || 'Un utilisateur'} souhaite accéder à ${app.nom}`,
-          url: '/boutique/admin',
+          title: isFree ? "Nouvelle souscription gratuite" : "Nouvelle demande boutique",
+          body: isFree
+            ? `${userProfile?.display_name || currentUser.email || "Un utilisateur"} a souscrit à ${app.nom} (gratuit)`
+            : `${userProfile?.display_name || currentUser.email || "Un utilisateur"} souhaite accéder à ${app.nom}`,
+          url: "/boutique/admin",
         }),
       }).catch(() => {});
-      showToast("Demande envoyée ! Votre coach traitera votre demande.");
+      showToast(isFree ? `Accès à "${app.nom}" activé !` : "Demande envoyée ! Votre coach traitera votre demande.");
     } catch {
       showToast("Erreur lors de la demande.", false);
     } finally {
       setRequesting(null);
     }
   };
+
+  const handleToggleShortcut = async (appId: string) => {
+    if (!currentUser) return;
+    const next = shortcuts.includes(appId)
+      ? shortcuts.filter(id => id !== appId)
+      : [...shortcuts, appId];
+    await updateDoc(doc(db, "users", currentUser.uid), { accueilShortcuts: next });
+  };
+
+  const handleOpenReview = (appId: string) => {
+    const myReview = (appReviews[appId] ?? []).find(r => r.userUid === currentUser?.uid);
+    setReviewForm({ rating: myReview?.rating ?? 5, comment: myReview?.comment ?? "" });
+    setReviewAppId(appId);
+    loadReviews(appId);
+  };
+
+  const handleSaveReview = async () => {
+    if (!currentUser || !reviewAppId) return;
+    setSavingReview(true);
+    try {
+      const app = apps.find(a => a.id === reviewAppId);
+      await upsertReview({
+        appId: reviewAppId,
+        userUid: currentUser.uid,
+        clientNom: userProfile?.display_name || currentUser.email || "—",
+        rating: reviewForm.rating,
+        comment: reviewForm.comment.trim() || undefined,
+      });
+      showToast(`Avis pour "${app?.nom ?? ""}" enregistré.`);
+      setReviewAppId(null);
+    } catch {
+      showToast("Erreur lors de l'enregistrement.", false);
+    } finally {
+      setSavingReview(false);
+    }
+  };
+
+  if (!loading && !boutiqueAccess) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-center px-4">
+        <p className="text-4xl">🔒</p>
+        <p className="text-gray-700 font-semibold">Accès non autorisé</p>
+        <p className="text-sm text-gray-500">Vous n'avez pas accès à la boutique.</p>
+        <button onClick={() => router.push("/accueil")} className="text-sm text-blue-600 hover:underline">
+          Retour à l'accueil
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
@@ -116,6 +228,62 @@ export default function BoutiquePage() {
           </button>
         )}
       </div>
+
+      {/* Changelogs */}
+      {hasChangelogs && (
+        <div className="mb-8 space-y-4">
+          {recentUpdates.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-3">Mises à jour récentes</h2>
+              <div className="space-y-2">
+                {recentUpdates.map(c => (
+                  <div key={c.id} className="flex items-start gap-3 bg-white border border-gray-100 rounded-xl px-4 py-3 shadow-sm">
+                    <span className="text-xl shrink-0">{c.appIcon}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-medium text-gray-500">{c.appNom}</span>
+                        <span className="text-gray-200">·</span>
+                        <span className="text-xs text-gray-400">
+                          {c.date?.toDate?.().toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium text-gray-800 mt-0.5">{c.title}</p>
+                      {c.description && <p className="text-xs text-gray-500 mt-0.5">{c.description}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {upcoming.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-3">À venir</h2>
+              <div className="space-y-2">
+                {upcoming.map(c => (
+                  <div key={c.id} className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                    <span className="text-xl shrink-0">{c.appIcon}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-medium text-blue-700">{c.appNom}</span>
+                        {c.date?.seconds > 0 && (
+                          <>
+                            <span className="text-blue-200">·</span>
+                            <span className="text-xs text-blue-500">
+                              {c.date.toDate?.().toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-sm font-medium text-gray-800 mt-0.5">{c.title}</p>
+                      {c.description && <p className="text-xs text-gray-500 mt-0.5">{c.description}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Mes accès actifs */}
       {subscriptions.filter((s) => s.statut === "active").length > 0 && (
@@ -170,6 +338,11 @@ export default function BoutiquePage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {visibleApps.map((app) => {
             const sub = getMySub(app.id);
+            const reviews = appReviews[app.id] ?? [];
+            const myReview = reviews.find(r => r.userUid === currentUser?.uid);
+            const avgRating = reviews.length > 0
+              ? Math.round(reviews.reduce((s, r) => s + r.rating, 0) / reviews.length * 10) / 10
+              : null;
             return (
               <AppCard
                 key={app.id}
@@ -177,26 +350,78 @@ export default function BoutiquePage() {
                 sub={sub ? sub.statut : null}
                 isAdmin={isAdmin}
                 requesting={requesting === app.id}
+                isShortcutted={shortcuts.includes(app.id)}
+                myReview={myReview ?? null}
+                avgRating={avgRating}
+                reviewCount={reviews.length}
                 onRequest={() => handleRequest(app)}
                 onAccess={() => app.route && router.push(app.route)}
+                onToggleShortcut={() => handleToggleShortcut(app.id)}
+                onReview={() => handleOpenReview(app.id)}
               />
             );
           })}
         </div>
       )}
+      {/* Modal avis */}
+      {reviewAppId && (() => {
+        const app = apps.find(a => a.id === reviewAppId);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setReviewAppId(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold text-gray-900">Évaluer {app?.nom}</h2>
+                <button onClick={() => setReviewAppId(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-600 mb-2">Note</p>
+                <div className="flex gap-2">
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <button key={n} type="button" onClick={() => setReviewForm(f => ({ ...f, rating: n }))}
+                      className={`text-2xl transition-transform ${n <= reviewForm.rating ? "scale-110" : "opacity-30"}`}>
+                      ⭐
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-600 mb-1">Commentaire (optionnel)</p>
+                <textarea rows={3} value={reviewForm.comment}
+                  onChange={e => setReviewForm(f => ({ ...f, comment: e.target.value }))}
+                  placeholder="Votre avis sur cette app…"
+                  className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 resize-none" />
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setReviewAppId(null)} className="flex-1 border rounded-lg py-2.5 text-sm text-gray-600 hover:bg-gray-50 transition">Annuler</button>
+                <button onClick={handleSaveReview} disabled={savingReview}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg py-2.5 text-sm font-semibold transition">
+                  {savingReview ? "…" : "Publier"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
 
 function AppCard({
-  app, sub, isAdmin, requesting, onRequest, onAccess,
+  app, sub, isAdmin, requesting, isShortcutted, myReview, avgRating, reviewCount,
+  onRequest, onAccess, onToggleShortcut, onReview,
 }: {
   app: StoreApp;
   sub: StoreSubStatut | null;
   isAdmin: boolean;
   requesting: boolean;
+  isShortcutted: boolean;
+  myReview: StoreReview | null;
+  avgRating: number | null;
+  reviewCount: number;
   onRequest: () => void;
   onAccess: () => void;
+  onToggleShortcut: () => void;
+  onReview: () => void;
 }) {
   const canAccess = sub === "active" || isAdmin;
   const isPending = sub === "pending";
@@ -221,6 +446,15 @@ function AppCard({
               {STATUT_LABEL[sub]}
             </span>
           )}
+          {canAccess && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleShortcut(); }}
+              title={isShortcutted ? "Retirer de l'accueil" : "Épingler sur l'accueil"}
+              className={`mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg transition text-base ${isShortcutted ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100 text-gray-300 hover:text-gray-500"}`}
+            >
+              📌
+            </button>
+          )}
         </div>
       </div>
 
@@ -236,6 +470,29 @@ function AppCard({
           </div>
         )}
       </div>
+
+      {/* Avis */}
+      {(avgRating !== null || canAccess) && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            {avgRating !== null ? (
+              <>
+                <span className="text-sm">{"⭐".repeat(Math.round(avgRating))}</span>
+                <span className="text-xs text-gray-500 font-medium">{avgRating}/5</span>
+                <span className="text-xs text-gray-400">({reviewCount} avis)</span>
+              </>
+            ) : (
+              <span className="text-xs text-gray-400">Aucun avis</span>
+            )}
+          </div>
+          {canAccess && (
+            <button onClick={(e) => { e.stopPropagation(); onReview(); }}
+              className={`text-xs px-2.5 py-1 rounded-lg border transition ${myReview ? "border-yellow-300 text-yellow-700 bg-yellow-50 hover:bg-yellow-100" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
+              {myReview ? "Mon avis ⭐" : "Évaluer"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Prix + action */}
       <div className="flex items-center justify-between pt-3 border-t">

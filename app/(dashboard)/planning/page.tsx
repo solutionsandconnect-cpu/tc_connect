@@ -17,7 +17,7 @@ import {
   PlusIcon, ChevronLeftIcon, ChevronRightIcon,
   MagnifyingGlassIcon, MapPinIcon, GlobeAltIcon,
   PencilIcon, TrashIcon, CalendarIcon, XMarkIcon, UserIcon,
-  BoltIcon,
+  BoltIcon, CheckCircleIcon,
 } from '@heroicons/react/24/outline'
 import { useActivites } from '@/hooks/useActivites'
 
@@ -666,22 +666,22 @@ export default function PlanningPage() {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
 
         {/* Barre de contrôles */}
-        <div className="flex items-center justify-between mb-3 gap-2">
+        <div className="flex flex-wrap items-center justify-between mb-3 gap-2">
           {/* Navigation */}
-          <div className="flex items-center gap-1">
-            <button onClick={goBack} className="p-1.5 rounded-lg hover:bg-gray-100 transition">
+          <div className="flex items-center gap-1 min-w-0">
+            <button onClick={goBack} className="p-1.5 rounded-lg hover:bg-gray-100 transition shrink-0">
               <ChevronLeftIcon className="w-5 h-5 text-gray-600" />
             </button>
-            <span className="text-sm font-medium text-gray-700 capitalize w-36 text-center">
+            <span className="text-sm font-medium text-gray-700 capitalize w-28 sm:w-36 text-center truncate">
               {navLabel}
             </span>
-            <button onClick={goForward} className="p-1.5 rounded-lg hover:bg-gray-100 transition">
+            <button onClick={goForward} className="p-1.5 rounded-lg hover:bg-gray-100 transition shrink-0">
               <ChevronRightIcon className="w-5 h-5 text-gray-600" />
             </button>
           </div>
 
           {/* Aujourd'hui + toggle vue */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {selectedDate.toDateString() !== today.toDateString() && (
               <button
                 onClick={goToday}
@@ -880,19 +880,26 @@ export default function PlanningPage() {
             const etat = getEtatBadgeLocal(item.etat_planning_rdv)
             const client = users.find((u) => u.id === ((item as any).ref_users?.id || (item as any).ref_client?.id))
             const seq = getRdvSequence(item, plannings, aboPeriods)
+            const isEffectue = (item as any).rdv_effectue === 'Effectué' || item.etat_planning_rdv === 'Effectué'
             return (
               <div
                 key={item.id}
                 onClick={() => router.push(`/planning/${item.id}`)}
-                className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 cursor-pointer hover:shadow-md transition"
+                className={`rounded-2xl border shadow-sm p-4 cursor-pointer hover:shadow-md transition ${isEffectue ? 'bg-green-50 border-l-4 border-l-green-500 border-green-100' : 'bg-white border-gray-100'}`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-sm font-semibold text-gray-800">
                         {formatHeure(item.heure_planning_debut as any)} → {formatHeure(item.heure_planning_fin as any)}
                       </span>
-                      <Badge label={etat.label} variant={etat.variant} />
+                      {isEffectue ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                          <CheckCircleIcon className="w-3.5 h-3.5" /> Effectué
+                        </span>
+                      ) : (
+                        <Badge label={etat.label} variant={etat.variant} />
+                      )}
                     </div>
                     {client && (
                       <div className="flex items-center gap-1.5 mt-0.5">

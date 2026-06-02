@@ -47,6 +47,9 @@ function toInput(ts?: { seconds: number } | null) {
   return new Date(ts.seconds * 1000).toISOString().split("T")[0];
 }
 
+type ChangelogRow = { id: string; title: string; description: string; type: "update" | "upcoming"; date: string };
+type LimiteRow = { key: string; label: string; defaultValue: string };
+
 export default function BoutiqueAdminPage() {
   const router = useRouter();
   const { currentUser, userProfile } = useAuth();
@@ -55,6 +58,14 @@ export default function BoutiqueAdminPage() {
   const { subscriptions, loading: loadingSubs } = useStoreSubscriptions();
   const { clients } = useClients();
   const { users } = useUsers();
+
+  const nonAdminUsers = users
+    .filter(u => u.role_app !== "Admin" && u.uid)
+    .sort((a, b) => {
+      const ka = `${a.nom ?? ""} ${a.prenom ?? ""}`.trim().toLowerCase();
+      const kb = `${b.nom ?? ""} ${b.prenom ?? ""}`.trim().toLowerCase();
+      return ka.localeCompare(kb, "fr");
+    });
 
   const pendingCount = subscriptions.filter((s) => s.statut === "pending").length;
   const [tab, setTab] = useState<"apps" | "subs">("apps");
@@ -66,7 +77,17 @@ export default function BoutiqueAdminPage() {
   const [appForm, setAppForm] = useState({
     nom: "", shortDesc: "", description: "", icon: "🎯", couleur: "#6366f1",
     prix: "", periodicite: "mensuel" as StoreApp["periodicite"], actif: true, ordre: "0", route: "", tags: "",
+    visibleUserIds: [] as string[],
+    hiddenUserIds: [] as string[],
   });
+  const [appChangelogs, setAppChangelogs] = useState<ChangelogRow[]>([]);
+  const [showChangelogForm, setShowChangelogForm] = useState(false);
+  const [visibleSearch, setVisibleSearch] = useState("");
+  const [hiddenSearch, setHiddenSearch] = useState("");
+  const [newChangelog, setNewChangelog] = useState<Omit<ChangelogRow, "id">>({
+    title: "", description: "", type: "update", date: new Date().toISOString().split("T")[0],
+  });
+  const [appLimites, setAppLimites] = useState<LimiteRow[]>([]);
   const [savingApp, setSavingApp] = useState(false);
 
   // ── Sub modal state ───────────────────────────────────────────────────────
@@ -77,6 +98,7 @@ export default function BoutiqueAdminPage() {
     statut: "active" as StoreSubStatut, dateDebut: new Date().toISOString().split("T")[0],
     dateFin: "", notes: "",
   });
+  const [subLimites, setSubLimites] = useState<Record<string, string>>({});
   const [savingSub, setSavingSub] = useState(false);
 
   // ── Filters ───────────────────────────────────────────────────────────────
@@ -101,7 +123,10 @@ export default function BoutiqueAdminPage() {
   // ── App CRUD ──────────────────────────────────────────────────────────────
   const openNewApp = () => {
     setEditApp(null);
-    setAppForm({ nom: "", shortDesc: "", description: "", icon: "🎯", couleur: "#6366f1", prix: "", periodicite: "mensuel", actif: true, ordre: String(apps.length), route: "", tags: "" });
+    setAppForm({ nom: "", shortDesc: "", description: "", icon: "🎯", couleur: "#6366f1", prix: "", periodicite: "mensuel", actif: true, ordre: String(apps.length), route: "", tags: "", visibleUserIds: [], hiddenUserIds: [] });
+    setAppChangelogs([]);
+    setAppLimites([]);
+    setShowChangelogForm(false);
     setShowAppModal(true);
   };
 
@@ -112,8 +137,36 @@ export default function BoutiqueAdminPage() {
       icon: app.icon, couleur: app.couleur, prix: String(app.prix),
       periodicite: app.periodicite, actif: app.actif, ordre: String(app.ordre),
       route: app.route ?? "", tags: (app.tags ?? []).join(", "),
+      visibleUserIds: app.visibleUserIds ?? [],
+      hiddenUserIds: app.hiddenUserIds ?? [],
     });
+    setAppChangelogs((app.changelogs ?? []).map(c => ({
+      id: c.id,
+      title: c.title,
+      description: c.description ?? "",
+      type: c.type,
+      date: c.date ? new Date(c.date.seconds * 1000).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+    })));
+    setAppLimites((app.limitesConfig ?? []).map(l => ({
+      key: l.key,
+      label: l.label,
+      defaultValue: String(l.defaultValue),
+    })));
+    setShowChangelogForm(false);
     setShowAppModal(true);
+  };
+
+  const addChangelog = () => {
+    if (!newChangelog.title.trim()) return;
+    setAppChangelogs(prev => [...prev, {
+      id: Math.random().toString(36).slice(2),
+      title: newChangelog.title.trim(),
+      description: newChangelog.description.trim(),
+      type: newChangelog.type,
+      date: newChangelog.date || new Date().toISOString().split("T")[0],
+    }]);
+    setNewChangelog({ title: "", description: "", type: "update", date: new Date().toISOString().split("T")[0] });
+    setShowChangelogForm(false);
   };
 
   const saveApp = async () => {
@@ -132,6 +185,22 @@ export default function BoutiqueAdminPage() {
         ordre: Number(appForm.ordre) || 0,
         route: appForm.route.trim() || undefined,
         tags: appForm.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        visibleUserIds: appForm.visibleUserIds,
+        hiddenUserIds: appForm.hiddenUserIds,
+        changelogs: appChangelogs.map(c => ({
+          id: c.id,
+          title: c.title,
+          description: c.description || undefined,
+          type: c.type,
+          date: Timestamp.fromDate(new Date(c.date)),
+        })),
+        limitesConfig: appLimites
+          .filter(l => l.key.trim() && l.label.trim())
+          .map(l => ({
+            key: l.key.trim(),
+            label: l.label.trim(),
+            defaultValue: Number(l.defaultValue) || 0,
+          })),
         createdBy: currentUser!.uid,
       };
       const data = Object.fromEntries(Object.entries(rawData).filter(([, v]) => v !== undefined)) as typeof rawData;
@@ -161,6 +230,7 @@ export default function BoutiqueAdminPage() {
   const openNewSub = () => {
     setEditSub(null);
     setSubForm({ appId: apps[0]?.id ?? "", clientId: "", clientNom: "", clientEmail: "", userUid: "", statut: "active", dateDebut: new Date().toISOString().split("T")[0], dateFin: "", notes: "" });
+    setSubLimites({});
     setShowSubModal(true);
   };
 
@@ -172,6 +242,9 @@ export default function BoutiqueAdminPage() {
       statut: sub.statut, dateDebut: toInput(sub.dateDebut),
       dateFin: toInput(sub.dateFin), notes: sub.notes ?? "",
     });
+    const lim: Record<string, string> = {};
+    Object.entries(sub.limites ?? {}).forEach(([k, v]) => { lim[k] = String(v); });
+    setSubLimites(lim);
     setShowSubModal(true);
   };
 
@@ -192,6 +265,9 @@ export default function BoutiqueAdminPage() {
     setSavingSub(true);
     try {
       const app = apps.find((a) => a.id === subForm.appId);
+      const limites = Object.entries(subLimites)
+        .filter(([, v]) => v !== "" && !isNaN(Number(v)))
+        .reduce((acc, [k, v]) => ({ ...acc, [k]: Number(v) }), {} as Record<string, number>);
       const rawSub = {
         appId: subForm.appId,
         appNom: app?.nom ?? "",
@@ -203,6 +279,7 @@ export default function BoutiqueAdminPage() {
         dateDebut: subForm.dateDebut ? Timestamp.fromDate(new Date(subForm.dateDebut)) : Timestamp.now(),
         dateFin: subForm.dateFin ? Timestamp.fromDate(new Date(subForm.dateFin)) : null,
         notes: subForm.notes.trim() || null,
+        limites: Object.keys(limites).length > 0 ? limites : undefined,
         createdBy: currentUser!.uid,
       };
       const data = Object.fromEntries(
@@ -250,6 +327,10 @@ export default function BoutiqueAdminPage() {
     .filter((s) => !searchSub || s.clientNom.toLowerCase().includes(searchSub.toLowerCase()) || s.clientEmail?.toLowerCase().includes(searchSub.toLowerCase()))
     .sort((a, b) => (a.statut === "pending" ? -1 : 1) - (b.statut === "pending" ? -1 : 1));
 
+  // Derived for sub modal
+  const selectedApp = apps.find(a => a.id === subForm.appId);
+  const selectedAppLimites = selectedApp?.limitesConfig ?? [];
+
   return (
     <div className="min-h-screen">
       {/* Toast */}
@@ -277,13 +358,13 @@ export default function BoutiqueAdminPage() {
             className={`px-4 py-2 rounded-lg text-sm font-medium transition ${tab === t ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
           >
             {t === "apps" ? `Applications (${apps.length})` : (
-            <span className="flex items-center gap-1.5">
-              Abonnements ({subscriptions.length})
-              {pendingCount > 0 && (
-                <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">{pendingCount}</span>
-              )}
-            </span>
-          )}
+              <span className="flex items-center gap-1.5">
+                Abonnements ({subscriptions.length})
+                {pendingCount > 0 && (
+                  <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">{pendingCount}</span>
+                )}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -319,6 +400,16 @@ export default function BoutiqueAdminPage() {
                           {app.actif ? "Actif" : "Inactif"}
                         </span>
                         <span className="text-xs text-gray-400">{subCount} abonné{subCount > 1 ? "s" : ""}</span>
+                        {(app.visibleUserIds?.length ?? 0) > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                            {app.visibleUserIds!.length} visible{app.visibleUserIds!.length > 1 ? "s" : ""}
+                          </span>
+                        )}
+                        {(app.hiddenUserIds?.length ?? 0) > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
+                            {app.hiddenUserIds!.length} masqué{app.hiddenUserIds!.length > 1 ? "s" : ""}
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-gray-500 truncate mt-0.5">{app.shortDesc}</p>
                     </div>
@@ -345,7 +436,6 @@ export default function BoutiqueAdminPage() {
       {/* ── SUBS TAB ─────────────────────────────────────────────────────────── */}
       {tab === "subs" && (
         <div>
-          {/* Filters + Add */}
           <div className="flex flex-col sm:flex-row gap-2 mb-4">
             <input
               type="text" placeholder="Rechercher un client…"
@@ -381,17 +471,23 @@ export default function BoutiqueAdminPage() {
                 return (
                   <div key={sub.id} className={`bg-white border rounded-xl p-4 ${sub.statut === "pending" ? "border-orange-300 bg-orange-50 ring-1 ring-orange-200" : ""}`}>
                     <div className="flex flex-wrap items-center gap-3">
-                      {/* App icon */}
                       <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg shrink-0" style={{ backgroundColor: (app?.couleur ?? "#6366f1") + "20" }}>
                         {app?.icon ?? "📦"}
                       </div>
-                      {/* Client info */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-semibold text-sm text-gray-900">{sub.clientNom}</span>
                           <span className="text-xs text-gray-400">·</span>
                           <span className="text-xs text-gray-500">{sub.appNom}</span>
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUT_COLOR[sub.statut]}`}>{STATUT_LABEL[sub.statut]}</span>
+                          {sub.limites && Object.keys(sub.limites).length > 0 && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                              {Object.entries(sub.limites).map(([k, v]) => {
+                                const cfg = app?.limitesConfig?.find(l => l.key === k);
+                                return `${cfg?.label ?? k}: ${v}`;
+                              }).join(" · ")}
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-gray-400 mt-0.5">
                           Depuis {toDateStr(sub.dateDebut)}
@@ -402,9 +498,7 @@ export default function BoutiqueAdminPage() {
                           <div className="text-xs text-blue-500 mt-0.5">Facture : {sub.factureNumber}</div>
                         )}
                       </div>
-                      {/* Actions */}
                       <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-                        {/* Quick statut */}
                         {sub.statut !== "active" && (
                           <button onClick={() => quickSetStatut(sub, "active")} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 transition">Activer</button>
                         )}
@@ -414,15 +508,12 @@ export default function BoutiqueAdminPage() {
                         {sub.statut !== "cancelled" && (
                           <button onClick={() => quickSetStatut(sub, "cancelled")} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-gray-100 text-gray-500 hover:bg-gray-200 transition">Annuler</button>
                         )}
-                        {/* Facturer */}
                         <button onClick={() => handleFacturer(sub)} title="Créer une facture" className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
                         </button>
-                        {/* Edit */}
                         <button onClick={() => openEditSub(sub)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                         </button>
-                        {/* Delete */}
                         <button onClick={() => handleDeleteSub(sub)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         </button>
@@ -445,7 +536,7 @@ export default function BoutiqueAdminPage() {
               <h2 className="font-semibold text-gray-900">{editApp ? "Modifier l'application" : "Nouvelle application"}</h2>
               <button onClick={() => setShowAppModal(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-5">
               {/* Icône + couleur */}
               <div className="flex gap-4">
                 <div>
@@ -478,7 +569,7 @@ export default function BoutiqueAdminPage() {
                   <div className="text-xs text-gray-500">{appForm.shortDesc || "Description courte"}</div>
                 </div>
               </div>
-              {/* Champs */}
+              {/* Champs principaux */}
               {[
                 { label: "Nom *", key: "nom", placeholder: "Ex : Compteur de belote" },
                 { label: "Accroche courte *", key: "shortDesc", placeholder: "Ex : Calculez les points de vos parties" },
@@ -539,6 +630,205 @@ export default function BoutiqueAdminPage() {
                   <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${appForm.actif ? "translate-x-4.5" : "translate-x-0.5"}`} />
                 </button>
                 <span className="text-sm text-gray-700">Application active (visible dans la boutique)</span>
+              </div>
+
+              {/* ── VISIBILITÉ ── */}
+              <div className="border-t pt-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Visibilité</p>
+                <div className="space-y-4">
+                  {/* Whitelist */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-medium text-gray-700">Afficher uniquement à :</label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400">
+                          {appForm.visibleUserIds.length === 0 ? "tous" : `${appForm.visibleUserIds.length} sélectionné(s)`}
+                        </span>
+                        {nonAdminUsers.length > 0 && (
+                          <button type="button" onClick={() => setAppForm(f => ({
+                            ...f,
+                            visibleUserIds: f.visibleUserIds.length === nonAdminUsers.length ? [] : nonAdminUsers.map(u => u.uid),
+                          }))} className="text-xs text-blue-600 hover:underline">
+                            {appForm.visibleUserIds.length === nonAdminUsers.length ? "Aucun" : "Tous"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      type="text" placeholder="Rechercher un utilisateur…"
+                      value={visibleSearch} onChange={e => setVisibleSearch(e.target.value)}
+                      className="w-full border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-400 mb-1.5 transition"
+                    />
+                    <div className="border rounded-lg overflow-hidden max-h-36 overflow-y-auto">
+                      {nonAdminUsers.length === 0 ? (
+                        <p className="text-xs text-gray-400 p-3">Aucun utilisateur non-admin.</p>
+                      ) : nonAdminUsers
+                          .filter(u => !visibleSearch || `${u.nom ?? ""} ${u.prenom ?? ""} ${u.email ?? ""}`.toLowerCase().includes(visibleSearch.toLowerCase()))
+                          .map(u => (
+                        <label key={u.uid} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b last:border-0 transition">
+                          <input
+                            type="checkbox"
+                            checked={appForm.visibleUserIds.includes(u.uid)}
+                            onChange={e => setAppForm(f => ({
+                              ...f,
+                              visibleUserIds: e.target.checked
+                                ? [...f.visibleUserIds, u.uid]
+                                : f.visibleUserIds.filter(id => id !== u.uid),
+                            }))}
+                            className="rounded"
+                          />
+                          <span className="text-xs text-gray-700">{(u.nom ?? "").toUpperCase()} {u.prenom}</span>
+                          {u.email && <span className="text-xs text-gray-400 ml-auto truncate">{u.email}</span>}
+                        </label>
+                      ))}
+                    </div>
+                    {appForm.visibleUserIds.length > 0 && (
+                      <p className="text-xs text-orange-600 mt-1">⚠ Seuls ces utilisateurs verront l'app (+ les admins)</p>
+                    )}
+                  </div>
+                  {/* Blacklist */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-medium text-gray-700">Masquer pour :</label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400">
+                          {appForm.hiddenUserIds.length === 0 ? "personne" : `${appForm.hiddenUserIds.length} sélectionné(s)`}
+                        </span>
+                        {nonAdminUsers.length > 0 && (
+                          <button type="button" onClick={() => setAppForm(f => ({
+                            ...f,
+                            hiddenUserIds: f.hiddenUserIds.length === nonAdminUsers.length ? [] : nonAdminUsers.map(u => u.uid),
+                          }))} className="text-xs text-blue-600 hover:underline">
+                            {appForm.hiddenUserIds.length === nonAdminUsers.length ? "Aucun" : "Tous"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      type="text" placeholder="Rechercher un utilisateur…"
+                      value={hiddenSearch} onChange={e => setHiddenSearch(e.target.value)}
+                      className="w-full border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-400 mb-1.5 transition"
+                    />
+                    <div className="border rounded-lg overflow-hidden max-h-36 overflow-y-auto">
+                      {nonAdminUsers.length === 0 ? (
+                        <p className="text-xs text-gray-400 p-3">Aucun utilisateur non-admin.</p>
+                      ) : nonAdminUsers
+                          .filter(u => !hiddenSearch || `${u.nom ?? ""} ${u.prenom ?? ""} ${u.email ?? ""}`.toLowerCase().includes(hiddenSearch.toLowerCase()))
+                          .map(u => (
+                        <label key={u.uid} className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b last:border-0 transition">
+                          <input
+                            type="checkbox"
+                            checked={appForm.hiddenUserIds.includes(u.uid)}
+                            onChange={e => setAppForm(f => ({
+                              ...f,
+                              hiddenUserIds: e.target.checked
+                                ? [...f.hiddenUserIds, u.uid]
+                                : f.hiddenUserIds.filter(id => id !== u.uid),
+                            }))}
+                            className="rounded"
+                          />
+                          <span className="text-xs text-gray-700">{(u.nom ?? "").toUpperCase()} {u.prenom}</span>
+                          {u.email && <span className="text-xs text-gray-400 ml-auto truncate">{u.email}</span>}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── LIMITES D'UTILISATION ── */}
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Limites d'utilisation</p>
+                  <button type="button" onClick={() => setAppLimites(prev => [...prev, { key: "", label: "", defaultValue: "0" }])}
+                    className="text-xs text-blue-600 hover:underline">+ Ajouter</button>
+                </div>
+                {appLimites.length === 0 ? (
+                  <p className="text-xs text-gray-400">Aucune limite. Utilisez "Ajouter" pour créer des limites par abonnement (ex : nombre d'équipes max).</p>
+                ) : (
+                  <div className="space-y-2">
+                    {appLimites.map((l, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <input placeholder="Clé (ex: maxEquipes)" value={l.key}
+                          onChange={e => setAppLimites(prev => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                          className="flex-1 border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-400 transition" />
+                        <input placeholder="Label (ex: Équipes max)" value={l.label}
+                          onChange={e => setAppLimites(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value } : x))}
+                          className="flex-1 border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-400 transition" />
+                        <input type="number" placeholder="Défaut" value={l.defaultValue}
+                          onChange={e => setAppLimites(prev => prev.map((x, j) => j === i ? { ...x, defaultValue: e.target.value } : x))}
+                          className="w-20 border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-400 transition" />
+                        <button type="button" onClick={() => setAppLimites(prev => prev.filter((_, j) => j !== i))}
+                          className="text-gray-300 hover:text-red-500 p-1 transition">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── CHANGELOGS ── */}
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Mises à jour et annonces</p>
+                  <button type="button" onClick={() => setShowChangelogForm(v => !v)}
+                    className="text-xs text-blue-600 hover:underline">
+                    {showChangelogForm ? "Annuler" : "+ Ajouter"}
+                  </button>
+                </div>
+                {showChangelogForm && (
+                  <div className="border rounded-lg p-3 mb-3 bg-blue-50 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <select value={newChangelog.type} onChange={e => setNewChangelog(f => ({ ...f, type: e.target.value as "update" | "upcoming" }))}
+                        className="border rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-blue-400">
+                        <option value="update">Mise à jour</option>
+                        <option value="upcoming">À venir</option>
+                      </select>
+                      <input type="date" value={newChangelog.date}
+                        onChange={e => setNewChangelog(f => ({ ...f, date: e.target.value }))}
+                        className="border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-400 bg-white" />
+                    </div>
+                    <input placeholder="Titre *" value={newChangelog.title}
+                      onChange={e => setNewChangelog(f => ({ ...f, title: e.target.value }))}
+                      className="w-full border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-400" />
+                    <textarea rows={2} placeholder="Description (optionnel)" value={newChangelog.description}
+                      onChange={e => setNewChangelog(f => ({ ...f, description: e.target.value }))}
+                      className="w-full border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-400 resize-none" />
+                    <button type="button" onClick={addChangelog} disabled={!newChangelog.title.trim()}
+                      className="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition">
+                      Ajouter l'entrée
+                    </button>
+                  </div>
+                )}
+                {appChangelogs.length === 0 ? (
+                  <p className="text-xs text-gray-400">Aucune entrée pour l'instant.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                    {appChangelogs.map(c => (
+                      <div key={c.id} className="flex items-start justify-between gap-2 border rounded-lg px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${c.type === "update" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>
+                              {c.type === "update" ? "Mise à jour" : "À venir"}
+                            </span>
+                            <span className="text-xs text-gray-400">{c.date}</span>
+                          </div>
+                          <p className="text-xs font-medium text-gray-800 mt-0.5">{c.title}</p>
+                          {c.description && <p className="text-xs text-gray-500">{c.description}</p>}
+                        </div>
+                        <button type="button" onClick={() => setAppChangelogs(prev => prev.filter(x => x.id !== c.id))}
+                          className="text-gray-300 hover:text-red-500 transition shrink-0 mt-0.5 p-0.5">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             <div className="px-6 py-4 border-t flex gap-3">
@@ -648,6 +938,27 @@ export default function BoutiqueAdminPage() {
                     className="w-full border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition" />
                 </div>
               </div>
+              {/* Limites personnalisées */}
+              {selectedAppLimites.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-2">Limites personnalisées</label>
+                  <div className="space-y-2">
+                    {selectedAppLimites.map(l => (
+                      <div key={l.key} className="flex items-center gap-3">
+                        <label className="text-sm text-gray-700 flex-1">{l.label}</label>
+                        <input
+                          type="number"
+                          placeholder={String(l.defaultValue)}
+                          value={subLimites[l.key] ?? ""}
+                          onChange={e => setSubLimites(f => ({ ...f, [l.key]: e.target.value }))}
+                          className="w-24 border rounded-lg px-2 py-1.5 text-sm outline-none focus:border-blue-400 transition"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Laisser vide = valeur par défaut</p>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Notes internes</label>
                 <textarea rows={2} placeholder="Remarques, conditions particulières…" value={subForm.notes}

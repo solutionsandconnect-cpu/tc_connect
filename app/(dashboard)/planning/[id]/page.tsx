@@ -23,8 +23,10 @@ import { formatDate, formatHeure } from '@/lib/planningUtils'
 import { useAuth } from '@/context/AuthContext'
 import { addToCalendar, RDV_CAL_ID } from '@/lib/googleCalendar'
 import { useClients } from '@/hooks/useClients'
-import type { Client } from '@/types'
+import type { Client, PainPoint } from '@/types'
 import ClientEditModal from '@/components/ui/ClientEditModal'
+import PainZoneSelector from '@/components/ui/PainZoneSelector'
+import { zoneDouleurLabel } from '@/lib/painZones'
 
 const ETATS = ['Non calé', 'Calé', 'Annulé', 'Effectué']
 
@@ -177,6 +179,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   const router = useRouter()
   const { currentUser, userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
+  const droits = userProfile?.droits
   const { plannings, updatePlanning, deletePlanning } = usePlanning()
   const { seances, addSeance, updateSeance, deleteSeance } = useSeances(id)
   const { users } = useUsers()
@@ -385,6 +388,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   const [showUrgence, setShowUrgence] = useState(false)
 
   const [showExpiredNotes, setShowExpiredNotes] = useState(false)
+  const [questionnaireEditUntil, setQuestionnaireEditUntil] = useState('')
   const [bilanClientIntensity, setBilanClientIntensity] = useState(1)
   const [bilanMotivationClient, setBilanMotivationClient] = useState(1)
   const [bilanIntensiteMiseClient, setBilanIntensiteMiseClient] = useState(1)
@@ -480,7 +484,24 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     activite_derniers_jours: 1,
     alimentation_derniers_jours: 1,
     infos_complementaire_avant_seance_client: '',
+    douleurs: [] as PainPoint[],
   })
+
+  // Sync questionnaire_editable_until avec le planning
+  useEffect(() => {
+    const eu = (planning as any)?.questionnaire_editable_until
+    setQuestionnaireEditUntil(eu ? new Date(eu.seconds * 1000).toISOString().split('T')[0] : '')
+  }, [(planning as any)?.questionnaire_editable_until?.seconds])
+
+  const handleQuestionnaireEditUntil = async (dateStr: string) => {
+    setQuestionnaireEditUntil(dateStr)
+    if (dateStr) {
+      const d = new Date(dateStr); d.setHours(23, 59, 59, 999)
+      await updatePlanning(id, { questionnaire_editable_until: Timestamp.fromDate(d) } as any)
+    } else {
+      await updatePlanning(id, { questionnaire_editable_until: null } as any)
+    }
+  }
 
   const openEdit = () => {
     if (!planning) return
@@ -526,6 +547,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
       activite_derniers_jours: (planning as any).activite_derniers_jours || 1,
       alimentation_derniers_jours: (planning as any).alimentation_derniers_jours || 1,
       infos_complementaire_avant_seance_client: (planning as any).infos_complementaire_avant_seance_client || '',
+      douleurs: Array.isArray((planning as any).douleurs) ? (planning as any).douleurs : [],
     })
     setShowQuestionnaireDirectModal(true)
   }
@@ -690,6 +712,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
         activite_derniers_jours: questionnaireForm.activite_derniers_jours,
         alimentation_derniers_jours: questionnaireForm.alimentation_derniers_jours,
         infos_complementaire_avant_seance_client: questionnaireForm.infos_complementaire_avant_seance_client,
+        douleurs: questionnaireForm.douleurs,
         questionnaire_rempli: true,
         indice_hooper,
       } as any)
@@ -781,7 +804,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   const urgenceRelation = client?.contactUrgenceRelation || clientRecord?.contactUrgenceRelation || null
   const wazeLink = adresse ? `https://waze.com/ul?q=${encodeURIComponent(adresse)}&navigate=yes` : null
   const mapsLink = adresse ? `https://maps.google.com/?q=${encodeURIComponent(adresse)}` : null
-  const lastWithCr = derniersRdv.find((r) => r.cr_rdv_moi || r.cr_rdv_client)
+  const lastWithCr = derniersRdv.find((r) => r.observations_rdv || r.cr_rdv_moi || r.cr_rdv_client)
 
   const isSC = ((planning as any).type_planning ?? '').includes('S&C')
 
@@ -1155,12 +1178,18 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
       {!isSC && <SectionSep label="Avant séance" />}
 
       {/* Questionnaire de forme */}
-      {!isSC && <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      {!isSC && (() => {
+        const questionnaireRempli = !!(
+          (planning as any).questionnaire_rempli ||
+          (planning as any).indice_hooper != null
+        )
+        return (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-gray-700">Questionnaire de forme</p>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
-              {(planning as any).questionnaire_rempli ? (
+              {questionnaireRempli ? (
                 <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">
                   ✓ Rempli
                 </span>
@@ -1185,7 +1214,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
             </div>
           </div>
           <div className="flex gap-2 flex-wrap justify-end">
-            {(planning as any).questionnaire_rempli && (
+            {questionnaireRempli && (
               <button onClick={() => setShowQuestionnaireModal(true)}
                 className="text-xs text-blue-600 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition">
                 Voir
@@ -1195,7 +1224,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
               <>
                 <button onClick={openQuestionnaireDirect}
                   className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
-                  {(planning as any).questionnaire_rempli ? 'Modifier' : 'Remplir'}
+                  {questionnaireRempli ? 'Modifier' : 'Remplir'}
                 </button>
                 <button onClick={handleSendSMS}
                   className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition">
@@ -1209,7 +1238,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                 return canEdit ? (
                   <button onClick={openQuestionnaireDirect}
                     className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
-                    {(planning as any).questionnaire_rempli ? 'Modifier' : 'Remplir'}
+                    {questionnaireRempli ? 'Modifier' : 'Remplir'}
                   </button>
                 ) : null
               })()
@@ -1222,7 +1251,57 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
             <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3">{(planning as any).infos_complementaire_avant_seance_client}</p>
           </div>
         )}
-      </div>}
+        {Array.isArray((planning as any).douleurs) && (planning as any).douleurs.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs text-gray-500 mb-1.5">Douleurs signalées</p>
+            <div className="flex flex-wrap gap-1.5">
+              {((planning as any).douleurs as PainPoint[]).map((d, i) => (
+                <span key={i} className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border ${
+                  d.intensite >= 7 ? 'bg-red-50 border-red-200 text-red-700' :
+                  d.intensite >= 4 ? 'bg-orange-50 border-orange-200 text-orange-700' :
+                  'bg-yellow-50 border-yellow-200 text-yellow-700'
+                }`}>
+                  {zoneDouleurLabel(d.zone)}{d.type ? ` · ${d.type}` : ''}
+                  <span className="font-bold">{d.intensite}/10</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+          {/* Admin : autoriser la modification du questionnaire par le client */}
+          {isAdmin && questionnaireRempli && (
+            <div className="mt-3 pt-3 border-t border-dashed border-gray-100">
+              <div className="flex items-center gap-3 flex-wrap">
+                <p className="text-xs text-gray-500 flex-1">Autoriser la modification jusqu'au</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={questionnaireEditUntil}
+                    min={new Date().toISOString().split('T')[0]}
+                    onChange={e => handleQuestionnaireEditUntil(e.target.value)}
+                    className="border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-blue-400 transition"
+                  />
+                  {questionnaireEditUntil && (
+                    <button
+                      onClick={() => handleQuestionnaireEditUntil('')}
+                      className="text-xs text-gray-400 hover:text-red-500 transition"
+                      title="Retirer la permission"
+                    >
+                      Retirer
+                    </button>
+                  )}
+                </div>
+              </div>
+              {questionnaireEditUntil && (
+                <p className="text-xs text-blue-600 mt-1">
+                  Éditable jusqu'au {new Date(questionnaireEditUntil).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                </p>
+              )}
+            </div>
+          )}
+      </div>
+        )
+      })()}
 
       {/* ─── COMPTE RENDU & BILANS (admin) ─── */}
       {isAdmin && (
@@ -1421,6 +1500,46 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
               className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
               {(planning as any).motivation_pdt_seance ? 'Modifier' : 'Remplir'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── COMMENTAIRES (client non-admin) ─── */}
+      {!isAdmin && !isSC && (
+        <div className="space-y-3">
+          {/* Commentaire du coach — lecture seule, respecte le droit compteRendu */}
+          {(droits as any)?.compteRendu !== false && (planning as any).cr_rdv_moi && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                Commentaire de votre coach
+              </p>
+              <p className="text-sm text-gray-800 bg-blue-50 rounded-lg p-3 whitespace-pre-wrap">
+                {(planning as any).cr_rdv_moi}
+              </p>
+            </div>
+          )}
+          {/* Mon commentaire — visible et éditable */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Mon commentaire</p>
+                {(planning as any).cr_rdv_client
+                  ? <p className="text-xs text-green-600">✓ Renseigné</p>
+                  : <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-400 text-xs font-medium px-2 py-0.5 rounded-full">Non renseigné</span>
+                }
+              </div>
+              <button
+                onClick={() => { setCrClientValue((planning as any)?.cr_rdv_client || ''); setShowCrClientModal(true) }}
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition shrink-0"
+              >
+                {(planning as any).cr_rdv_client ? 'Modifier' : 'Ajouter'}
+              </button>
+            </div>
+            {(planning as any).cr_rdv_client && (
+              <p className="text-sm text-gray-800 bg-green-50 rounded-lg p-3 mt-2 whitespace-pre-wrap">
+                {(planning as any).cr_rdv_client}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -1657,18 +1776,26 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                 Voir ce RDV
               </button>
             </div>
-            {lastWithCr.cr_rdv_moi && (
+            {isAdmin && lastWithCr.observations_rdv && (
               <div>
+                <p className="text-xs text-gray-500 mb-1">Compte rendu</p>
+                <p className="text-sm text-gray-700 bg-gray-50 rounded-lg p-3 whitespace-pre-wrap">
+                  {lastWithCr.observations_rdv}
+                </p>
+              </div>
+            )}
+            {lastWithCr.cr_rdv_moi && (
+              <div className={lastWithCr.observations_rdv ? 'mt-2' : ''}>
                 <p className="text-xs text-gray-500 mb-1">Coach</p>
-                <p className="text-sm text-gray-700 bg-gray-50 rounded-lg p-3 whitespace-pre-wrap line-clamp-4">
+                <p className="text-sm text-gray-700 bg-blue-50 rounded-lg p-3 whitespace-pre-wrap">
                   {lastWithCr.cr_rdv_moi}
                 </p>
               </div>
             )}
             {lastWithCr.cr_rdv_client && (
-              <div className={lastWithCr.cr_rdv_moi ? 'mt-2' : ''}>
+              <div className={(lastWithCr.observations_rdv || lastWithCr.cr_rdv_moi) ? 'mt-2' : ''}>
                 <p className="text-xs text-gray-500 mb-1">Client</p>
-                <p className="text-sm text-gray-700 bg-green-50 rounded-lg p-3 whitespace-pre-wrap line-clamp-4">
+                <p className="text-sm text-gray-700 bg-green-50 rounded-lg p-3 whitespace-pre-wrap">
                   {lastWithCr.cr_rdv_client}
                 </p>
               </div>
@@ -2297,6 +2424,28 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
               }`}>{indiceHooper}/28</span>
             </div>
           )}
+          {Array.isArray((planning as any).douleurs) && (planning as any).douleurs.length > 0 && (
+            <div className="pt-3 border-t border-gray-100">
+              <p className="text-sm font-semibold text-gray-700 mb-2">Douleurs signalées</p>
+              <div className="space-y-1.5">
+                {((planning as any).douleurs as PainPoint[]).map((d, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                    <span className="text-sm font-medium text-gray-800">
+                      {zoneDouleurLabel(d.zone)}
+                      {d.type ? <span className="text-xs font-normal text-gray-500"> · {d.type}</span> : null}
+                    </span>
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                      d.intensite >= 7 ? 'bg-red-200 text-red-800' :
+                      d.intensite >= 4 ? 'bg-orange-100 text-orange-700' :
+                      'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {d.intensite}/10
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {(planning as any).infos_complementaire_avant_seance_client && (
             <div className="pt-2">
               <p className="text-sm text-gray-500 mb-1">Commentaire</p>
@@ -2331,6 +2480,14 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
               </div>
             </div>
           ))}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Douleurs</label>
+            <p className="text-xs text-gray-500 mb-2">Touchez les zones concernées puis ajustez l'intensité.</p>
+            <PainZoneSelector
+              value={questionnaireForm.douleurs}
+              onChange={(v) => setQuestionnaireForm((prev) => ({ ...prev, douleurs: v }))}
+            />
+          </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Commentaire</label>
             <textarea
