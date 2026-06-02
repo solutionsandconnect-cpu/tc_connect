@@ -6,32 +6,20 @@ import { useBebe } from '@/hooks/useBebe'
 import { useBebeEvents } from '@/hooks/useBebeEvents'
 import { StoreGate } from '@/components/ui/StoreGate'
 import Modal from '@/components/ui/Modal'
-import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList } from 'lucide-react'
+import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play } from 'lucide-react'
 import { Milk, Pill, Baby } from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
+import { uploadImage } from '@/lib/uploadImage'
 import type { BebeEvent, BebeEventType } from '@/types'
 
-// ─── Icône couche (SVG custom — aucun équivalent dans lucide) ─────────────────
+// ─── Icône couche (SVG custom rempli — aucun équivalent dans lucide) ──────────
 
 function DiaperIcon({ size = 24, className }: { size?: number; className?: string }) {
-  // Forme classique couche vue de face : large en haut/bas, pincée au milieu
+  // Couche stylisée vue de face : trapèze arrondi pincé à la taille
   return (
-    <svg
-      width={size} height={size}
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {/* Bretelles du haut */}
-      <path d="M5 5c1.5 1 3.5 2 7 2s5.5-1 7-2" />
-      {/* Corps — pincé au centre (taille) */}
-      <path d="M4 5c2 3 4 4 8 4s6-1 8-4v14c-2-3-4-4-8-4s-6 1-8 4V5z" />
-      {/* Petite attache centrale */}
-      <path d="M10 10c.5 1 1 1.5 2 1.5s1.5-.5 2-1.5" />
+    <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M3.2 5.5C3.2 4.7 3.9 4 4.7 4h14.6c.8 0 1.5.7 1.5 1.5 0 4.4-2.7 7-5.4 7.4-.9 2.6-2 4.6-3.4 4.6s-2.5-2-3.4-4.6C5.9 12.5 3.2 9.9 3.2 5.5z" opacity="0.92" />
+      <path d="M8.5 8.2c.6 1.2 1.9 2 3.5 2s2.9-.8 3.5-2" fill="none" stroke="white" strokeWidth="1.3" strokeLinecap="round" opacity="0.6" />
     </svg>
   )
 }
@@ -199,6 +187,28 @@ function ModalFooter({ onCancel, onSave, saving, label = 'Enregistrer', disabled
   )
 }
 
+/** Sélecteur de photo rond avec aperçu */
+function PhotoPicker({ preview, onPick }: { preview: string; onPick: (file: File) => void }) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <label className="relative cursor-pointer group">
+        <div className="w-24 h-24 rounded-full overflow-hidden bg-sky-100 flex items-center justify-center border-2 border-gray-100 group-hover:border-sky-300 transition">
+          {preview
+            ? <img src={preview} alt="" className="w-full h-full object-cover" />
+            : <Baby size={36} className="text-sky-400" />
+          }
+        </div>
+        <div className="absolute bottom-0 right-0 w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-md group-hover:bg-blue-700 transition">
+          <Camera size={14} />
+        </div>
+        <input type="file" accept="image/*" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) onPick(f) }} />
+      </label>
+      <span className="text-xs text-gray-400">Photo (optionnelle)</span>
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function BebePage() {
@@ -246,6 +256,8 @@ export default function BebePage() {
   // ── Ajout / édition bébé ──────────────────────────────────────────────────
   const [showAddBabyModal, setShowAddBabyModal] = useState(false)
   const [addBabyForm, setAddBabyForm] = useState({ name: '', birthDate: '' })
+  const [addPhotoFile, setAddPhotoFile] = useState<File | null>(null)
+  const [addPhotoPreview, setAddPhotoPreview] = useState<string>('')
   const [savingAdd, setSavingAdd] = useState(false)
 
   const handleAddBebe = async () => {
@@ -253,22 +265,37 @@ export default function BebePage() {
     setSavingAdd(true)
     try {
       const [y, m, d] = addBabyForm.birthDate.split('-').map(Number)
-      const ref = await addBebe({ name: addBabyForm.name.trim(), birthDate: Timestamp.fromDate(new Date(y, m - 1, d)), members: [currentUser.uid], createdBy: currentUser.uid })
+      let photoUrl: string | undefined
+      if (addPhotoFile) {
+        photoUrl = await uploadImage(addPhotoFile, `users/${currentUser.uid}/bebe_photos/${Date.now()}_${addPhotoFile.name}`)
+      }
+      const ref = await addBebe({
+        name: addBabyForm.name.trim(),
+        birthDate: Timestamp.fromDate(new Date(y, m - 1, d)),
+        members: [currentUser.uid],
+        createdBy: currentUser.uid,
+        ...(photoUrl ? { photoUrl } : {}),
+      })
       const newId = (ref as any)?.id
       if (newId) setSelectedBabyId(newId)
       setShowAddBabyModal(false)
       setAddBabyForm({ name: '', birthDate: '' })
+      setAddPhotoFile(null); setAddPhotoPreview('')
     } finally { setSavingAdd(false) }
   }
 
   const [showEditBabyModal, setShowEditBabyModal] = useState(false)
   const [editBabyForm, setEditBabyForm] = useState({ name: '', birthDate: '' })
+  const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null)
+  const [editPhotoPreview, setEditPhotoPreview] = useState<string>('')
   const [savingEditBaby, setSavingEditBaby] = useState(false)
 
   const openEditBaby = () => {
     if (!selectedBaby) return
     const b = selectedBaby.birthDate?.toDate?.()
     setEditBabyForm({ name: selectedBaby.name, birthDate: b ? b.toISOString().split('T')[0] : '' })
+    setEditPhotoFile(null)
+    setEditPhotoPreview(selectedBaby.photoUrl ?? '')
     setShowEditBabyModal(true)
   }
 
@@ -277,8 +304,17 @@ export default function BebePage() {
     setSavingEditBaby(true)
     try {
       const [y, m, d] = editBabyForm.birthDate.split('-').map(Number)
-      await updateBebe(selectedBabyId, { name: editBabyForm.name.trim(), birthDate: Timestamp.fromDate(new Date(y, m - 1, d)) })
+      let photoUrl = selectedBaby?.photoUrl
+      if (editPhotoFile && currentUser) {
+        photoUrl = await uploadImage(editPhotoFile, `users/${currentUser.uid}/bebe_photos/${Date.now()}_${editPhotoFile.name}`)
+      }
+      await updateBebe(selectedBabyId, {
+        name: editBabyForm.name.trim(),
+        birthDate: Timestamp.fromDate(new Date(y, m - 1, d)),
+        ...(photoUrl ? { photoUrl } : {}),
+      })
       setShowEditBabyModal(false)
+      setEditPhotoFile(null); setEditPhotoPreview('')
     } finally { setSavingEditBaby(false) }
   }
 
@@ -450,6 +486,10 @@ export default function BebePage() {
             <p className="text-sm text-gray-500 mt-1">Commencez par ajouter votre bébé</p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+            <PhotoPicker
+              preview={addPhotoPreview}
+              onPick={(file) => { setAddPhotoFile(file); setAddPhotoPreview(URL.createObjectURL(file)) }}
+            />
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Prénom</label>
               <input type="text" placeholder="Emma, Léo…" value={addBabyForm.name}
@@ -480,8 +520,11 @@ export default function BebePage() {
         {/* En-tête */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-11 h-11 bg-sky-100 rounded-xl flex items-center justify-center shrink-0">
-              <Baby size={22} className="text-sky-600" />
+            <div className="w-12 h-12 rounded-full overflow-hidden bg-sky-100 flex items-center justify-center shrink-0 border border-gray-100">
+              {selectedBaby?.photoUrl
+                ? <img src={selectedBaby.photoUrl} alt={selectedBaby.name} className="w-full h-full object-cover" />
+                : <Baby size={24} className="text-sky-600" />
+              }
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -510,7 +553,7 @@ export default function BebePage() {
             <button onClick={openEditBaby} title="Modifier" className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition">
               <Pencil size={16} />
             </button>
-            <button onClick={() => { setAddBabyForm({ name: '', birthDate: '' }); setShowAddBabyModal(true) }} title="Ajouter un bébé"
+            <button onClick={() => { setAddBabyForm({ name: '', birthDate: '' }); setAddPhotoFile(null); setAddPhotoPreview(''); setShowAddBabyModal(true) }} title="Ajouter un bébé"
               className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition">
               <Plus size={16} />
             </button>
@@ -843,6 +886,22 @@ export default function BebePage() {
       {/* ── Modale Sommeil ──────────────────────────────────────────────────── */}
       <Modal isOpen={modalType === 'sleep'} onClose={closeModal} title={editingEvent ? 'Modifier — Sommeil' : 'Sommeil'}>
         <div className="space-y-4">
+          {/* Démarrer un sommeil en direct (uniquement en création, si aucun en cours) */}
+          {!editingEvent && !selectedBaby?.activeSleep && (
+            <>
+              <button
+                onClick={async () => { await handleStartSleep(); closeModal() }}
+                className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition">
+                <Play size={16} />
+                Commencer le sommeil maintenant
+              </button>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-gray-100" />
+                <span className="text-xs text-gray-400">ou saisir manuellement</span>
+                <div className="flex-1 h-px bg-gray-100" />
+              </div>
+            </>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Début</label>
@@ -919,6 +978,10 @@ export default function BebePage() {
       {/* ── Modale Ajouter bébé ─────────────────────────────────────────────── */}
       <Modal isOpen={showAddBabyModal} onClose={() => setShowAddBabyModal(false)} title="Ajouter un bébé">
         <div className="space-y-4">
+          <PhotoPicker
+            preview={addPhotoPreview}
+            onPick={(file) => { setAddPhotoFile(file); setAddPhotoPreview(URL.createObjectURL(file)) }}
+          />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Prénom</label>
             <input type="text" placeholder="Emma, Léo…" value={addBabyForm.name} onChange={e => setAddBabyForm(f => ({ ...f, name: e.target.value }))}
@@ -936,6 +999,10 @@ export default function BebePage() {
       {/* ── Modale Éditer bébé ──────────────────────────────────────────────── */}
       <Modal isOpen={showEditBabyModal} onClose={() => setShowEditBabyModal(false)} title={`Modifier — ${selectedBaby?.name}`}>
         <div className="space-y-4">
+          <PhotoPicker
+            preview={editPhotoPreview}
+            onPick={(file) => { setEditPhotoFile(file); setEditPhotoPreview(URL.createObjectURL(file)) }}
+          />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Prénom</label>
             <input type="text" value={editBabyForm.name} onChange={e => setEditBabyForm(f => ({ ...f, name: e.target.value }))}

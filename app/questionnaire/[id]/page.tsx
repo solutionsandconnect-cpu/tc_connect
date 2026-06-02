@@ -1,7 +1,8 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
+import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import type { PainPoint } from '@/types'
@@ -151,6 +152,7 @@ const QUESTIONS = [
 
 export default function QuestionnairePage() {
   const { id } = useParams<{ id: string }>()
+  const router = useRouter()
   const [planning, setPlanning] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [submitted, setSubmitted] = useState(false)
@@ -272,6 +274,15 @@ export default function QuestionnairePage() {
       <div className="min-h-screen bg-gray-50 px-4 py-8">
         <div className="max-w-lg mx-auto space-y-5">
 
+          {/* Retour */}
+          <button
+            onClick={() => router.back()}
+            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition"
+          >
+            <ArrowLeftIcon className="w-4 h-4" />
+            Retour
+          </button>
+
           {/* En-tête */}
           <div className="text-center">
             <p className="text-sm text-gray-500 capitalize">{dateLabel}</p>
@@ -340,7 +351,17 @@ export default function QuestionnairePage() {
 
   if (submitted) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="min-h-screen bg-gray-50 px-4 py-8">
+        <div className="max-w-lg mx-auto">
+          <button
+            onClick={() => router.back()}
+            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition mb-6"
+          >
+            <ArrowLeftIcon className="w-4 h-4" />
+            Retour
+          </button>
+        </div>
+        <div className="flex items-center justify-center">
         <div className="bg-white rounded-2xl shadow-md p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -358,6 +379,7 @@ export default function QuestionnairePage() {
             Modifier mes réponses
           </button>
         </div>
+        </div>
       </div>
     )
   }
@@ -365,6 +387,15 @@ export default function QuestionnairePage() {
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-8">
       <div className="max-w-lg mx-auto">
+
+        {/* Retour */}
+        <button
+          onClick={() => router.back()}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition mb-6"
+        >
+          <ArrowLeftIcon className="w-4 h-4" />
+          Retour
+        </button>
 
         {/* En-tête */}
         <div className="text-center mb-8">

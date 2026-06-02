@@ -12,6 +12,7 @@ import {
   createStoreSubscription, updateStoreSubscription, deleteStoreSubscription,
 } from "@/lib/storeService";
 import { Timestamp } from "firebase/firestore";
+import { uploadImage } from "@/lib/uploadImage";
 import type { StoreApp, StoreSubscription, StoreSubStatut } from "@/types";
 
 const STATUT_LABEL: Record<StoreSubStatut, string> = {
@@ -35,7 +36,7 @@ const PERIOD_LABEL: Record<StoreApp["periodicite"], string> = {
 };
 
 const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6"];
-const EMOJIS = ["🃏", "📊", "🏃", "💪", "🧠", "🎯", "📅", "⚡", "🔥", "🏆", "📱", "🎮", "🧘", "🚴"];
+const EMOJIS = ["🃏", "📊", "🏃", "💪", "🧠", "🎯", "📅","📆", "⚡", "🔥", "🏆", "📱", "🎮", "🧘", "🚴","🍼"];
 
 function toDateStr(ts?: { seconds: number } | null) {
   if (!ts) return "";
@@ -75,11 +76,12 @@ export default function BoutiqueAdminPage() {
   const [showAppModal, setShowAppModal] = useState(false);
   const [editApp, setEditApp] = useState<StoreApp | null>(null);
   const [appForm, setAppForm] = useState({
-    nom: "", shortDesc: "", description: "", icon: "🎯", couleur: "#6366f1",
+    nom: "", shortDesc: "", description: "", icon: "🎯", iconUrl: "", couleur: "#6366f1",
     prix: "", periodicite: "mensuel" as StoreApp["periodicite"], actif: true, ordre: "0", route: "", tags: "",
     visibleUserIds: [] as string[],
     hiddenUserIds: [] as string[],
   });
+  const [uploadingIcon, setUploadingIcon] = useState(false);
   const [appChangelogs, setAppChangelogs] = useState<ChangelogRow[]>([]);
   const [showChangelogForm, setShowChangelogForm] = useState(false);
   const [visibleSearch, setVisibleSearch] = useState("");
@@ -123,7 +125,7 @@ export default function BoutiqueAdminPage() {
   // ── App CRUD ──────────────────────────────────────────────────────────────
   const openNewApp = () => {
     setEditApp(null);
-    setAppForm({ nom: "", shortDesc: "", description: "", icon: "🎯", couleur: "#6366f1", prix: "", periodicite: "mensuel", actif: true, ordre: String(apps.length), route: "", tags: "", visibleUserIds: [], hiddenUserIds: [] });
+    setAppForm({ nom: "", shortDesc: "", description: "", icon: "🎯", iconUrl: "", couleur: "#6366f1", prix: "", periodicite: "mensuel", actif: true, ordre: String(apps.length), route: "", tags: "", visibleUserIds: [], hiddenUserIds: [] });
     setAppChangelogs([]);
     setAppLimites([]);
     setShowChangelogForm(false);
@@ -134,7 +136,7 @@ export default function BoutiqueAdminPage() {
     setEditApp(app);
     setAppForm({
       nom: app.nom, shortDesc: app.shortDesc, description: app.description,
-      icon: app.icon, couleur: app.couleur, prix: String(app.prix),
+      icon: app.icon, iconUrl: app.iconUrl ?? "", couleur: app.couleur, prix: String(app.prix),
       periodicite: app.periodicite, actif: app.actif, ordre: String(app.ordre),
       route: app.route ?? "", tags: (app.tags ?? []).join(", "),
       visibleUserIds: app.visibleUserIds ?? [],
@@ -178,6 +180,7 @@ export default function BoutiqueAdminPage() {
         shortDesc: appForm.shortDesc.trim(),
         description: appForm.description.trim(),
         icon: appForm.icon,
+        iconUrl: appForm.iconUrl.trim() || undefined,
         couleur: appForm.couleur,
         prix: Number(appForm.prix) || 0,
         periodicite: appForm.periodicite,
@@ -390,8 +393,8 @@ export default function BoutiqueAdminPage() {
                 const subCount = subscriptions.filter((s) => s.appId === app.id && s.statut === "active").length;
                 return (
                   <div key={app.id} className="bg-white border rounded-xl p-4 flex items-center gap-4">
-                    <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0" style={{ backgroundColor: app.couleur + "20" }}>
-                      {app.icon}
+                    <div className="w-11 h-11 rounded-xl overflow-hidden flex items-center justify-center text-xl shrink-0" style={{ backgroundColor: app.couleur + "20" }}>
+                      {app.iconUrl ? <img src={app.iconUrl} alt="" className="w-full h-full object-cover" /> : app.icon}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -561,9 +564,40 @@ export default function BoutiqueAdminPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Logo image personnalisé (prioritaire sur l'emoji) */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">{"Logo image (optionnel — remplace l'emoji)"}</label>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl overflow-hidden flex items-center justify-center text-xl shrink-0" style={{ backgroundColor: appForm.couleur + "30" }}>
+                    {appForm.iconUrl ? <img src={appForm.iconUrl} alt="" className="w-full h-full object-cover" /> : appForm.icon}
+                  </div>
+                  <label className="cursor-pointer text-xs font-medium text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition">
+                    {uploadingIcon ? "Envoi…" : appForm.iconUrl ? "Changer le logo" : "Importer un logo"}
+                    <input type="file" accept="image/*" className="hidden" disabled={uploadingIcon}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file || !currentUser) return;
+                        setUploadingIcon(true);
+                        try {
+                          const url = await uploadImage(file, `users/${currentUser.uid}/store_icons/${Date.now()}_${file.name}`);
+                          setAppForm((f) => ({ ...f, iconUrl: url }));
+                        } catch { showToast("Erreur lors de l'envoi du logo.", false); }
+                        finally { setUploadingIcon(false); }
+                      }} />
+                  </label>
+                  {appForm.iconUrl && (
+                    <button type="button" onClick={() => setAppForm((f) => ({ ...f, iconUrl: "" }))}
+                      className="text-xs text-gray-400 hover:text-red-500 transition">Retirer</button>
+                  )}
+                </div>
+              </div>
+
               {/* Aperçu */}
               <div className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: appForm.couleur + "15" }}>
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{ backgroundColor: appForm.couleur + "30" }}>{appForm.icon}</div>
+                <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center text-xl" style={{ backgroundColor: appForm.couleur + "30" }}>
+                  {appForm.iconUrl ? <img src={appForm.iconUrl} alt="" className="w-full h-full object-cover" /> : appForm.icon}
+                </div>
                 <div>
                   <div className="text-sm font-semibold text-gray-900">{appForm.nom || "Nom de l'application"}</div>
                   <div className="text-xs text-gray-500">{appForm.shortDesc || "Description courte"}</div>
@@ -607,7 +641,7 @@ export default function BoutiqueAdminPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Route interne</label>
-                  <input type="text" placeholder="/boutique/belote" value={appForm.route}
+                  <input type="text" placeholder="/belote" value={appForm.route}
                     onChange={(e) => setAppForm((f) => ({ ...f, route: e.target.value }))}
                     className="w-full border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition" />
                 </div>

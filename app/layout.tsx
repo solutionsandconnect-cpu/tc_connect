@@ -23,10 +23,17 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: 'default',
     title: 'TC Connect',
+    startupImage: '/apple-touch-icon.png',
   },
   icons: {
-    icon: '/logo icon.ico',
-    apple: '/logo.png',
+    icon: [
+      { url: '/favicon.ico', sizes: '48x48' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon-96x96.png', sizes: '96x96', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+    ],
   },
 }
 

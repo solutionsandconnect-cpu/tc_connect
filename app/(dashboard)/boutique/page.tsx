@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useStoreApps } from "@/hooks/useStoreApps";
 import { useMyStoreSubscriptions } from "@/hooks/useStoreSubscriptions";
 import { usePendingSubscriptions } from "@/hooks/usePendingSubscriptions";
-import { createStoreSubscription, listenAppReviews, upsertReview } from "@/lib/storeService";
+import { createStoreSubscription, listenAppReviews, upsertReview, deleteReview, deleteStoreSubscription, notifyAdmins } from "@/lib/storeService";
 import { doc, updateDoc, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { DEFAULT_DROITS } from "@/types";
@@ -53,26 +53,16 @@ export default function BoutiquePage() {
   const [reviewForm, setReviewForm] = useState({ rating: 5, comment: "" });
   const [savingReview, setSavingReview] = useState(false);
 
-  const loadReviews = useCallback((appId: string) => {
-    if (appReviews[appId] !== undefined) return;
-    return listenAppReviews(appId, (reviews) => {
-      setAppReviews(prev => ({ ...prev, [appId]: reviews }));
-    });
-  }, [appReviews]);
-
+  // Charger les avis de toutes les apps (note moyenne + liste affichées sur chaque carte)
+  const appIdsKey = apps.map(a => a.id).join(",");
   useEffect(() => {
-    // Pre-load reviews for active apps
-    const activeSubs = subscriptions.filter(s => s.statut === "active");
-    const unsubs: (() => void)[] = [];
-    activeSubs.forEach(s => {
-      const unsub = listenAppReviews(s.appId, (reviews) => {
-        setAppReviews(prev => ({ ...prev, [s.appId]: reviews }));
-      });
-      if (unsub) unsubs.push(unsub);
-    });
-    return () => unsubs.forEach(u => u());
+    if (apps.length === 0) return;
+    const unsubs = apps.map(a =>
+      listenAppReviews(a.id, (reviews) => setAppReviews(prev => ({ ...prev, [a.id]: reviews })))
+    );
+    return () => unsubs.forEach(u => u && u());
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscriptions.length]);
+  }, [appIdsKey]);
 
   const visibleApps = apps.filter(app => {
     if (isAdmin) return true;
@@ -83,26 +73,40 @@ export default function BoutiquePage() {
     return true;
   });
 
-  // Aggregate changelogs across all active apps
-  const allChangelogs = apps
-    .filter(app => app.actif || isAdmin)
-    .flatMap(app => (app.changelogs ?? []).map(c => ({
-      ...c,
-      appNom: app.nom,
-      appIcon: app.icon,
-      appCouleur: app.couleur,
-    })));
-  const recentUpdates = allChangelogs
-    .filter(c => c.type === "update")
-    .sort((a, b) => (b.date?.seconds ?? 0) - (a.date?.seconds ?? 0))
-    .slice(0, 5);
-  const upcoming = allChangelogs
-    .filter(c => c.type === "upcoming")
-    .sort((a, b) => (a.date?.seconds ?? 0) - (b.date?.seconds ?? 0));
-  const hasChangelogs = recentUpdates.length > 0 || upcoming.length > 0;
-
   const getMySub = (appId: string) =>
     subscriptions.find((s) => s.appId === appId) ?? null;
+
+  // ── Filtres ────────────────────────────────────────────────────────────────
+  const [search, setSearch] = useState("");
+  const [filterTag, setFilterTag] = useState("");
+  const [filterTarif, setFilterTarif] = useState<"all" | "free" | "paid">("all");
+  const [filterPinned, setFilterPinned] = useState(false);
+  const [filterSub, setFilterSub] = useState<"all" | "subscribed" | "not">("all");
+  const [filterRating, setFilterRating] = useState(0);
+
+  const allTags = Array.from(new Set(visibleApps.flatMap(a => a.tags ?? []))).sort((a, b) => a.localeCompare(b, "fr"));
+
+  const avgOf = (appId: string) => {
+    const rv = appReviews[appId] ?? [];
+    return rv.length > 0 ? rv.reduce((s, r) => s + r.rating, 0) / rv.length : 0;
+  };
+
+  const displayedApps = visibleApps.filter(app => {
+    const q = search.toLowerCase().trim();
+    if (q && !`${app.nom} ${app.shortDesc} ${app.description} ${(app.tags ?? []).join(" ")}`.toLowerCase().includes(q)) return false;
+    if (filterTag && !(app.tags ?? []).includes(filterTag)) return false;
+    if (filterTarif === "free" && app.prix > 0) return false;
+    if (filterTarif === "paid" && app.prix === 0) return false;
+    if (filterPinned && !shortcuts.includes(app.id)) return false;
+    if (filterSub === "subscribed" && getMySub(app.id)?.statut !== "active") return false;
+    if (filterSub === "not" && getMySub(app.id)?.statut === "active") return false;
+    if (filterRating > 0 && avgOf(app.id) < filterRating) return false;
+    return true;
+  });
+
+  const activeFilterCount = [
+    !!search, !!filterTag, filterTarif !== "all", filterPinned, filterSub !== "all", filterRating > 0,
+  ].filter(Boolean).length;
 
   const showToast = (msg: string, ok = true) => {
     setToast({ msg, ok });
@@ -126,15 +130,16 @@ export default function BoutiquePage() {
         dateDebut: Timestamp.now(),
         createdBy: currentUser.uid,
       });
+      const who = userProfile?.display_name || currentUser.email || "Un utilisateur";
+      const subMsg = isFree ? `${who} a souscrit à ${app.nom} (gratuit)` : `${who} souhaite accéder à ${app.nom}`;
+      notifyAdmins(isFree ? "SOUSCRIPTION_BOUTIQUE" : "DEMANDE_BOUTIQUE", subMsg);
       fetch("/api/push/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           toAdmins: true,
           title: isFree ? "Nouvelle souscription gratuite" : "Nouvelle demande boutique",
-          body: isFree
-            ? `${userProfile?.display_name || currentUser.email || "Un utilisateur"} a souscrit à ${app.nom} (gratuit)`
-            : `${userProfile?.display_name || currentUser.email || "Un utilisateur"} souhaite accéder à ${app.nom}`,
+          body: subMsg,
           url: "/boutique/admin",
         }),
       }).catch(() => {});
@@ -143,6 +148,24 @@ export default function BoutiquePage() {
       showToast("Erreur lors de la demande.", false);
     } finally {
       setRequesting(null);
+    }
+  };
+
+  const handleUnsubscribe = async (app: StoreApp) => {
+    if (!currentUser) return;
+    const sub = subscriptions.find(s => s.appId === app.id);
+    if (!sub) return;
+    if (!confirm(`Retirer votre accès à "${app.nom}" ? Vous pourrez à nouveau souscrire plus tard.`)) return;
+    try {
+      await deleteStoreSubscription(sub.id);
+      // Retirer aussi le raccourci accueil éventuel
+      if (shortcuts.includes(app.id)) {
+        await updateDoc(doc(db, "users", currentUser.uid), { accueilShortcuts: shortcuts.filter(id => id !== app.id) });
+      }
+      notifyAdmins("DESABO_BOUTIQUE", `${userProfile?.display_name || currentUser.email || "Un utilisateur"} s'est désabonné de ${app.nom}`);
+      showToast(`Accès à "${app.nom}" retiré.`);
+    } catch {
+      showToast("Erreur lors du désabonnement.", false);
     }
   };
 
@@ -158,7 +181,16 @@ export default function BoutiquePage() {
     const myReview = (appReviews[appId] ?? []).find(r => r.userUid === currentUser?.uid);
     setReviewForm({ rating: myReview?.rating ?? 5, comment: myReview?.comment ?? "" });
     setReviewAppId(appId);
-    loadReviews(appId);
+  };
+
+  const handleDeleteReview = async (reviewId: string) => {
+    if (!confirm("Supprimer cet avis ?")) return;
+    try {
+      await deleteReview(reviewId);
+      showToast("Avis supprimé.");
+    } catch {
+      showToast("Erreur lors de la suppression.", false);
+    }
   };
 
   const handleSaveReview = async () => {
@@ -166,6 +198,8 @@ export default function BoutiquePage() {
     setSavingReview(true);
     try {
       const app = apps.find(a => a.id === reviewAppId);
+      const isNew = !(appReviews[reviewAppId] ?? []).some(r => r.userUid === currentUser.uid);
+      const auteur = userProfile?.display_name || currentUser.email || "Un utilisateur";
       await upsertReview({
         appId: reviewAppId,
         userUid: currentUser.uid,
@@ -173,6 +207,21 @@ export default function BoutiquePage() {
         rating: reviewForm.rating,
         comment: reviewForm.comment.trim() || undefined,
       });
+      // Notifier les admins (sauf si l'auteur est lui-même admin) : push + notification in-app
+      if (!isAdmin) {
+        const msg = `${auteur} a ${isNew ? "laissé" : "modifié"} un avis (${reviewForm.rating}/5) sur ${app?.nom ?? "une app"}`;
+        notifyAdmins("AVIS_BOUTIQUE", msg);
+        fetch("/api/push/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            toAdmins: true,
+            title: isNew ? "Nouvel avis boutique" : "Avis modifié",
+            body: msg,
+            url: "/boutique",
+          }),
+        }).catch(() => {});
+      }
       showToast(`Avis pour "${app?.nom ?? ""}" enregistré.`);
       setReviewAppId(null);
     } catch {
@@ -187,9 +236,9 @@ export default function BoutiquePage() {
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-center px-4">
         <p className="text-4xl">🔒</p>
         <p className="text-gray-700 font-semibold">Accès non autorisé</p>
-        <p className="text-sm text-gray-500">Vous n'avez pas accès à la boutique.</p>
+        <p className="text-sm text-gray-500">{"Vous n'avez pas accès à la boutique."}</p>
         <button onClick={() => router.push("/accueil")} className="text-sm text-blue-600 hover:underline">
-          Retour à l'accueil
+          {"Retour à l'accueil"}
         </button>
       </div>
     );
@@ -229,62 +278,6 @@ export default function BoutiquePage() {
         )}
       </div>
 
-      {/* Changelogs */}
-      {hasChangelogs && (
-        <div className="mb-8 space-y-4">
-          {recentUpdates.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-3">Mises à jour récentes</h2>
-              <div className="space-y-2">
-                {recentUpdates.map(c => (
-                  <div key={c.id} className="flex items-start gap-3 bg-white border border-gray-100 rounded-xl px-4 py-3 shadow-sm">
-                    <span className="text-xl shrink-0">{c.appIcon}</span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-medium text-gray-500">{c.appNom}</span>
-                        <span className="text-gray-200">·</span>
-                        <span className="text-xs text-gray-400">
-                          {c.date?.toDate?.().toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
-                        </span>
-                      </div>
-                      <p className="text-sm font-medium text-gray-800 mt-0.5">{c.title}</p>
-                      {c.description && <p className="text-xs text-gray-500 mt-0.5">{c.description}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {upcoming.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-3">À venir</h2>
-              <div className="space-y-2">
-                {upcoming.map(c => (
-                  <div key={c.id} className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-                    <span className="text-xl shrink-0">{c.appIcon}</span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-medium text-blue-700">{c.appNom}</span>
-                        {c.date?.seconds > 0 && (
-                          <>
-                            <span className="text-blue-200">·</span>
-                            <span className="text-xs text-blue-500">
-                              {c.date.toDate?.().toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                      <p className="text-sm font-medium text-gray-800 mt-0.5">{c.title}</p>
-                      {c.description && <p className="text-xs text-gray-500 mt-0.5">{c.description}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Mes accès actifs */}
       {subscriptions.filter((s) => s.statut === "active").length > 0 && (
         <div className="mb-8">
@@ -312,6 +305,56 @@ export default function BoutiquePage() {
         </div>
       )}
 
+      {/* Barre de filtres */}
+      {!loading && visibleApps.length > 0 && (
+        <div className="mb-5 space-y-2">
+          <input
+            type="text" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Rechercher une app…"
+            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400"
+          />
+          <div className="flex flex-wrap gap-2">
+            {allTags.length > 0 && (
+              <select value={filterTag} onChange={e => setFilterTag(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm bg-white text-gray-600 outline-none focus:ring-2 focus:ring-blue-400">
+                <option value="">Tous les tags</option>
+                {allTags.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            )}
+            <select value={filterTarif} onChange={e => setFilterTarif(e.target.value as "all" | "free" | "paid")}
+              className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm bg-white text-gray-600 outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="all">Tous les tarifs</option>
+              <option value="free">Gratuit</option>
+              <option value="paid">Payant</option>
+            </select>
+            <select value={filterSub} onChange={e => setFilterSub(e.target.value as "all" | "subscribed" | "not")}
+              className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm bg-white text-gray-600 outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="all">Souscrit ou non</option>
+              <option value="subscribed">Souscrits</option>
+              <option value="not">Non souscrits</option>
+            </select>
+            <select value={filterRating} onChange={e => setFilterRating(Number(e.target.value))}
+              className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm bg-white text-gray-600 outline-none focus:ring-2 focus:ring-blue-400">
+              <option value={0}>Tous les avis</option>
+              <option value={4}>4★ et +</option>
+              <option value={3}>3★ et +</option>
+              <option value={2}>2★ et +</option>
+            </select>
+            <button type="button" onClick={() => setFilterPinned(v => !v)}
+              className={`px-2.5 py-1.5 rounded-lg text-sm border transition ${filterPinned ? "bg-blue-600 text-white border-blue-600" : "border-gray-200 text-gray-600 hover:border-blue-300"}`}>
+              📌 Épinglés
+            </button>
+            {activeFilterCount > 0 && (
+              <button type="button"
+                onClick={() => { setSearch(""); setFilterTag(""); setFilterTarif("all"); setFilterPinned(false); setFilterSub("all"); setFilterRating(0); }}
+                className="px-2.5 py-1.5 rounded-lg text-sm text-gray-400 hover:text-red-500 transition">
+                Réinitialiser
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Grille des apps */}
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -334,9 +377,14 @@ export default function BoutiquePage() {
             </button>
           )}
         </div>
+      ) : displayedApps.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <p className="text-3xl mb-2">🔍</p>
+          <p className="text-sm">Aucune app ne correspond à ces filtres.</p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {visibleApps.map((app) => {
+          {displayedApps.map((app) => {
             const sub = getMySub(app.id);
             const reviews = appReviews[app.id] ?? [];
             const myReview = reviews.find(r => r.userUid === currentUser?.uid);
@@ -353,11 +401,15 @@ export default function BoutiquePage() {
                 isShortcutted={shortcuts.includes(app.id)}
                 myReview={myReview ?? null}
                 avgRating={avgRating}
-                reviewCount={reviews.length}
+                reviews={reviews}
+                currentUid={currentUser?.uid ?? null}
+                hasSub={!!sub}
                 onRequest={() => handleRequest(app)}
                 onAccess={() => app.route && router.push(app.route)}
                 onToggleShortcut={() => handleToggleShortcut(app.id)}
                 onReview={() => handleOpenReview(app.id)}
+                onDeleteReview={handleDeleteReview}
+                onUnsubscribe={() => handleUnsubscribe(app)}
               />
             );
           })}
@@ -407,8 +459,8 @@ export default function BoutiquePage() {
 }
 
 function AppCard({
-  app, sub, isAdmin, requesting, isShortcutted, myReview, avgRating, reviewCount,
-  onRequest, onAccess, onToggleShortcut, onReview,
+  app, sub, isAdmin, requesting, isShortcutted, myReview, avgRating, reviews, currentUid, hasSub,
+  onRequest, onAccess, onToggleShortcut, onReview, onDeleteReview, onUnsubscribe,
 }: {
   app: StoreApp;
   sub: StoreSubStatut | null;
@@ -417,25 +469,40 @@ function AppCard({
   isShortcutted: boolean;
   myReview: StoreReview | null;
   avgRating: number | null;
-  reviewCount: number;
+  reviews: StoreReview[];
+  currentUid: string | null;
+  hasSub: boolean;
   onRequest: () => void;
   onAccess: () => void;
   onToggleShortcut: () => void;
   onReview: () => void;
+  onDeleteReview: (reviewId: string) => void;
+  onUnsubscribe: () => void;
 }) {
   const canAccess = sub === "active" || isAdmin;
   const isPending = sub === "pending";
   const isSuspended = sub === "suspended";
+  const reviewCount = reviews.length;
+  const [showDetails, setShowDetails] = useState(false);
+
+  // Mises à jour propres à CETTE app
+  const upcoming = (app.changelogs ?? [])
+    .filter(c => c.type === "upcoming")
+    .sort((a, b) => (a.date?.seconds ?? 0) - (b.date?.seconds ?? 0));
+  const updates = (app.changelogs ?? [])
+    .filter(c => c.type === "update")
+    .sort((a, b) => (b.date?.seconds ?? 0) - (a.date?.seconds ?? 0));
+  const hasDetails = reviewCount > 0 || updates.length > 0;
 
   return (
     <div className={`bg-white border rounded-2xl p-5 flex flex-col gap-4 shadow-sm hover:shadow-md transition ${!app.actif ? "opacity-60" : ""}`}>
       {/* Top */}
       <div className="flex items-start justify-between">
         <div
-          className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl shrink-0"
+          className="w-12 h-12 rounded-xl overflow-hidden flex items-center justify-center text-2xl shrink-0"
           style={{ backgroundColor: app.couleur + "20" }}
         >
-          {app.icon}
+          {app.iconUrl ? <img src={app.iconUrl} alt="" className="w-full h-full object-cover" /> : app.icon}
         </div>
         <div className="flex flex-col items-end gap-1">
           {!app.actif && (
@@ -461,7 +528,10 @@ function AppCard({
       {/* Info */}
       <div className="flex-1">
         <h3 className="font-semibold text-gray-900 text-base">{app.nom}</h3>
-        <p className="text-sm text-gray-500 mt-1 leading-relaxed">{app.shortDesc}</p>
+        {app.shortDesc && <p className="text-sm text-gray-500 mt-1 leading-relaxed">{app.shortDesc}</p>}
+        {app.description && app.description !== app.shortDesc && (
+          <p className="text-sm text-gray-600 mt-2 leading-relaxed whitespace-pre-wrap">{app.description}</p>
+        )}
         {app.tags && app.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
             {app.tags.map((t) => (
@@ -470,6 +540,28 @@ function AppCard({
           </div>
         )}
       </div>
+
+      {/* Prochainement (mises à jour à venir, propres à l'app) */}
+      {upcoming.length > 0 && (
+        <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
+          <p className="text-xs font-semibold text-blue-700 mb-1">🔜 Prochainement</p>
+          <div className="space-y-1">
+            {upcoming.slice(0, 3).map(c => (
+              <div key={c.id}>
+                <p className="text-xs font-medium text-gray-800">
+                  {c.title}
+                  {c.date?.seconds > 0 && (
+                    <span className="font-normal text-blue-500 ml-1.5">
+                      · {c.date.toDate?.().toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}
+                    </span>
+                  )}
+                </p>
+                {c.description && <p className="text-[11px] text-gray-500">{c.description}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Avis */}
       {(avgRating !== null || canAccess) && (
@@ -490,6 +582,81 @@ function AppCard({
               className={`text-xs px-2.5 py-1 rounded-lg border transition ${myReview ? "border-yellow-300 text-yellow-700 bg-yellow-50 hover:bg-yellow-100" : "border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
               {myReview ? "Mon avis ⭐" : "Évaluer"}
             </button>
+          )}
+        </div>
+      )}
+
+      {/* Détails : avis déposés + nouveautés passées */}
+      {hasDetails && (
+        <div>
+          <button onClick={() => setShowDetails(v => !v)}
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition">
+            <svg className={`w-3.5 h-3.5 transition-transform ${showDetails ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+            {showDetails ? "Masquer" : `Voir les avis${updates.length > 0 ? " et nouveautés" : ""}`}
+          </button>
+
+          {showDetails && (
+            <div className="mt-2 space-y-3">
+              {/* Nouveautés */}
+              {updates.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 mb-1.5">Nouveautés</p>
+                  <div className="space-y-1.5">
+                    {updates.slice(0, 5).map(c => (
+                      <div key={c.id} className="bg-gray-50 rounded-lg px-2.5 py-1.5">
+                        <p className="text-xs font-medium text-gray-800">
+                          {c.title}
+                          {c.date?.seconds > 0 && (
+                            <span className="font-normal text-gray-400 ml-1.5">
+                              · {c.date.toDate?.().toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+                            </span>
+                          )}
+                        </p>
+                        {c.description && <p className="text-[11px] text-gray-500 mt-0.5">{c.description}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Avis déposés */}
+              {reviewCount > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 mb-1.5">Avis ({reviewCount})</p>
+                  <div className="space-y-2">
+                    {reviews.map(r => {
+                      const canDelete = isAdmin || r.userUid === currentUid;
+                      return (
+                        <div key={r.id} className="border border-gray-100 rounded-lg px-2.5 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-medium text-gray-800 truncate">{r.clientNom}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-xs">{"⭐".repeat(r.rating)}</span>
+                              {canDelete && (
+                                <button onClick={(e) => { e.stopPropagation(); onDeleteReview(r.id); }}
+                                  title="Supprimer l'avis" className="text-gray-300 hover:text-red-500 transition">
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          {r.comment && <p className="text-[11px] text-gray-500 mt-0.5">{r.comment}</p>}
+                          {r.createdAt?.seconds > 0 && (
+                            <p className="text-[10px] text-gray-300 mt-0.5">
+                              {r.createdAt.toDate?.().toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" })}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -535,6 +702,16 @@ function AppCard({
           </button>
         )}
       </div>
+
+      {/* Se désabonner (utilisateur non-admin ayant une souscription) */}
+      {!isAdmin && hasSub && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onUnsubscribe(); }}
+          className="text-xs text-gray-400 hover:text-red-500 transition self-start"
+        >
+          Se désabonner
+        </button>
+      )}
     </div>
   );
 }

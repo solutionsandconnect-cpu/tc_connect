@@ -17,6 +17,15 @@ import Badge from '@/components/ui/Badge'
 import { formatHeure, getEtatBadge } from '@/lib/planningUtils'
 import { navItems } from '@/components/layout/Navbar'
 import { useStoreApps } from '@/hooks/useStoreApps'
+import { listenStoreSubscriptions, updateStoreSubscription } from '@/lib/storeService'
+
+// Ajoute une période (mensuel = +1 mois, annuel = +1 an) à un timestamp ms
+function addPeriodMs(fromMs: number, periodicite: string): number {
+  const d = new Date(fromMs)
+  if (periodicite === 'annuel') d.setFullYear(d.getFullYear() + 1)
+  else d.setMonth(d.getMonth() + 1)
+  return d.getTime()
+}
 
 export default function AccueilPage() {
   const { currentUser, userProfile } = useAuth()
@@ -31,9 +40,17 @@ export default function AccueilPage() {
   const { apps: storeApps } = useStoreApps()
   const shortcutAppIds = userProfile?.accueilShortcuts ?? []
   const shortcutApps = storeApps.filter(app => shortcutAppIds.includes(app.id) && !!app.route)
+  const [allStoreSubs, setAllStoreSubs] = useState<any[]>([])
   const [pendingEcheances, setPendingEcheances] = useState<{ devis: any; echeance: any; index: number; daysLeft: number | null }[]>([])
   const [seanceAccessAlerts, setSeanceAccessAlerts] = useState<{ client: any; type: 'to_configure' | 'expiring_soon' | 'expired' | 'to_restore' }[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Souscriptions boutique (admin uniquement → évite l'erreur de permission côté utilisateur)
+  useEffect(() => {
+    if (!currentUser || !isAdmin) return
+    const unsub = listenStoreSubscriptions(setAllStoreSubs)
+    return unsub
+  }, [currentUser, isAdmin])
 
   useEffect(() => {
     if (!currentUser) return
@@ -274,6 +291,41 @@ export default function AccueilPage() {
     return 'Bonsoir'
   }
 
+  // Rappels de paiement : souscriptions actives d'apps payantes dont l'échéance approche
+  const nowMs = Date.now()
+  const paymentAlerts = isAdmin
+    ? allStoreSubs
+        .filter((s) => s.statut === 'active')
+        .map((s) => {
+          const app = storeApps.find((a) => a.id === s.appId)
+          if (!app || app.prix <= 0 || app.periodicite === 'unique') return null
+          const baseMs = s.nextPaymentDate?.toMillis?.()
+            ?? (s.dateDebut?.toMillis ? addPeriodMs(s.dateDebut.toMillis(), app.periodicite) : null)
+          if (!baseMs) return null
+          const daysLeft = Math.round((baseMs - nowMs) / 86400000)
+          if (daysLeft > 7) return null
+          return { sub: s, app, dueMs: baseMs, daysLeft }
+        })
+        .filter(Boolean)
+        .sort((a: any, b: any) => a.dueMs - b.dueMs) as { sub: any; app: any; dueMs: number; daysLeft: number }[]
+    : []
+
+  const validatePayment = async (alert: { sub: any; app: any; dueMs: number }) => {
+    const next = addPeriodMs(alert.dueMs, alert.app.periodicite)
+    await updateStoreSubscription(alert.sub.id, {
+      nextPaymentDate: Timestamp.fromMillis(next),
+      lastPaymentAt: Timestamp.now(),
+    })
+  }
+
+  const facturerSub = (alert: { sub: any; app: any }) => {
+    const params = new URLSearchParams()
+    if (alert.sub.clientId) params.set('clientId', alert.sub.clientId)
+    params.set('label', alert.app.nom)
+    params.set('prix', String(alert.app.prix))
+    router.push(`/facturation/create?${params.toString()}`)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -327,16 +379,48 @@ export default function AccueilPage() {
                 className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex flex-col items-center gap-2 hover:shadow-md transition"
               >
                 <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                  className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center text-xl"
                   style={{ backgroundColor: app.couleur + '20' }}
                 >
-                  {app.icon}
+                  {(app as any).iconUrl ? <img src={(app as any).iconUrl} alt="" className="w-full h-full object-cover" /> : app.icon}
                 </div>
                 <span className="text-xs font-medium text-gray-700 text-center leading-tight">{app.nom}</span>
               </button>
             ))}
           </div>
         </section>
+      )}
+
+      {/* RAPPELS DE PAIEMENT BOUTIQUE — admin uniquement */}
+      {isAdmin && paymentAlerts.length > 0 && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-purple-500">💳</span>
+            <p className="text-sm font-semibold text-purple-800">
+              {paymentAlerts.length} paiement{paymentAlerts.length > 1 ? 's' : ''} boutique à valider
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            {paymentAlerts.map((a) => {
+              const overdue = a.daysLeft < 0
+              const tag = overdue ? `en retard de ${-a.daysLeft}j` : a.daysLeft === 0 ? "aujourd'hui" : `dans ${a.daysLeft}j`
+              return (
+                <div key={a.sub.id} className="flex items-center justify-between gap-2 text-xs py-1.5 px-2 rounded-lg bg-white/60 border border-purple-100">
+                  <span className="text-gray-700 truncate min-w-0">
+                    <span className="font-medium">{a.sub.clientNom || '—'}</span>
+                    <span className="text-gray-400 mx-1">·</span>{a.app.nom}
+                    <span className="text-gray-400 mx-1">·</span>{a.app.prix} €
+                    <span className={`ml-1 ${overdue ? 'text-red-600' : 'text-purple-600'}`}>· {tag}</span>
+                  </span>
+                  <span className="flex items-center gap-2 shrink-0">
+                    <button onClick={() => facturerSub(a)} className="text-blue-600 hover:underline">Facturer</button>
+                    <button onClick={() => validatePayment(a)} className="text-green-600 hover:underline">Payé ✓</button>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
       )}
 
       {/* ALERTE ÉCHÉANCES À ÉMETTRE — admin uniquement */}

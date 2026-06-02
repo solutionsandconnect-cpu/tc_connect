@@ -496,8 +496,12 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   const handleQuestionnaireEditUntil = async (dateStr: string) => {
     setQuestionnaireEditUntil(dateStr)
     if (dateStr) {
-      const d = new Date(dateStr); d.setHours(23, 59, 59, 999)
-      await updatePlanning(id, { questionnaire_editable_until: Timestamp.fromDate(d) } as any)
+      const [y, m, d] = dateStr.split('-').map(Number)
+      const picked = new Date(y, m - 1, d, 23, 59, 59, 999)
+      // Ne jamais autoriser la modification au-delà de l'heure de fin de la séance
+      const sessionEnd = (planning as any)?.heure_planning_fin?.toDate?.()
+      const finalDate = sessionEnd && sessionEnd < picked ? sessionEnd : picked
+      await updatePlanning(id, { questionnaire_editable_until: Timestamp.fromDate(finalDate) } as any)
     } else {
       await updatePlanning(id, { questionnaire_editable_until: null } as any)
     }
@@ -1278,6 +1282,11 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                     type="date"
                     value={questionnaireEditUntil}
                     min={new Date().toISOString().split('T')[0]}
+                    max={(() => {
+                      const sd = (planning as any)?.date_planning?.toDate?.()
+                      if (!sd) return undefined
+                      return `${sd.getFullYear()}-${String(sd.getMonth() + 1).padStart(2, '0')}-${String(sd.getDate()).padStart(2, '0')}`
+                    })()}
                     onChange={e => handleQuestionnaireEditUntil(e.target.value)}
                     className="border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-blue-400 transition"
                   />

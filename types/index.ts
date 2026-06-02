@@ -582,7 +582,8 @@ export interface StoreApp {
   nom: string
   shortDesc: string        // accroche courte pour la carte
   description: string      // texte long
-  icon: string             // emoji
+  icon: string             // emoji (fallback si pas de logo image)
+  iconUrl?: string         // logo image (URL Firebase Storage) — prioritaire sur l'emoji
   couleur: string          // hex e.g. "#6366f1"
   prix: number
   periodicite: 'mensuel' | 'annuel' | 'unique'
@@ -641,10 +642,14 @@ export interface StoreSubscription {
   factureNumber?: string
   notes?: string
   limites?: Record<string, number>
+  nextPaymentDate?: Timestamp | null   // prochaine échéance de paiement (apps payantes)
+  lastPaymentAt?: Timestamp | null      // dernier paiement validé
   createdBy: string
   createdAt: Timestamp
   updatedAt?: Timestamp
-}// ─── Suivi Bébé ───────────────────────────────────────────────────────────────
+}
+
+// ─── Suivi Bébé ───────────────────────────────────────────────────────────────
 
 /** Document Firestore : babies/{babyId} */
 export interface Bebe {
@@ -654,6 +659,8 @@ export interface Bebe {
   members: string[]
   createdBy: string
   createdAt: Timestamp
+  /** Photo du bébé (URL Firebase Storage) */
+  photoUrl?: string
   /** Sommeil en cours — défini au "Start", supprimé au "Réveillé !" */
   activeSleep?: { startTime: Timestamp } | null
 }
@@ -668,4 +675,57 @@ export interface BebeEvent {
   data: Record<string, any>
   timestamp: Timestamp
   createdBy: string
+}
+
+// ─── Packing List (voyages) ────────────────────────────────────────────────────
+
+export type TripType =
+  | 'hotel' | 'camping' | 'airbnb' | 'roadtrip' | 'cruise'
+  | 'ski' | 'city' | 'beach' | 'other'
+
+export type TripRole = 'owner' | 'member'
+
+/** Membre d'un voyage (dénormalisé pour affichage des assignees sans requête) */
+export interface TripMember {
+  uid: string
+  role: TripRole
+  nom?: string
+  prenom?: string
+  email?: string
+}
+
+export interface TripItem {
+  id: string
+  name: string
+  qtyNeeded: number              // quantité fixe nécessaire
+  qtyReady: number               // quantité déjà prête
+  multiplier: number             // si > 0 : qtyEffective = ceil(multiplier × nbJours)
+  note?: string
+  assigneeId?: string | null     // uid du membre responsable
+  position: number
+}
+
+export interface TripSection {
+  id: string
+  title: string
+  position: number
+  items: TripItem[]
+}
+
+/** Document Firestore : trips/{tripId} */
+export interface Trip {
+  id: string
+  name: string
+  type: TripType
+  icon: string                   // emoji
+  color: string                  // hex
+  dateFrom?: Timestamp | null
+  dateTo?: Timestamp | null
+  isTemplate: boolean
+  ownerId: string
+  memberIds: string[]            // tous les membres (owner inclus) → requête array-contains
+  members: TripMember[]
+  sections: TripSection[]
+  createdAt: Timestamp
+  updatedAt?: Timestamp
 }

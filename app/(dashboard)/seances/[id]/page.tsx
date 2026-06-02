@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { doc } from 'firebase/firestore'
+import { doc, getDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useSeances } from '@/hooks/useSeances'
 import { useExercices } from '@/hooks/useExercices'
@@ -11,6 +11,7 @@ import { useAuth } from '@/context/AuthContext'
 import Modal from '@/components/ui/Modal'
 import { ArrowLeftIcon, PlusIcon, PencilIcon, TrashIcon, CheckIcon, ChevronUpIcon, ChevronDownIcon, PhotoIcon, PlayIcon } from '@heroicons/react/24/outline'
 import { uploadImage } from '@/lib/uploadImage'
+import { loadExerciceMemory, saveExerciceMemory } from '@/lib/exerciceMemory'
 
 const TYPES_EFFORT = ['Répétitions', 'Durée (sec)', 'Distance (m)']
 const TYPES_SEANCE_CIRCUIT_DETAIL = ['Circuit classique','Tabata','Circuit en 30-10','Circuit varié (rep)','Circuit varié (temps)','Circuit varié']
@@ -24,6 +25,12 @@ const TEMPO_PRESETS = [
   { label: '0-0-0-0', values: [0, 0, 0, 0] },
   { label: '3-1-1-1', values: [3, 1, 1, 1] },
 ]
+
+// Unité d'effort lisible selon le type stocké en base
+const effortUnit = (t: string) =>
+  t === 'Répétitions' ? 'rép'
+  : (t === 'Secondes' || t === 'Durée (sec)') ? 'sec'
+  : (t === 'Mètres' || t === 'Distance (m)') ? 'm' : ''
 const PARTIES_SEANCE_DETAIL = ['Échauffement','Corps de séance','Retour au calme','Séance complète']
 
 function getCircuitDefaults(type: string) {
@@ -101,6 +108,34 @@ export default function DetailSeancePage() {
     explication_exercice: '',
     observations_exercice: '',
   })
+
+  // Client lié à ce RDV (pour la mémoire intensité/alerte par exercice)
+  const [clientId, setClientId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!planningId) { setClientId(null); return }
+    getDoc(doc(db, 'planning_pro', planningId))
+      .then((snap) => {
+        if (!snap.exists()) return
+        const d = snap.data() as any
+        setClientId(d.ref_users?.id ?? d.ref_client?.id ?? null)
+      })
+      .catch(() => {})
+  }, [planningId])
+
+  // Sélectionne un exercice et restaure sa mémoire (intensité/alerte) pour ce client
+  const selectExercice = async (exId: string, explication: string) => {
+    setForm((f) => ({ ...f, exercice_id: exId, explication_exercice: explication, materiel: '' }))
+    const mem = await loadExerciceMemory(clientId, exId)
+    if (mem) {
+      // N'appliquer que si l'exercice sélectionné est toujours celui-ci (évite les races)
+      setForm((f) => f.exercice_id === exId ? {
+        ...f,
+        intensite_exercice: mem.intensite_exercice || f.intensite_exercice,
+        alerte_exercice: mem.alerte_exercice ?? f.alerte_exercice,
+        raison_alerte_exercice: mem.raison_alerte_exercice ?? f.raison_alerte_exercice,
+      } : f)
+    }
+  }
 
   const openAdd = () => {
     setEditItem(null)
@@ -282,6 +317,12 @@ export default function DetailSeancePage() {
         }
         await addExerciceToSeance(payload as any)
       }
+      // Mémoriser l'intensité/alerte de cet exercice pour ce client
+      await saveExerciceMemory(clientId, form.exercice_id, {
+        intensite_exercice: form.intensite_exercice,
+        alerte_exercice: form.alerte_exercice,
+        raison_alerte_exercice: form.raison_alerte_exercice,
+      })
       setShowModal(false)
     } catch (err) {
       console.error('Erreur lors de la sauvegarde de l\'exercice :', err)
@@ -451,11 +492,19 @@ export default function DetailSeancePage() {
                   )
                 })()}
 
-                {/* Contenu — prend toute la largeur restante */}
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-800 text-sm leading-tight truncate">
-                    {getExerciceName(item.exercice)}
-                  </p>
+                {/* Contenu — prend toute la largeur restante (cliquable pour l'admin) */}
+                <div
+                  className={`flex-1 min-w-0 ${isAdmin ? 'cursor-pointer' : ''}`}
+                  onClick={isAdmin ? () => openEdit(item) : undefined}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-semibold text-gray-800 text-sm leading-tight truncate">
+                      {getExerciceName(item.exercice)}
+                    </p>
+                    {(item as any).intensite_exercice && (
+                      <span className="text-xs shrink-0">{(item as any).intensite_exercice}</span>
+                    )}
+                  </div>
                   {(item as any).alerte_exercice && (
                     <div className="mt-0.5">
                       <p className="text-xs text-red-500 font-medium truncate">⚠ {(item as any).alerte_exercice}</p>
@@ -465,16 +514,22 @@ export default function DetailSeancePage() {
                     </div>
                   )}
                   <p className="text-xs text-gray-500 mt-0.5">
-                    {item.type_effort} : {item.effort} · Récup {item.recup_effort}s
+                    Effort : {item.effort} {effortUnit(item.type_effort)} · Récup {item.recup_effort}s
                   </p>
                   <p className="text-xs text-gray-400">
                     Tempo : {item.tempo_phase1}/{item.tempo_phase2}/{item.tempo_phase3}/{(item as any).tempo_phase4 ?? 0}
                   </p>
+                  {(item as any).charge > 0 && (
+                    <p className="text-xs text-gray-400">Charge : {(item as any).charge} kg</p>
+                  )}
                   {(item as any).materiel && (
                     <p className="text-xs text-gray-400 truncate">Matériel : {(item as any).materiel}</p>
                   )}
                   {item.explication_exercice && (
                     <p className="text-xs text-gray-400 italic mt-1 line-clamp-2">{item.explication_exercice}</p>
+                  )}
+                  {(item as any).observations_exercice && (
+                    <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{(item as any).observations_exercice}</p>
                   )}
                 </div>
 
@@ -699,7 +754,7 @@ export default function DetailSeancePage() {
                       <button
                         key={ex.id}
                         type="button"
-                        onClick={() => setForm({ ...form, exercice_id: ex.id, explication_exercice: (ex as any).explications_commentees_exercice || '', materiel: '' })}
+                        onClick={() => selectExercice(ex.id, (ex as any).explications_commentees_exercice || '')}
                         className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 transition ${
                           form.exercice_id === ex.id ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'
                         }`}

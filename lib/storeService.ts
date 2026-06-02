@@ -81,3 +81,23 @@ export const upsertReview = async (
 };
 
 export const deleteReview = (id: string) => deleteDoc(doc(db, "store_reviews", id));
+
+// ── Notifications admin (collection Notifications, lue par la page Notifications) ──
+
+/** Crée une notification in-app pour chaque administrateur */
+export const notifyAdmins = async (type: string, message: string) => {
+  try {
+    const snap = await getDocs(query(collection(db, "users"), where("role_app", "==", "Admin")));
+    await Promise.all(snap.docs.map((d) =>
+      addDoc(collection(db, "Notifications"), {
+        refUsers: doc(db, "users", d.id),
+        type_notification: type,
+        notification: message,
+        etat_notification: "Non lu",
+        date_create: Timestamp.now(),
+      })
+    ));
+  } catch {
+    // silencieux : la notification ne doit pas bloquer l'action principale
+  }
+};

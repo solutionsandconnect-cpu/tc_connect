@@ -7,13 +7,21 @@ import {
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
+import { saveExerciceMemory } from '@/lib/exerciceMemory'
 import Modal from '@/components/ui/Modal'
 import { ArrowLeftIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon, PlayIcon } from '@heroicons/react/24/outline'
 
 const TYPES_SEANCE_APERCU = ['Circuit classique','Tabata','Circuit en 30-10','Circuit varié (rep)','Circuit varié (temps)','Circuit varié']
 const PARTIES_SEANCE_APERCU = ['Échauffement','Corps de séance','Retour au calme','Séance complète']
-const TYPES_EFFORT_APERCU = ['Répétitions', 'Durée (sec)']
-const toFirestoreEffortApercu = (v: string) => v === 'Durée (sec)' ? 'Secondes' : v
+const TYPES_EFFORT_APERCU = ['Répétitions', 'Durée (sec)', 'Distance (m)']
+const toFirestoreEffortApercu = (v: string) =>
+  v === 'Durée (sec)' ? 'Secondes' : v === 'Distance (m)' ? 'Mètres' : v
+const fromFirestoreEffortApercu = (v: string) =>
+  v === 'Secondes' ? 'Durée (sec)' : v === 'Mètres' ? 'Distance (m)' : v
+const TEMPO_PRESETS_APERCU = [
+  { label: '0-0-0-0', values: [0, 0, 0, 0] },
+  { label: '3-1-1-1', values: [3, 1, 1, 1] },
+]
 
 function getSeanceDefaultsApercu(type: string) {
   switch (type) {
@@ -56,6 +64,11 @@ interface ProgItem {
   explication_exercice?: string
   charge?: number
   nb_serie_effectuee?: number
+  materiel?: string
+  alerte_exercice?: string
+  raison_alerte_exercice?: string
+  intensite_exercice?: string
+  observations_exercice?: string
   exercice: any
 }
 
@@ -173,6 +186,77 @@ export default function OverviewSeancePage() {
   })
   const [planning, setPlanning] = useState<PlanningData | null>(null)
   const [seances, setSeances] = useState<SeanceData[]>([])
+
+  // Édition rapide d'un exercice (admin uniquement, en pleine séance)
+  const [editExo, setEditExo] = useState<{ seanceId: string; item: ProgItem; exoName: string } | null>(null)
+  const [savingExo, setSavingExo] = useState(false)
+  const [exoForm, setExoForm] = useState({
+    type_effort: 'Durée (sec)', effort: 0, recup_effort: 0,
+    tempo_phase1: 0, tempo_phase2: 0, tempo_phase3: 0, tempo_phase4: 0,
+    charge: 0, materiel: '', alerte_exercice: '', raison_alerte_exercice: '',
+    intensite_exercice: '', explication_exercice: '', observations_exercice: '',
+  })
+
+  const openEditExo = (seanceId: string, item: ProgItem, exoName: string) => {
+    setEditExo({ seanceId, item, exoName })
+    setExoForm({
+      type_effort: fromFirestoreEffortApercu(item.type_effort || 'Durée (sec)'),
+      effort: item.effort ?? 0,
+      recup_effort: item.recup_effort ?? 0,
+      tempo_phase1: item.tempo_phase1 ?? 0,
+      tempo_phase2: item.tempo_phase2 ?? 0,
+      tempo_phase3: item.tempo_phase3 ?? 0,
+      tempo_phase4: item.tempo_phase4 ?? 0,
+      charge: item.charge ?? 0,
+      materiel: item.materiel ?? '',
+      alerte_exercice: item.alerte_exercice ?? '',
+      raison_alerte_exercice: item.raison_alerte_exercice ?? '',
+      intensite_exercice: item.intensite_exercice ?? '',
+      explication_exercice: item.explication_exercice ?? '',
+      observations_exercice: item.observations_exercice ?? '',
+    })
+  }
+
+  const handleSaveExo = async () => {
+    if (!editExo) return
+    setSavingExo(true)
+    try {
+      const payload = {
+        type_effort: toFirestoreEffortApercu(exoForm.type_effort),
+        effort: Number(exoForm.effort),
+        recup_effort: Number(exoForm.recup_effort),
+        tempo_phase1: Number(exoForm.tempo_phase1),
+        tempo_phase2: Number(exoForm.tempo_phase2),
+        tempo_phase3: Number(exoForm.tempo_phase3),
+        tempo_phase4: Number(exoForm.tempo_phase4),
+        charge: Number(exoForm.charge),
+        materiel: exoForm.materiel,
+        alerte_exercice: exoForm.alerte_exercice,
+        raison_alerte_exercice: exoForm.raison_alerte_exercice,
+        intensite_exercice: exoForm.intensite_exercice,
+        explication_exercice: exoForm.explication_exercice,
+        observations_exercice: exoForm.observations_exercice,
+      }
+      await updateDoc(doc(db, 'programme_seance', editExo.item.id), payload)
+      // Mise à jour optimiste du state local
+      setSeances(prev => prev.map(s => s.id === editExo.seanceId
+        ? { ...s, programme: s.programme.map(p => p.item.id === editExo.item.id
+            ? { ...p, item: { ...p.item, ...payload } }
+            : p) }
+        : s
+      ))
+      // Mémoriser l'intensité/alerte de cet exercice pour ce client
+      const cid = (planning as any)?.ref_users?.id ?? (planning as any)?.ref_client?.id ?? null
+      await saveExerciceMemory(cid, editExo.item.exercice?.id, {
+        intensite_exercice: payload.intensite_exercice,
+        alerte_exercice: payload.alerte_exercice,
+        raison_alerte_exercice: payload.raison_alerte_exercice,
+      })
+      setEditExo(null)
+    } finally {
+      setSavingExo(false)
+    }
+  }
 
   // Per-circuit UI state
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -297,9 +381,29 @@ export default function OverviewSeancePage() {
   const saveRpe = async (seanceId: string) => {
     setSavingRpe(s => ({ ...s, [seanceId]: true }))
     try {
+      const rpe = rpeValues[seanceId] ?? 0
+      const seance = seances.find(s => s.id === seanceId)
+      // Renseigner une intensité ressentie marque le circuit comme réalisé
+      const markDone = rpe > 0
       await updateDoc(doc(db, 'seance', seanceId), {
-        intensite_circuit: rpeValues[seanceId] ?? 0,
+        intensite_circuit: rpe,
+        ...(markDone ? { avancement_circuit: 1.0 } : {}),
       })
+      // Marquer tous les exercices comme réalisés (tous les tours effectués)
+      if (markDone && seance) {
+        const nbTours = seance.nb_tours ?? 1
+        await Promise.all(
+          seance.programme.map(({ item }) =>
+            updateDoc(doc(db, 'programme_seance', item.id), { nb_serie_effectuee: nbTours })
+          )
+        )
+        // Mise à jour optimiste du state local pour afficher "Terminé" sans recharger
+        setSeances(prev => prev.map(s => s.id === seanceId
+          ? { ...s, avancement_circuit: 1.0, intensite_circuit: rpe,
+              programme: s.programme.map(p => ({ ...p, item: { ...p.item, nb_serie_effectuee: nbTours } })) }
+          : s
+        ))
+      }
       setSavedRpe(s => ({ ...s, [seanceId]: true }))
       setTimeout(() => setSavedRpe(s => ({ ...s, [seanceId]: false })), 2000)
     } finally {
@@ -328,7 +432,12 @@ export default function OverviewSeancePage() {
         motivation_pdt_seance: motivSeance,
         intensite_mise_pdt_seance: intensiteMise,
         intensite_seance: intensiteSeance,
+        // Remplir le bilan de fin de séance marque le RDV comme effectué
+        etat_planning_rdv: 'Effectué',
+        rdv_effectue: 'Effectué',
       })
+      // Mise à jour optimiste pour que "Bilan rempli" s'affiche immédiatement
+      setPlanning(p => p ? { ...p, motivation_pdt_seance: motivSeance } as PlanningData : p)
       setSavedBilanFin(true)
       setTimeout(() => setSavedBilanFin(false), 2000)
     } finally {
@@ -466,7 +575,11 @@ export default function OverviewSeancePage() {
                     ) : (
                       <div className="border-t border-gray-50 divide-y divide-gray-50">
                         {seance.programme.map(({ item, exo }, idx) => (
-                          <div key={item.id} className="flex items-start gap-3 px-4 py-3">
+                          <div
+                            key={item.id}
+                            className={`flex items-start gap-3 px-4 py-3 ${isAdmin ? 'cursor-pointer hover:bg-gray-50 transition' : ''}`}
+                            onClick={isAdmin ? () => openEditExo(seance.id, item, exo?.nom_exercice || `Exercice ${idx + 1}`) : undefined}
+                          >
                             <div className="shrink-0">
                               {exo?.image_exercice ? (
                                 <img src={exo.image_exercice} alt="" className="w-12 h-12 rounded-lg object-cover" />
@@ -477,9 +590,25 @@ export default function OverviewSeancePage() {
                               )}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-gray-800">{exo?.nom_exercice || `Exercice ${idx + 1}`}</p>
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-sm font-semibold text-gray-800">{exo?.nom_exercice || `Exercice ${idx + 1}`}</p>
+                                {item.intensite_exercice && <span className="text-xs shrink-0">{item.intensite_exercice}</span>}
+                                {isAdmin && (
+                                  <svg className="w-3.5 h-3.5 text-gray-300 ml-auto shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                  </svg>
+                                )}
+                              </div>
+                              {item.alerte_exercice && (
+                                <div className="mt-0.5">
+                                  <p className="text-xs text-red-500 font-medium">⚠ {item.alerte_exercice}</p>
+                                  {item.raison_alerte_exercice && (
+                                    <p className="text-xs text-red-400">{item.raison_alerte_exercice}</p>
+                                  )}
+                                </div>
+                              )}
                               <p className="text-xs text-gray-500 mt-0.5">
-                                {item.effort} {item.type_effort === 'Répétitions' ? 'rép' : item.type_effort === 'Durée (sec)' ? 'sec' : 'm'}
+                                Effort : {item.effort} {item.type_effort === 'Répétitions' ? 'rép' : (item.type_effort === 'Secondes' || item.type_effort === 'Durée (sec)') ? 'sec' : (item.type_effort === 'Mètres' || item.type_effort === 'Distance (m)') ? 'm' : ''}
                                 {(item.recup_effort ?? 0) > 0 && ` · récup ${item.recup_effort}s`}
                               </p>
                               {item.tempo_phase1 != null && (
@@ -487,10 +616,16 @@ export default function OverviewSeancePage() {
                                   Tempo : {item.tempo_phase1}-{item.tempo_phase2 ?? 0}-{item.tempo_phase3 ?? 0}{item.tempo_phase4 != null ? `-${item.tempo_phase4}` : ''}
                                 </p>
                               )}
+                              {item.materiel && (
+                                <p className="text-xs text-gray-400 mt-0.5">Matériel : {item.materiel}</p>
+                              )}
                               {item.explication_exercice ? (
                                 <p className="text-xs text-gray-500 italic mt-1 bg-amber-50 rounded-lg px-2 py-1">
                                   {item.explication_exercice}
                                 </p>
+                              ) : null}
+                              {item.observations_exercice ? (
+                                <p className="text-xs text-gray-400 mt-0.5">{item.observations_exercice}</p>
                               ) : null}
                               {((item.charge ?? 0) > 0 || (item.nb_serie_effectuee ?? 0) > 0) && (
                                 <p className="text-xs text-gray-600 font-medium mt-1">
@@ -762,9 +897,13 @@ export default function OverviewSeancePage() {
               }
               <div className="flex-1">
                 <p className="text-sm font-semibold text-gray-700">Commentaires de séance</p>
-                {(crCoach || crClient)
+                {(crCoach.trim() && crClient.trim())
                   ? <p className="text-xs text-green-600 mt-0.5 font-medium">✓ Commentaires enregistrés</p>
-                  : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full mt-1">✗ Aucun commentaire</span>
+                  : (crCoach.trim() || crClient.trim())
+                    ? <span className="inline-flex items-center gap-1 bg-orange-100 text-orange-600 text-xs font-medium px-2 py-0.5 rounded-full mt-1">
+                        ⚠ {crClient.trim() ? 'Commentaire du coach manquant' : 'Commentaire client manquant'}
+                      </span>
+                    : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full mt-1">✗ Aucun commentaire</span>
                 }
               </div>
             </button>
@@ -808,6 +947,140 @@ export default function OverviewSeancePage() {
 
         </div>
       )}
+      {/* Modal édition rapide d'un exercice (admin) */}
+      <Modal isOpen={!!editExo} onClose={() => setEditExo(null)} title={editExo ? `Modifier — ${editExo.exoName}` : 'Modifier'} size="lg">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Type d'effort</label>
+              <select value={exoForm.type_effort} onChange={e => setExoForm(f => ({ ...f, type_effort: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                {TYPES_EFFORT_APERCU.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Effort {exoForm.type_effort === 'Répétitions' ? '(rép)' : exoForm.type_effort === 'Distance (m)' ? '(m)' : '(sec)'}
+              </label>
+              <input type="number" min={0} value={exoForm.effort}
+                onChange={e => setExoForm(f => ({ ...f, effort: Number(e.target.value) }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Récupération (sec)</label>
+            <input type="number" min={0} value={exoForm.recup_effort}
+              onChange={e => setExoForm(f => ({ ...f, recup_effort: Number(e.target.value) }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">Tempo (Ph.1 / Ph.2 / Ph.3 / Ph.4)</label>
+              <div className="flex gap-1">
+                {TEMPO_PRESETS_APERCU.map(p => (
+                  <button key={p.label} type="button"
+                    onClick={() => setExoForm(f => ({ ...f, tempo_phase1: p.values[0], tempo_phase2: p.values[1], tempo_phase3: p.values[2], tempo_phase4: p.values[3] }))}
+                    className="text-xs px-2 py-0.5 rounded-md border border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 transition font-mono">
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {(['tempo_phase1', 'tempo_phase2', 'tempo_phase3', 'tempo_phase4'] as const).map((key, i) => (
+                <input key={key} type="number" min={0} value={(exoForm as any)[key]}
+                  onChange={e => setExoForm(f => ({ ...f, [key]: Number(e.target.value) }))}
+                  placeholder={`Ph.${i + 1}`}
+                  className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Charge (kg)</label>
+            <input type="number" min={0} step={0.25} value={exoForm.charge}
+              onChange={e => setExoForm(f => ({ ...f, charge: Number(e.target.value) }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Matériel</label>
+            <input type="text" value={exoForm.materiel}
+              onChange={e => setExoForm(f => ({ ...f, materiel: e.target.value }))}
+              placeholder="Haltères, élastique…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Alerte exercice</label>
+            <input type="text" value={exoForm.alerte_exercice}
+              onChange={e => setExoForm(f => ({ ...f, alerte_exercice: e.target.value }))}
+              placeholder="Ex : Douleur genou, contrainte lombaire…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            {exoForm.alerte_exercice && (
+              <div className="mt-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Raison de l'alerte</label>
+                <textarea value={exoForm.raison_alerte_exercice}
+                  onChange={e => setExoForm(f => ({ ...f, raison_alerte_exercice: e.target.value }))}
+                  rows={2} placeholder="Expliquer pourquoi il y a une alerte…"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Intensité exercice</label>
+            <div className="flex gap-4">
+              {[
+                { value: '🔵', color: '#93c5fd', shadow: '0 0 0 4px #bfdbfe', label: 'Léger' },
+                { value: '🟡', color: '#facc15', shadow: '0 0 0 4px #fef08a', label: 'Modéré' },
+                { value: '⚫', color: '#ef4444', shadow: '0 0 0 4px #fca5a5', label: 'Intense' },
+              ].map(({ value, color, shadow, label }) => {
+                const selected = exoForm.intensite_exercice === value
+                return (
+                  <button key={value} type="button"
+                    onClick={() => setExoForm(f => ({ ...f, intensite_exercice: selected ? '' : value }))}
+                    className="flex flex-col items-center gap-1">
+                    <span className="w-9 h-9 rounded-full transition-all"
+                      style={{ backgroundColor: color, boxShadow: selected ? shadow : 'none', transform: selected ? 'scale(1.1)' : 'scale(1)', opacity: selected ? 1 : 0.4 }} />
+                    <span className="text-[10px] text-gray-500">{label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Explication</label>
+            <textarea value={exoForm.explication_exercice}
+              onChange={e => setExoForm(f => ({ ...f, explication_exercice: e.target.value }))}
+              rows={2} placeholder="Consignes spécifiques…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Observations</label>
+            <textarea value={exoForm.observations_exercice}
+              onChange={e => setExoForm(f => ({ ...f, observations_exercice: e.target.value }))}
+              rows={2} placeholder="Notes supplémentaires…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={() => setEditExo(null)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2.5 rounded-xl text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button type="button" onClick={handleSaveExo} disabled={savingExo}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white py-2.5 rounded-xl text-sm font-medium transition">
+              {savingExo ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Modal ajouter circuit */}
       <Modal isOpen={showAddCircuit} onClose={() => setShowAddCircuit(false)} title="Ajouter un circuit">
         <form onSubmit={handleAddCircuit} className="space-y-4">
