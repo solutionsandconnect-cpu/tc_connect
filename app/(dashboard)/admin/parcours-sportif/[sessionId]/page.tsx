@@ -238,9 +238,13 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     ).slice(0, 8)
   }, [users, searchUser])
 
-  // Répertoire des personnes déjà inscrites (toutes séances), pour l'autocomplétion
+  // Répertoire des personnes déjà inscrites (toutes séances), pour l'autocomplétion.
+  // Chargé UNE fois, seulement quand on ouvre l'ajout rapide (évite une lecture lourde à chaque page).
+  const dirLoadedRef = useRef(false)
+  const otherSessLoadedRef = useRef(false)
   useEffect(() => {
-    if (!isAdmin) return
+    if (!isAdmin || !showQuickAdd || dirLoadedRef.current) return
+    dirLoadedRef.current = true
     getDocs(collection(db, 'registrations')).then((snap) => {
       const map = new Map<string, Candidate>()
       snap.docs.forEach((d) => {
@@ -257,11 +261,12 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
       })
       setRegistrantDirectory(Array.from(map.values()))
     }).catch(() => {})
-  }, [isAdmin])
+  }, [isAdmin, showQuickAdd])
 
-  // Autres séances à venir (pour inscrire un participant à plusieurs dates d'un coup)
+  // Autres séances à venir (pour inscrire un participant à plusieurs dates d'un coup) — paresseux aussi
   useEffect(() => {
-    if (!isAdmin) return
+    if (!isAdmin || !showQuickAdd || otherSessLoadedRef.current) return
+    otherSessLoadedRef.current = true
     const nowMs = Date.now()
     getDocs(collection(db, 'sessions')).then((snap) => {
       const list = snap.docs
@@ -271,7 +276,7 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
         .sort((a, b) => (a.date?.toMillis?.() ?? 0) - (b.date?.toMillis?.() ?? 0))
       setOtherSessions(list)
     }).catch(() => {})
-  }, [isAdmin, sessionId])
+  }, [isAdmin, showQuickAdd, sessionId])
 
   // Candidats = utilisateurs + anciens inscrits (dédoublonnés par email/nom)
   const candidates = useMemo<Candidate[]>(() => {

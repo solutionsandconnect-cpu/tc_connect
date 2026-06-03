@@ -37,9 +37,13 @@ export default function DashboardLayout({
   // Déconnecte cet appareil si sa session a été révoquée (ex. changement de mot de passe
   // sur un autre appareil → ce token devient invalide à la prochaine actualisation).
   useEffect(() => {
+    let lastCheck = 0
     const checkSession = async () => {
       const u = auth.currentUser
       if (!u) return
+      // Throttle : au plus une vérification réseau toutes les 5 min (le token est valide ~1h)
+      if (Date.now() - lastCheck < 5 * 60 * 1000) return
+      lastCheck = Date.now()
       try { await u.getIdToken(true) }
       catch {
         await signOut(auth).catch(() => {})

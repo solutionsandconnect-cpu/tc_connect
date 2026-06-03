@@ -10,6 +10,8 @@ import { useStoreAccess } from "@/hooks/useStoreAccess";
 interface Props {
   appRoute: string;
   children: React.ReactNode;
+  /** Affiche le bouton flottant « Épingler à l'accueil » (par défaut oui — à désactiver sur les sous-pages). */
+  showPin?: boolean;
 }
 
 /** Bouton flottant pour épingler/retirer l'app de l'accueil, depuis la page de l'app. */
@@ -43,7 +45,7 @@ function PinAppButton({ appRoute }: { appRoute: string }) {
   );
 }
 
-export function StoreGate({ appRoute, children }: Props) {
+export function StoreGate({ appRoute, children, showPin = true }: Props) {
   const { hasAccess, loading } = useStoreAccess(appRoute);
 
   if (loading) {
@@ -86,7 +88,7 @@ export function StoreGate({ appRoute, children }: Props) {
   return (
     <>
       {children}
-      <PinAppButton appRoute={appRoute} />
+      {showPin && <PinAppButton appRoute={appRoute} />}
     </>
   );
 }

@@ -26,6 +26,7 @@ import {
   XCircleIcon,
   TrashIcon,
   PencilIcon,
+  ChevronDownIcon,
 } from '@heroicons/react/24/outline'
 import type { SeanceEquipe } from '@/types'
 
@@ -242,20 +243,53 @@ function AlertBadge({ acwr }: { acwr: number | null }) {
 }
 
 // ─── Saisie directe RPE + Hooper par joueur ─────────────────────────────────────
-function NumField({ label, value, set, min, max }: { label: string; value: number; set: (n: number) => void; min: number; max: number }) {
+const RPE_LABELS: Record<number, string> = {
+  1: 'Repos', 2: 'Très facile', 3: 'Facile', 4: 'Plutôt facile', 5: 'Modéré',
+  6: 'Un peu dur', 7: 'Dur', 8: 'Très dur', 9: 'Extrêmement dur', 10: 'Maximal',
+}
+const RPE_COLORS: Record<number, string> = {
+  1: '#22c55e', 2: '#4ade80', 3: '#86efac', 4: '#a3e635', 5: '#facc15',
+  6: '#fb923c', 7: '#f97316', 8: '#ef4444', 9: '#dc2626', 10: '#7f1d1d',
+}
+const sommeilLabel = (v: number) => v <= 2 ? 'Très mauvais' : v <= 3 ? 'Mauvais' : v <= 4 ? 'Moyen' : v <= 5 ? 'Bien' : v <= 6 ? 'Très bien' : 'Excellent'
+const fatigueLabel = (v: number) => v <= 2 ? 'Pas fatigué' : v <= 3 ? 'Légèrement' : v <= 4 ? 'Modéré' : v <= 5 ? 'Fatigué' : v <= 6 ? 'Très fatigué' : 'Épuisé'
+const courbaturesLabel = (v: number) => v <= 2 ? 'Aucune' : v <= 3 ? 'Légères' : v <= 4 ? 'Modérées' : v <= 5 ? 'Importantes' : v <= 6 ? 'Sévères' : 'Très sévères'
+const stressLabel = (v: number) => v <= 2 ? 'Aucun' : v <= 3 ? 'Léger' : v <= 4 ? 'Modéré' : v <= 5 ? 'Élevé' : v <= 6 ? 'Très élevé' : 'Extrême'
+const hooperColor = (i: number) => i <= 12 ? '#22c55e' : i <= 18 ? '#facc15' : i <= 22 ? '#f97316' : '#ef4444'
+const hooperLabel = (i: number) => i <= 12 ? 'Excellent état' : i <= 18 ? 'État correct' : i <= 22 ? 'État limite' : 'État dégradé'
+
+function SliderMetric({ label, value, set, min, max, color, text }: {
+  label: string; value: number; set: (n: number) => void; min: number; max: number; color: string; text: string
+}) {
+  const pct = ((value - min) / (max - min)) * 100
   return (
-    <label className="flex flex-col items-center">
-      <span className="text-[10px] text-gray-400 leading-none mb-0.5">{label}</span>
-      <input type="number" min={min} max={max} value={value}
-        onChange={(e) => set(Math.max(min, Math.min(max, parseInt(e.target.value) || min)))}
-        className="w-11 border border-gray-200 rounded-md px-1 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
-    </label>
+    <div className="py-1.5">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-sm text-gray-600">{label}</span>
+        <span className="text-sm font-semibold" style={{ color }}>{value} — {text}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} value={value}
+        onChange={(e) => set(Number(e.target.value))}
+        className="range-clean"
+        style={{
+          color,
+          background: `linear-gradient(to right, ${color} 0%, ${color} ${pct}%, #e5e7eb ${pct}%, #e5e7eb 100%)`,
+        }}
+      />
+      <div className="flex justify-between mt-1 px-0.5">
+        {Array.from({ length: max - min + 1 }, (_, i) => i + min).map((v) => (
+          <span key={v} className={`text-[10px] ${v === value ? 'font-bold text-gray-700' : 'text-gray-300'}`}>{v}</span>
+        ))}
+      </div>
+    </div>
   )
 }
 
 function PlayerEntryRow({ seance, joueur }: { seance: SeanceEquipe; joueur: any }) {
   const eH = seance.hoopers?.[joueur.id]
   const eR = seance.rpes?.[joueur.id]
+  const [open, setOpen] = useState(false)
   const [sommeil, setSommeil] = useState(eH?.sommeil ?? 4)
   const [fatigue, setFatigue] = useState(eH?.fatigue ?? 4)
   const [courbatures, setCourbatures] = useState(eH?.courbatures ?? 4)
@@ -272,30 +306,66 @@ function PlayerEntryRow({ seance, joueur }: { seance: SeanceEquipe; joueur: any 
     try {
       await submitHooper(seance.id, joueur.id, { sommeil, fatigue, courbatures, stress, indiceHooper })
       await submitRPE(seance.id, joueur.id, { rpe, dureeMin: seance.dureeMin, charge })
-      setSaved(true); setTimeout(() => setSaved(false), 2000)
+      setSaved(true); setTimeout(() => setSaved(false), 2500)
+      setOpen(false)
     } catch { /* ignore */ } finally { setSaving(false) }
   }
 
   return (
-    <div className="flex items-center gap-2 flex-wrap py-2 border-t border-gray-50">
-      <span className="text-xs font-medium text-gray-700 w-28 truncate shrink-0">
-        {joueur.prenom_joueur} {joueur.nom_joueur}
-        {hasData && <span className="ml-1 text-green-500" title="Déjà renseigné">●</span>}
-      </span>
-      <div className="flex items-end gap-1.5">
-        <NumField label="Som" value={sommeil} set={setSommeil} min={1} max={7} />
-        <NumField label="Fat" value={fatigue} set={setFatigue} min={1} max={7} />
-        <NumField label="Cou" value={courbatures} set={setCourbatures} min={1} max={7} />
-        <NumField label="Str" value={stress} set={setStress} min={1} max={7} />
-        <span className="text-xs font-semibold text-indigo-600 self-center w-12">H {indiceHooper}</span>
-        <span className="w-px h-6 bg-gray-200 self-center" />
-        <NumField label="RPE" value={rpe} set={setRpe} min={1} max={10} />
-        <span className="text-xs font-semibold text-amber-600 self-center w-16">{charge} UA</span>
-      </div>
-      <button onClick={save} disabled={saving}
-        className={`ml-auto text-xs font-medium px-3 py-1.5 rounded-lg transition shrink-0 ${saved ? 'bg-green-100 text-green-700' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-50`}>
-        {saving ? '…' : saved ? '✓ Enregistré' : 'Enregistrer'}
+    <div className="border border-gray-100 rounded-xl overflow-hidden bg-white">
+      {/* En-tête cliquable */}
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 transition text-left">
+        <span className="text-sm font-medium text-gray-800 flex-1 min-w-0 truncate">
+          {joueur.prenom_joueur} {joueur.nom_joueur}
+        </span>
+        {hasData ? (
+          <span className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: hooperColor(eH?.indiceHooper ?? indiceHooper) }}>
+              H {eH?.indiceHooper ?? '—'}
+            </span>
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: RPE_COLORS[eR?.rpe ?? 5] }}>
+              RPE {eR?.rpe ?? '—'}
+            </span>
+          </span>
+        ) : (
+          <span className="text-[11px] text-gray-400 shrink-0">À remplir</span>
+        )}
+        <ChevronDownIcon className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
+
+      {/* Corps déplié */}
+      {open && (
+        <div className="px-4 pb-4 pt-1 border-t border-gray-100 space-y-4">
+          {/* Hooper */}
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">État de forme — indice Hooper</p>
+            <SliderMetric label="Qualité du sommeil" value={sommeil} set={setSommeil} min={1} max={7} color="#6366f1" text={sommeilLabel(sommeil)} />
+            <SliderMetric label="Niveau de fatigue" value={fatigue} set={setFatigue} min={1} max={7} color="#f97316" text={fatigueLabel(fatigue)} />
+            <SliderMetric label="Douleurs / courbatures" value={courbatures} set={setCourbatures} min={1} max={7} color="#ef4444" text={courbaturesLabel(courbatures)} />
+            <SliderMetric label="Niveau de stress" value={stress} set={setStress} min={1} max={7} color="#8b5cf6" text={stressLabel(stress)} />
+            <div className="flex items-center justify-between mt-2 px-3 py-2 rounded-lg" style={{ backgroundColor: hooperColor(indiceHooper) + '1a' }}>
+              <span className="text-sm font-medium text-gray-600">Indice Hooper</span>
+              <span className="text-sm font-bold" style={{ color: hooperColor(indiceHooper) }}>{indiceHooper}/28 — {hooperLabel(indiceHooper)}</span>
+            </div>
+          </div>
+
+          {/* RPE */}
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Charge — RPE × durée</p>
+            <SliderMetric label="Intensité perçue (RPE)" value={rpe} set={setRpe} min={1} max={10} color={RPE_COLORS[rpe]} text={RPE_LABELS[rpe]} />
+            <div className="flex items-center justify-between mt-2 px-3 py-2 rounded-lg bg-amber-50">
+              <span className="text-sm font-medium text-gray-600">Charge d'entraînement</span>
+              <span className="text-sm font-bold text-amber-600">{charge} UA <span className="font-normal text-gray-400">({rpe} × {seance.dureeMin} min)</span></span>
+            </div>
+          </div>
+
+          <button onClick={save} disabled={saving}
+            className={`w-full text-sm font-semibold py-2.5 rounded-xl transition ${saved ? 'bg-green-100 text-green-700' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-50`}>
+            {saving ? 'Enregistrement…' : saved ? '✓ Enregistré' : 'Enregistrer'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -408,7 +478,7 @@ export default function SeancesEquipePage() {
   }
 
   return (
-    <StoreGate appRoute="/equipes">
+    <StoreGate appRoute="/equipes" showPin={false}>
     <div className="space-y-6">
       {/* En-tête */}
       <div className="flex items-center gap-3">
@@ -578,11 +648,10 @@ export default function SeancesEquipePage() {
 
                     {/* Saisie directe RPE + Hooper par joueur */}
                     {entrySeanceId === s.id && (
-                      <div className="border-t border-gray-100 pt-2">
-                        <div className="flex items-center gap-3 text-[10px] text-gray-400 mb-1 px-1">
-                          <span>Som/Fat/Cou/Str = indices Hooper (1-7)</span>
-                          <span>· RPE (1-10) → charge = RPE × {s.dureeMin} min</span>
-                        </div>
+                      <div className="border-t border-gray-100 pt-3 space-y-2 bg-gray-50/50 -mx-4 px-4 pb-1">
+                        <p className="text-[11px] text-gray-400 px-1">
+                          Touchez un joueur pour saisir son <strong>état de forme (Hooper)</strong> et son <strong>RPE</strong>.
+                        </p>
                         {joueurs
                           .filter((j) => (s.joueurIds ?? []).includes(j.id))
                           .map((j) => <PlayerEntryRow key={j.id} seance={s} joueur={j} />)}

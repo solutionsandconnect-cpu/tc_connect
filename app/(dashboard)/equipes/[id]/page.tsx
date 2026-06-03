@@ -148,7 +148,7 @@ export default function DetailEquipePage() {
   const staffList = joueurs.filter((j) => j.type === 'Staff')
 
   return (
-    <StoreGate appRoute="/equipes">
+    <StoreGate appRoute="/equipes" showPin={false}>
     <div>
       {/* En-tête — flex-wrap : sur mobile, les boutons passent en pleine largeur sous le titre */}
       <div className="mb-6 flex items-center gap-3 flex-wrap">

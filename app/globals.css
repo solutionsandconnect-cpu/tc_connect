@@ -158,6 +158,44 @@ textarea::placeholder {
   opacity: 1;
 }
 
+/* Curseur (range) propre : piste grise + remplissage coloré (via background inline) +
+   pouce blanc à bordure colorée. Évite le rendu sombre/noir de accent-color avec des couleurs foncées.
+   La couleur du remplissage et de la bordure du pouce vient de `color` (currentColor) défini en inline. */
+input[type="range"].range-clean {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  outline: none;
+  background: #e5e7eb;
+}
+input[type="range"].range-clean::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid currentColor;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+input[type="range"].range-clean::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid currentColor;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+input[type="range"].range-clean::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: transparent;
+}
+
 /* Body fixé lors d'un modal ouvert — empêche tout pan horizontal/vertical parasite sur iOS */
 body[style*="position: fixed"] {
   overflow: hidden !important;
