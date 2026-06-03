@@ -277,7 +277,11 @@ export default function PlanningPage() {
   }, [abosByUserId])
 
   const today = new Date()
-  const [selectedDate, setSelectedDate] = useState(new Date())
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = searchParams.get('date')
+    if (d) { const parsed = new Date(d + 'T12:00:00'); if (!isNaN(parsed.getTime())) return parsed }
+    return new Date()
+  })
   const [view, setView] = useState<ViewMode>('semaine')
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState<any>(null)
@@ -330,6 +334,7 @@ export default function PlanningPage() {
   const [editActiviteItem, setEditActiviteItem] = useState<import('@/hooks/useActivites').Activite | null>(null)
   const [searchActiviteClient, setSearchActiviteClient] = useState('')
   const [deleteActiviteConfirm, setDeleteActiviteConfirm] = useState<string | null>(null)
+  const [afficherActivites, setAfficherActivites] = useState(true)
 
   const [extraDetails, setExtraDetails] = useState<Record<string, any[]>>({})
   const [newParticipant, setNewParticipant] = useState({ ref_client: '', ref_database_user: '' })
@@ -421,6 +426,22 @@ export default function PlanningPage() {
     (a) => a.date_activite && isSameDay(a.date_activite as any, selectedDate)
   ).sort((a, b) => a.heure_debut.localeCompare(b.heure_debut))
 
+  // Liste fusionnée RDV + activités, triée par heure de début (ordre chronologique réel)
+  const minutesOfDay = (hhmm?: string) => {
+    const [h, m] = (hhmm || '00:00').split(':').map(Number)
+    return (h || 0) * 60 + (m || 0)
+  }
+  const dayItems: ({ kind: 'rdv'; sortKey: number; rdv: typeof planningsDuJour[number] }
+                 | { kind: 'act'; sortKey: number; act: typeof activitesDuJour[number] })[] = [
+    ...planningsDuJour.map((p) => {
+      const d = (p as any).heure_planning_debut?.toDate?.() as Date | undefined
+      return { kind: 'rdv' as const, sortKey: d ? d.getHours() * 60 + d.getMinutes() : 0, rdv: p }
+    }),
+    ...(afficherActivites
+      ? activitesDuJour.map((a) => ({ kind: 'act' as const, sortKey: minutesOfDay(a.heure_debut), act: a }))
+      : []),
+  ].sort((x, y) => x.sortKey - y.sortKey)
+
   const filteredActiviteUsers = useMemo(() => {
     if (!searchActiviteClient) return users
     const s = searchActiviteClient.toLowerCase()
@@ -493,6 +514,9 @@ export default function PlanningPage() {
   // Plannings par jour (pour les points)
   const planningsForDay = (day: Date) =>
     plannings.filter((p) => p.date_planning && isSameDay(p.date_planning as any, day))
+
+  const activitesForDay = (day: Date) =>
+    activites.filter((a) => a.date_activite && isSameDay(a.date_activite as any, day))
 
   const openAdd = () => {
     setEditItem(null)
@@ -718,6 +742,7 @@ export default function PlanningPage() {
               const isSelected = day.toDateString() === selectedDate.toDateString()
               const isToday = day.toDateString() === today.toDateString()
               const dayPlannings = planningsForDay(day)
+              const dayActivites = activitesForDay(day)
               return (
                 <button
                   key={day.toISOString()}
@@ -728,10 +753,13 @@ export default function PlanningPage() {
                 >
                   <span className="text-xs">{day.toLocaleDateString('fr-FR', { weekday: 'short' })}</span>
                   <span className="text-sm font-semibold">{day.getDate()}</span>
-                  {dayPlannings.length > 0 && (
+                  {(dayPlannings.length > 0 || dayActivites.length > 0) && (
                     <div className="flex gap-0.5 mt-0.5">
                       {dayPlannings.slice(0, 3).map((p, i) => (
-                        <div key={i} className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : dotColor((p as any).etat_planning_rdv)}`} />
+                        <div key={`r${i}`} className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : dotColor((p as any).etat_planning_rdv)}`} />
+                      ))}
+                      {dayActivites.slice(0, 2).map((_, i) => (
+                        <div key={`a${i}`} className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white/70' : 'bg-purple-500'}`} />
                       ))}
                     </div>
                   )}
@@ -757,6 +785,7 @@ export default function PlanningPage() {
                 const isSelected = day.toDateString() === selectedDate.toDateString()
                 const isToday = day.toDateString() === today.toDateString()
                 const dayPlannings = planningsForDay(day)
+                const dayActivites = activitesForDay(day)
                 return (
                   <button
                     key={day.toISOString()}
@@ -776,14 +805,17 @@ export default function PlanningPage() {
                     }`}>
                       {day.getDate()}
                     </span>
-                    {dayPlannings.length > 0 && (
+                    {(dayPlannings.length > 0 || dayActivites.length > 0) && (
                       <div className="flex gap-0.5 mt-0.5 flex-wrap justify-center max-w-[32px]">
                         {dayPlannings.slice(0, 3).map((p, i) => (
-                          <div key={i} className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white/80' : dotColor((p as any).etat_planning_rdv)}`} />
+                          <div key={`r${i}`} className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white/80' : dotColor((p as any).etat_planning_rdv)}`} />
                         ))}
-                        {dayPlannings.length > 3 && (
+                        {dayActivites.slice(0, 2).map((_, i) => (
+                          <div key={`a${i}`} className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white/60' : 'bg-purple-500'}`} />
+                        ))}
+                        {(dayPlannings.length + dayActivites.length) > 5 && (
                           <span className={`text-[9px] leading-none ${isSelected ? 'text-white/80' : 'text-gray-400'}`}>
-                            +{dayPlannings.length - 3}
+                            +{dayPlannings.length + dayActivites.length - 5}
                           </span>
                         )}
                       </div>
@@ -798,66 +830,22 @@ export default function PlanningPage() {
 
       {/* Liste RDV + Activités du jour sélectionné */}
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-          {formatDate(Timestamp.fromDate(selectedDate))} — {planningsDuJour.length} RDV{activitesDuJour.length > 0 ? ` · ${activitesDuJour.length} activité${activitesDuJour.length > 1 ? 's' : ''}` : ''}
-        </h2>
-
-        {/* Activités du jour */}
-        {activitesDuJour.map((act) => {
-          const client = users.find((u) => u.id === act.clientId)
-          const canModify = isAdmin || act.userId === currentUser?.uid
-          return (
-            <div key={act.id} className="bg-green-50 rounded-2xl border border-green-200 shadow-sm p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <BoltIcon className="w-4 h-4 text-green-600 shrink-0" />
-                    <span className="text-sm font-semibold text-green-800">{act.type_activite}</span>
-                    {act.heure_debut && (
-                      <span className="text-xs text-green-600">{act.heure_debut}{act.heure_fin ? ` → ${act.heure_fin}` : ''}</span>
-                    )}
-                  </div>
-                  {isAdmin && client && (
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <div className="w-4 h-4 rounded-full bg-green-200 text-green-700 flex items-center justify-center shrink-0">
-                        <UserIcon className="w-3 h-3" />
-                      </div>
-                      <p className="text-xs text-green-700 font-medium">{client.nom} {client.prenom}</p>
-                    </div>
-                  )}
-                  {(act.distance_km != null && act.distance_km > 0 || act.calories) && (
-                    <p className="text-xs text-green-600 mt-0.5">
-                      {act.distance_km != null && act.distance_km > 0 && `📍 ${act.distance_km} km`}
-                      {act.distance_km != null && act.distance_km > 0 && act.calories ? ' · ' : ''}
-                      {act.calories ? `🔥 ${act.calories} kcal` : ''}
-                    </p>
-                  )}
-                  {act.notes && (
-                    <p className="text-xs text-gray-500 mt-0.5 italic">{act.notes}</p>
-                  )}
-                </div>
-                {canModify && (
-                  <div className="flex gap-1 shrink-0">
-                    <button
-                      onClick={() => openEditActivite(act)}
-                      className="p-1.5 text-gray-400 hover:text-blue-500 transition"
-                      title="Modifier"
-                    >
-                      <PencilIcon className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setDeleteActiviteConfirm(act.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-500 transition"
-                      title="Supprimer"
-                    >
-                      <TrashIcon className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-        })}
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            {formatDate(Timestamp.fromDate(selectedDate))} — {planningsDuJour.length} RDV{activitesDuJour.length > 0 ? ` · ${activitesDuJour.length} activité${activitesDuJour.length > 1 ? 's' : ''}` : ''}
+          </h2>
+          {activitesDuJour.length > 0 && (
+            <button onClick={() => setAfficherActivites((v) => !v)}
+              className={`inline-flex items-center gap-1 text-xs font-medium whitespace-nowrap shrink-0 px-2.5 py-1 rounded-lg border transition ${
+                afficherActivites
+                  ? 'text-purple-700 border-purple-200 bg-purple-50 hover:bg-purple-100'
+                  : 'text-gray-500 border-gray-200 bg-white hover:bg-gray-50'
+              }`}>
+              <BoltIcon className="w-3.5 h-3.5" />
+              {afficherActivites ? 'Masquer les activités' : 'Afficher les activités'}
+            </button>
+          )}
+        </div>
 
         {loading ? (
           <div className="text-center py-10 text-gray-400">Chargement...</div>
@@ -881,7 +869,60 @@ export default function PlanningPage() {
             )}
           </div>
         ) : (
-          planningsDuJour.map((item) => {
+          dayItems.map((di) => {
+            // ── Carte Activité ──
+            if (di.kind === 'act') {
+              const act = di.act
+              // Résolution du nom : par clientId, sinon par userId (cas des activités Parcours Sportif)
+              const client = users.find((u) => u.id === act.clientId)
+                ?? users.find((u) => u.id === act.userId || u.uid === act.userId)
+              const canModify = isAdmin || act.userId === currentUser?.uid
+              return (
+                <div key={act.id} className="bg-green-50 rounded-2xl border border-green-200 shadow-sm p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <BoltIcon className="w-4 h-4 text-green-600 shrink-0" />
+                        <span className="text-sm font-semibold text-green-800">{act.type_activite}</span>
+                        {act.heure_debut && (
+                          <span className="text-xs text-green-600">{act.heure_debut}{act.heure_fin ? ` → ${act.heure_fin}` : ''}</span>
+                        )}
+                      </div>
+                      {isAdmin && client && (
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <div className="w-4 h-4 rounded-full bg-green-200 text-green-700 flex items-center justify-center shrink-0">
+                            <UserIcon className="w-3 h-3" />
+                          </div>
+                          <p className="text-xs text-green-700 font-medium">{client.nom} {client.prenom}</p>
+                        </div>
+                      )}
+                      {(act.distance_km != null && act.distance_km > 0 || act.calories) && (
+                        <p className="text-xs text-green-600 mt-0.5">
+                          {act.distance_km != null && act.distance_km > 0 && `📍 ${act.distance_km} km`}
+                          {act.distance_km != null && act.distance_km > 0 && act.calories ? ' · ' : ''}
+                          {act.calories ? `🔥 ${act.calories} kcal` : ''}
+                        </p>
+                      )}
+                      {act.notes && (
+                        <p className="text-xs text-gray-500 mt-0.5 italic">{act.notes}</p>
+                      )}
+                    </div>
+                    {canModify && (
+                      <div className="flex gap-1 shrink-0">
+                        <button onClick={() => openEditActivite(act)} className="p-1.5 text-gray-400 hover:text-blue-500 transition" title="Modifier">
+                          <PencilIcon className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => setDeleteActiviteConfirm(act.id)} className="p-1.5 text-gray-400 hover:text-red-500 transition" title="Supprimer">
+                          <TrashIcon className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            }
+            // ── Carte RDV ──
+            const item = di.rdv
             const etat = getEtatBadgeLocal(item.etat_planning_rdv)
             const client = users.find((u) => u.id === ((item as any).ref_users?.id || (item as any).ref_client?.id))
             const seq = getRdvSequence(item, plannings, aboPeriods)
@@ -889,7 +930,7 @@ export default function PlanningPage() {
             return (
               <div
                 key={item.id}
-                onClick={() => router.push(`/planning/${item.id}`)}
+                onClick={() => router.push(`/planning/${item.id}?date=${selectedDate.toISOString().split('T')[0]}`)}
                 className={`rounded-2xl border shadow-sm p-4 cursor-pointer hover:shadow-md transition ${isEffectue ? 'bg-green-50 border-l-4 border-l-green-500 border-green-100' : 'bg-white border-gray-100'}`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -941,6 +982,13 @@ export default function PlanningPage() {
                             {seq.index}/{seq.total}
                           </span>
                         )}
+                      </div>
+                    )}
+                    {isAdmin && Array.isArray((item as any).materiel) && (item as any).materiel.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {(item as any).materiel.map((m: string) => (
+                          <span key={m} className="text-xs bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded-full">{m}</span>
+                        ))}
                       </div>
                     )}
                     {item.adresse_rdv && (

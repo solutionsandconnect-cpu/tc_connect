@@ -1,9 +1,9 @@
 import { db } from "@/lib/firebase";
 import {
   collection, addDoc, doc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, where, Timestamp, getDocs,
+  onSnapshot, query, orderBy, where, Timestamp, getDocs, arrayUnion,
 } from "firebase/firestore";
-import type { StoreApp, StoreSubscription, StoreReview } from "@/types";
+import type { StoreApp, StoreSubscription, StoreReview, StoreSubEventType } from "@/types";
 
 const appsCol = collection(db, "store_apps");
 const subsCol = collection(db, "store_subscriptions");
@@ -51,11 +51,80 @@ export const listenMyStoreSubscriptions = (
 export const createStoreSubscription = (data: Omit<StoreSubscription, "id" | "createdAt">) =>
   addDoc(subsCol, { ...data, createdAt: Timestamp.now() });
 
+/** Référence de commande unique (à indiquer en référence du virement). Basée sur l'ID du document. */
+export const orderRef = (id: string) => `CMD-${id}`;
+
+/** Un abonnement actif est expiré si sa date de fin est dépassée. */
+export const isSubExpired = (sub: Pick<StoreSubscription, "statut" | "dateFin">): boolean =>
+  sub.statut === "active" && !!sub.dateFin && (sub.dateFin.toMillis?.() ?? 0) < Date.now();
+
+/**
+ * Bascule en "suspended" les abonnements actifs dont la date de fin est dépassée.
+ * Réservé aux contextes admin (les règles Firestore n'autorisent que l'admin à écrire).
+ */
+export const suspendExpiredSubscriptions = async (subs: StoreSubscription[]): Promise<void> => {
+  const expired = subs.filter(isSubExpired);
+  if (expired.length === 0) return;
+  await Promise.allSettled(
+    expired.map((s) =>
+      updateDoc(doc(db, "store_subscriptions", s.id), {
+        statut: "suspended",
+        events: arrayUnion({ type: "suspended", date: Timestamp.now(), note: "Échéance dépassée" }),
+        updatedAt: Timestamp.now(),
+      })
+    )
+  );
+};
+
+/** Calcule la date de fin d'accès selon la périodicité de l'app (null = pas de fin / illimité). */
+export const computeDateFin = (fromMs: number, periodicite: string): number | null => {
+  if (periodicite === "mensuel") return fromMs + 31 * 24 * 60 * 60 * 1000;
+  if (periodicite === "annuel") {
+    const d = new Date(fromMs);
+    d.setFullYear(d.getFullYear() + 1);
+    return d.getTime();
+  }
+  return null; // paiement unique → pas de date de fin
+};
+
 export const updateStoreSubscription = (id: string, data: Partial<StoreSubscription>) =>
   updateDoc(doc(db, "store_subscriptions", id), { ...data, updatedAt: Timestamp.now() });
 
 export const deleteStoreSubscription = (id: string) =>
   deleteDoc(doc(db, "store_subscriptions", id));
+
+/** Libellés lisibles des événements de l'historique d'un abonnement. */
+export const SUB_EVENT_LABELS: Record<StoreSubEventType, string> = {
+  created: "Demande de souscription",
+  activated: "Accès validé",
+  renewed: "Paiement validé / renouvelé",
+  reminder: "Relance envoyée",
+  suspended: "Suspendu (échéance dépassée)",
+  cancelled: "Abonnement arrêté",
+  unsubscribed: "Désabonnement (par l'utilisateur)",
+  archived: "Archivé",
+  cleaned: "Données purgées",
+};
+
+/** Ajoute un événement à l'historique d'un abonnement (et met à jour updatedAt). */
+export const appendSubEvent = (id: string, type: StoreSubEventType, note?: string) =>
+  updateDoc(doc(db, "store_subscriptions", id), {
+    events: arrayUnion({ type, date: Timestamp.now(), ...(note ? { note } : {}) }),
+    updatedAt: Timestamp.now(),
+  });
+
+/** Met à jour un abonnement ET ajoute un événement à son historique, de façon atomique. */
+export const updateSubWithEvent = (
+  id: string,
+  data: Partial<StoreSubscription>,
+  type: StoreSubEventType,
+  note?: string,
+) =>
+  updateDoc(doc(db, "store_subscriptions", id), {
+    ...data,
+    events: arrayUnion({ type, date: Timestamp.now(), ...(note ? { note } : {}) }),
+    updatedAt: Timestamp.now(),
+  });
 
 // ── Reviews ───────────────────────────────────────────────────────────────────
 

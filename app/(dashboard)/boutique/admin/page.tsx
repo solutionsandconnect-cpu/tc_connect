@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useStoreApps } from "@/hooks/useStoreApps";
@@ -10,9 +10,14 @@ import { useUsers } from "@/hooks/useUsers";
 import {
   createStoreApp, updateStoreApp, deleteStoreApp,
   createStoreSubscription, updateStoreSubscription, deleteStoreSubscription,
+  updateSubWithEvent, SUB_EVENT_LABELS,
+  orderRef, computeDateFin, suspendExpiredSubscriptions,
 } from "@/lib/storeService";
-import { Timestamp } from "firebase/firestore";
+import { copyText } from "@/lib/clipboard";
+import { Timestamp, doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { uploadImage } from "@/lib/uploadImage";
+import RichTextEditor from "@/components/ui/RichTextEditor";
 import type { StoreApp, StoreSubscription, StoreSubStatut } from "@/types";
 
 const STATUT_LABEL: Record<StoreSubStatut, string> = {
@@ -60,6 +65,12 @@ export default function BoutiqueAdminPage() {
   const { clients } = useClients();
   const { users } = useUsers();
 
+  // Bascule automatiquement en "suspended" les abonnements dont la date de fin est dépassée
+  useEffect(() => {
+    if (!isAdmin || subscriptions.length === 0) return;
+    suspendExpiredSubscriptions(subscriptions);
+  }, [isAdmin, subscriptions]);
+
   const nonAdminUsers = users
     .filter(u => u.role_app !== "Admin" && u.uid)
     .sort((a, b) => {
@@ -69,8 +80,38 @@ export default function BoutiqueAdminPage() {
     });
 
   const pendingCount = subscriptions.filter((s) => s.statut === "pending").length;
-  const [tab, setTab] = useState<"apps" | "subs">("apps");
+  const [tab, setTab] = useState<"apps" | "subs" | "rib">("apps");
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  // ── RIB / Paiement ────────────────────────────────────────────────────────
+  const [ribIban, setRibIban] = useState("");
+  const [ribBic, setRibBic] = useState("");
+  const [ribSaving, setRibSaving] = useState(false);
+  // Charger le RIB boutique
+  useEffect(() => {
+    getDoc(doc(db, "settings", "boutique")).then((snap) => {
+      if (snap.exists()) {
+        const d = snap.data();
+        if (d.iban) setRibIban(d.iban);
+        if (d.bic) setRibBic(d.bic);
+      }
+    }).catch(() => {});
+  }, []);
+  const handleSaveRib = async () => {
+    setRibSaving(true);
+    try {
+      await setDoc(doc(db, "settings", "boutique"), {
+        iban: ribIban.replace(/\s/g, "").toUpperCase(),
+        bic: ribBic.trim().toUpperCase(),
+      }, { merge: true });
+      setToast({ msg: "RIB enregistré.", ok: true });
+      setTimeout(() => setToast(null), 3000);
+    } catch {
+      setToast({ msg: "Erreur lors de l'enregistrement.", ok: false });
+      setTimeout(() => setToast(null), 3000);
+    }
+    setRibSaving(false);
+  };
 
   // ── App modal state ───────────────────────────────────────────────────────
   const [showAppModal, setShowAppModal] = useState(false);
@@ -102,6 +143,7 @@ export default function BoutiqueAdminPage() {
   });
   const [subLimites, setSubLimites] = useState<Record<string, string>>({});
   const [savingSub, setSavingSub] = useState(false);
+  const [historySubId, setHistorySubId] = useState<string | null>(null);
 
   // ── Filters ───────────────────────────────────────────────────────────────
   const [filterApp, setFilterApp] = useState("");
@@ -278,6 +320,7 @@ export default function BoutiqueAdminPage() {
         clientNom: subForm.clientNom.trim(),
         clientEmail: subForm.clientEmail.trim() || null,
         userUid: subForm.userUid.trim() || null,
+        prix: app?.prix ?? 0,
         statut: subForm.statut,
         dateDebut: subForm.dateDebut ? Timestamp.fromDate(new Date(subForm.dateDebut)) : Timestamp.now(),
         dateFin: subForm.dateFin ? Timestamp.fromDate(new Date(subForm.dateFin)) : null,
@@ -287,7 +330,7 @@ export default function BoutiqueAdminPage() {
       };
       const data = Object.fromEntries(
         Object.entries(rawSub).filter(([, v]) => v !== undefined)
-      ) as Omit<StoreSubscription, "id" | "createdAt">;
+      ) as unknown as Omit<StoreSubscription, "id" | "createdAt">;
       if (editSub) {
         await updateStoreSubscription(editSub.id, data);
         showToast("Abonnement modifié.");
@@ -305,8 +348,42 @@ export default function BoutiqueAdminPage() {
   };
 
   const quickSetStatut = async (sub: StoreSubscription, statut: StoreSubStatut) => {
-    await updateStoreSubscription(sub.id, { statut });
-    showToast(`Statut → ${STATUT_LABEL[statut]}`);
+    if (statut === "active") {
+      const app = apps.find((a) => a.id === sub.appId);
+      const isPaid = (app?.prix ?? 0) > 0;
+      const wasPending = sub.statut === "pending";
+      const updates: Partial<StoreSubscription> = { statut: "active" };
+      if (isPaid) {
+        const now = Date.now();
+        updates.dateDebut = Timestamp.fromDate(new Date(now));
+        const finMs = computeDateFin(now, app?.periodicite ?? "mensuel");
+        updates.dateFin = finMs ? Timestamp.fromDate(new Date(finMs)) : null;
+        updates.lastPaymentAt = Timestamp.fromDate(new Date(now));
+      } else {
+        updates.dateFin = null; // gratuit : aucun blocage
+      }
+      await updateSubWithEvent(sub.id, updates, isPaid && !wasPending ? "renewed" : "activated");
+      // Notifier l'utilisateur que son accès est validé (push + section Notifications)
+      if (sub.userUid) {
+        fetch("/api/push/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: sub.userUid,
+            persist: true,
+            type: "BOUTIQUE_VALIDATION",
+            title: "Accès activé",
+            body: `Votre accès à "${sub.appNom}" a été activé. Bonne utilisation !`,
+            url: app?.route ?? "/boutique",
+          }),
+        }).catch(() => {});
+      }
+      showToast(wasPending ? "Demande validée — accès activé" : "Accès activé");
+    } else {
+      const extra = statut === "cancelled" ? { archivedAt: Timestamp.now() } : {};
+      await updateSubWithEvent(sub.id, { statut, ...extra }, statut === "cancelled" ? "cancelled" : "suspended");
+      showToast(`Statut → ${STATUT_LABEL[statut]}`);
+    }
   };
 
   const handleDeleteSub = async (sub: StoreSubscription) => {
@@ -354,13 +431,13 @@ export default function BoutiqueAdminPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 p-1 rounded-xl mb-6 w-fit">
-        {(["apps", "subs"] as const).map((t) => (
+        {(["apps", "subs", "rib"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition ${tab === t ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
           >
-            {t === "apps" ? `Applications (${apps.length})` : (
+            {t === "apps" ? `Applications (${apps.length})` : t === "rib" ? "RIB / Paiement" : (
               <span className="flex items-center gap-1.5">
                 Abonnements ({subscriptions.length})
                 {pendingCount > 0 && (
@@ -371,6 +448,34 @@ export default function BoutiqueAdminPage() {
           </button>
         ))}
       </div>
+
+      {/* ── RIB TAB ──────────────────────────────────────────────────────────── */}
+      {tab === "rib" && (
+        <div className="max-w-lg bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Coordonnées bancaires (RIB)</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Affichées aux clients ayant une souscription payante en attente, avec bouton de copie pour faciliter le virement.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">IBAN</label>
+            <input type="text" value={ribIban} onChange={(e) => setRibIban(e.target.value)}
+              placeholder="FR76 1600 6200 1100 8401 5620 604"
+              className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">BIC</label>
+            <input type="text" value={ribBic} onChange={(e) => setRibBic(e.target.value)}
+              placeholder="AGRIFRPP860"
+              className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <button onClick={handleSaveRib} disabled={ribSaving}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition">
+            {ribSaving ? "Enregistrement…" : "Enregistrer"}
+          </button>
+        </div>
+      )}
 
       {/* ── APPS TAB ─────────────────────────────────────────────────────────── */}
       {tab === "apps" && (
@@ -500,6 +605,14 @@ export default function BoutiqueAdminPage() {
                         {sub.factureNumber && (
                           <div className="text-xs text-blue-500 mt-0.5">Facture : {sub.factureNumber}</div>
                         )}
+                        {(app?.prix ?? 0) > 0 && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className="text-[11px] text-gray-500">Réf. virement :</span>
+                            <span className="text-[11px] font-mono font-semibold text-gray-800 bg-gray-100 px-1.5 py-0.5 rounded">{orderRef(sub.id)}</span>
+                            <button onClick={() => copyText(orderRef(sub.id)).then(() => showToast("Référence copiée"))}
+                              className="text-[11px] text-blue-600 hover:underline">Copier</button>
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap shrink-0">
                         {sub.statut !== "active" && (
@@ -511,6 +624,10 @@ export default function BoutiqueAdminPage() {
                         {sub.statut !== "cancelled" && (
                           <button onClick={() => quickSetStatut(sub, "cancelled")} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-gray-100 text-gray-500 hover:bg-gray-200 transition">Annuler</button>
                         )}
+                        <button onClick={() => setHistorySubId(historySubId === sub.id ? null : sub.id)} title="Historique"
+                          className={`p-1.5 rounded-lg transition ${historySubId === sub.id ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}>
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        </button>
                         <button onClick={() => handleFacturer(sub)} title="Créer une facture" className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition">
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
                         </button>
@@ -523,6 +640,29 @@ export default function BoutiqueAdminPage() {
                       </div>
                     </div>
                     {sub.notes && <p className="text-xs text-gray-400 mt-2 italic">{sub.notes}</p>}
+                    {historySubId === sub.id && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Historique</p>
+                        {(sub.events && sub.events.length > 0) ? (
+                          <ol className="space-y-1.5">
+                            {[...sub.events]
+                              .sort((a, b) => ((a.date as any)?.toMillis?.() ?? 0) - ((b.date as any)?.toMillis?.() ?? 0))
+                              .map((ev, i) => (
+                                <li key={i} className="flex items-start gap-2 text-xs">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
+                                  <span className="text-gray-700 font-medium">{SUB_EVENT_LABELS[ev.type] ?? ev.type}</span>
+                                  {ev.note && <span className="text-gray-400">— {ev.note}</span>}
+                                  <span className="text-gray-400 ml-auto whitespace-nowrap">
+                                    {(ev.date as any)?.toDate?.().toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                  </span>
+                                </li>
+                              ))}
+                          </ol>
+                        ) : (
+                          <p className="text-xs text-gray-400 italic">Aucun événement enregistré (abonnement antérieur au suivi d'historique).</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -617,9 +757,11 @@ export default function BoutiqueAdminPage() {
               ))}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Description complète</label>
-                <textarea rows={3} placeholder="Description détaillée de l'application…" value={appForm.description}
-                  onChange={(e) => setAppForm((f) => ({ ...f, description: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition resize-none" />
+                <RichTextEditor
+                  value={appForm.description}
+                  onChange={(html) => setAppForm((f) => ({ ...f, description: html }))}
+                  placeholder="Description détaillée de l'application… (gras, italique, listes, couleurs disponibles)"
+                />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

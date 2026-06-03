@@ -1,15 +1,17 @@
 'use client'
 
-import { use, useState, useEffect, useMemo } from 'react'
+import { use, useState, useEffect, useMemo, useRef } from 'react'
 import {
   doc, getDoc, deleteDoc, collection, query, where, onSnapshot,
   updateDoc, runTransaction, Timestamp, addDoc, getDocs,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { copyText } from '@/lib/clipboard'
+import { randomUUID } from '@/lib/uuid'
+import { addParcoursActivite, removeParcoursActivite, removeParcoursActivitesForSession } from '@/lib/parcoursPlanning'
 import { useAuth } from '@/context/AuthContext'
 import { useUsers } from '@/hooks/useUsers'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ArrowLeftIcon, TrashIcon, ClipboardDocumentIcon,
   ExclamationTriangleIcon, UsersIcon, CalendarIcon, MapPinIcon,
@@ -57,6 +59,7 @@ interface Registration {
   bookingPhone?: string
   bookingEmail?: string
   bookingName?: string
+  uniqueToken?: string
 }
 
 const PAYMENT_OPTIONS = [
@@ -65,11 +68,13 @@ const PAYMENT_OPTIONS = [
   { value: 'transfer', label: 'Virement' },
 ]
 
-const SMS_TEMPLATE = `Si je ne me trompe pas, tu ne m'as pas réglé le dernier Parcours Sportif.
-Tu peux réaliser un virement Wero à ce numéro (+336 79 40 82 54) ou sinon, voici le rib pour effectuer le virement :
-IBAN : FR76 1600 6200 1100 8401 5620 604
-BIC : AGRIFRPP860
-Bonne journée et bon week-end`
+// Message d'impayé — le numéro et le RIB proviennent des paramètres (settings/parcours_sportif)
+const buildImpayeTemplate = (phone: string, iban: string, bic: string) => `Bonjour,\n\nSi je ne me trompe pas, tu ne m'as pas réglé le dernier Parcours Sportif.\n
+Tu peux réaliser un virement Wero à ce numéro (${phone}) ou sinon, voici le rib pour effectuer le virement :\n
+IBAN : ${iban}
+BIC : ${bic}\n\n
+Bonne journée\n\n
+Teddy`
 
 function fmtDate(ts: Timestamp) {
   return ts.toDate().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
@@ -95,9 +100,12 @@ function parseCoordsLink(coords?: string): string | null {
 export default function AdminSessionDetailPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params)
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const highlightId = searchParams.get('highlight')
   const { userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
   const { users } = useUsers()
+  const [highlightedId, setHighlightedId] = useState<string | null>(highlightId)
 
   const [session, setSession] = useState<Session | null>(null)
   const [registrations, setRegistrations] = useState<Registration[]>([])
@@ -112,6 +120,39 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const [showEdit, setShowEdit] = useState(false)
   const [editForm, setEditForm] = useState({ datetime: '', locationCoords: '', locationLabel: '', maxSpots: '', price: '5', durationMinutes: '60', contactPhone: '+33679408254' })
   const [saving, setSaving] = useState(false)
+  // SMS Annulation
+  const [showCancelSmsModal, setShowCancelSmsModal] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
+  const CANCEL_REASON_PRESETS = ['Météo', 'Nombre d\'inscrits insuffisant', 'Météo + nombre d\'inscrits']
+
+  // RIB + numéro de contact depuis les paramètres (settings/parcours_sportif)
+  const [parcoursSettings, setParcoursSettings] = useState({ iban: '', bic: '', contactPhone: '' })
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'parcours_sportif')).then((snap) => {
+      if (snap.exists()) {
+        const d = snap.data()
+        setParcoursSettings({ iban: d.iban ?? '', bic: d.bic ?? '', contactPhone: d.contactPhone ?? '' })
+      }
+    }).catch(() => {})
+  }, [])
+  // Valeurs prêtes à l'emploi pour les SMS (avec repli si non configuré)
+  const ribPhone = parcoursSettings.contactPhone || '+33 6 79 40 82 54'
+  const ribIban = parcoursSettings.iban
+    ? (parcoursSettings.iban.match(/.{1,4}/g)?.join(' ') ?? parcoursSettings.iban)
+    : 'FR76 1600 6200 1100 8401 5620 604'
+  const ribBic = parcoursSettings.bic || 'AGRIFRPP860'
+
+  // Highlight d'une inscription depuis une notification (scroll + surlignage)
+  useEffect(() => {
+    if (!highlightedId || loadingSession || !registrations.length) return
+    // Laisser le temps au DOM de se peindre (important sur mobile)
+    const scrollT = setTimeout(() => {
+      const el = document.getElementById(`reg-${highlightedId}`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 350)
+    const clearT = setTimeout(() => setHighlightedId(null), 5000)
+    return () => { clearTimeout(scrollT); clearTimeout(clearT) }
+  }, [highlightedId, loadingSession, registrations])
 
   // Recherche + filtres sur les inscrits
   const [search, setSearch] = useState('')
@@ -124,6 +165,55 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const [quickForm, setQuickForm] = useState({ firstName: '', lastName: '', email: '', phone: '' })
   const [addingParticipant, setAddingParticipant] = useState(false)
   const [addError, setAddError] = useState('')
+
+  // Pré-calcul des impayés passés par email (pour enrichir le SMS de rappel sans bloquer le clic).
+  // Map: email -> date (JJ/MM/AAAA) du parcours passé non réglé le plus récent.
+  const [pastUnpaidByEmail, setPastUnpaidByEmail] = useState<Record<string, string>>({})
+  const emailsKey = useMemo(
+    () => Array.from(new Set(registrations.map((r) => r.email?.toLowerCase()).filter(Boolean))).sort().join(','),
+    [registrations]
+  )
+  useEffect(() => {
+    const emails = emailsKey ? emailsKey.split(',') : []
+    if (!emails.length) { setPastUnpaidByEmail({}); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        // Récupérer les inscriptions de ces emails (par paquets de 30 pour l'opérateur "in")
+        const others: Registration[] = []
+        for (let i = 0; i < emails.length; i += 30) {
+          const chunk = emails.slice(i, i + 30)
+          const snap = await getDocs(query(collection(db, 'registrations'), where('email', 'in', chunk)))
+          snap.docs.forEach((d) => {
+            const r = { id: d.id, ...d.data() } as Registration
+            if (r.paymentStatus === 'pending' && r.sessionId !== sessionId) others.push(r)
+          })
+        }
+        if (!others.length) { if (!cancelled) setPastUnpaidByEmail({}); return }
+        // Dates des séances concernées
+        const sessIds = Array.from(new Set(others.map((r) => r.sessionId)))
+        const sessSnaps = await Promise.all(sessIds.map((id) => getDoc(doc(db, 'sessions', id))))
+        const sessMs: Record<string, number> = {}
+        sessSnaps.forEach((s) => { if (s.exists()) sessMs[s.id] = s.data().date?.toMillis?.() ?? 0 })
+        // Pour chaque email, garder la séance PASSÉE non réglée la plus récente
+        const maxMs: Record<string, number> = {}
+        for (const r of others) {
+          const ms = sessMs[r.sessionId] ?? 0
+          const email = r.email?.toLowerCase()
+          if (!email || !ms || ms >= Date.now()) continue
+          if (!maxMs[email] || ms > maxMs[email]) maxMs[email] = ms
+        }
+        const result: Record<string, string> = {}
+        for (const [email, ms] of Object.entries(maxMs)) {
+          result[email] = new Date(ms).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        }
+        if (!cancelled) setPastUnpaidByEmail(result)
+      } catch (err) {
+        console.error('Pré-calcul impayés:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [emailsKey, sessionId])
 
   const filteredUsers = useMemo(() => {
     if (!searchUser.trim()) return []
@@ -194,12 +284,16 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
       }
       tx.delete(doc(db, 'registrations', reg.id))
     })
+    // Retirer l'activité de planning liée
+    await removeParcoursActivite(reg.id)
     setDeleteConfirm(null)
   }
 
   const handleCancelSession = async () => {
     setCancelling(true)
     await updateDoc(doc(db, 'sessions', sessionId), { status: 'cancelled' })
+    // Retirer du planning des participants toutes les activités de cette séance
+    await removeParcoursActivitesForSession(sessionId)
     setSession((s) => s ? { ...s, status: 'cancelled' } : s)
     setShowCancelConfirm(false)
     setCancelling(false)
@@ -224,6 +318,8 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
       }
       // Supprimer le contenu de séance s'il existe
       await deleteDoc(doc(db, 'session_content', sessionId)).catch(() => {})
+      // Retirer du planning toutes les activités liées
+      await removeParcoursActivitesForSession(sessionId)
       // Supprimer la séance
       await deleteDoc(doc(db, 'sessions', sessionId))
       router.push('/admin/parcours-sportif')
@@ -278,7 +374,7 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     setAddError('')
     setAddingParticipant(true)
     try {
-      const { notify } = await runTransaction(db, async (tx) => {
+      const { notify, regId } = await runTransaction(db, async (tx) => {
         const sessionRef = doc(db, 'sessions', sessionId)
         const snap = await tx.get(sessionRef)
         if (!snap.exists()) throw new Error('Séance introuvable')
@@ -296,15 +392,24 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
           paymentStatus: 'pending',
           attendance: 'unknown',
           registeredAt: Timestamp.now(),
-          uniqueToken: crypto.randomUUID(),
+          uniqueToken: randomUUID(),
         })
         tx.update(sessionRef, {
           registeredCount: newCount,
           status: newCount >= data.maxSpots ? 'full' : 'open',
         })
         const notify = data.maxSpots > 10 && newCount === data.maxSpots - 10
-        return { notify }
+        return { notify, regId: regRef.id }
       })
+      // Si le participant ajouté possède un compte (email connu), ajouter à son planning
+      if (regId && session && quickForm.email.trim()) {
+        try {
+          const uSnap = await getDocs(query(collection(db, 'users'), where('email', '==', quickForm.email.trim().toLowerCase())))
+          if (!uSnap.empty) {
+            await addParcoursActivite({ userId: uSnap.docs[0].id, registrationId: regId, sessionId, session: session as any })
+          }
+        } catch {}
+      }
       if (notify) {
         fetch('/api/push/send', {
           method: 'POST',
@@ -337,6 +442,34 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     }
   }
 
+  const openDirectSMS = (phone: string) => {
+    if (!phone) return
+    window.open(`sms:${phone.replace(/\s/g, '')}`, '_blank')
+  }
+
+  const sendCancelSmsToAll = () => {
+    const publicUrl = `${window.location.origin}/parcours-sportif`
+    const reasonLine = cancelReason ? `\n\nRaison : ${cancelReason}.` : ''
+    const body = `Bonjour,
+
+Au vu du nombre d'inscrits pour le Parcours Sportif de ce soir et de la météo annoncée, je suis contraint d'annuler la séance.${reasonLine}
+J'en suis sincèrement désolé et vous donne rendez-vous lors du prochain Parcours.
+
+Voici le lien du formulaire d'inscription pour voir les prochaines dates programmées : ${publicUrl}.
+
+Bonne journée et à très vite.
+
+Teddy`
+    const recipients = registrations.filter((r) => r.phone?.trim()).map((r) => r.phone!.replace(/\s/g, ''))
+    if (!recipients.length) { alert('Aucun participant avec un numéro de téléphone.'); return }
+    // On ouvre les SMS un par un (chaque lien SMS) — sur mobile iOS/Android l'app SMS accepte un seul destinataire
+    // Stratégie : ouvrir une popup pour chaque numéro séparément
+    // Sur iOS/Android, on utilise "sms:num1,num2" qui marche sur certains appareils
+    const multiSms = `sms:${recipients.join(',')}?body=${encodeURIComponent(body)}`
+    window.open(multiSms, '_blank')
+    setShowCancelSmsModal(false)
+  }
+
   // Numéro à utiliser pour joindre la personne sur un impayé :
   // son propre numéro, sinon le numéro de l'inscription groupée (réservation)
   const effectiveContactPhone = (r: Registration): string => r.phone?.trim() || r.bookingPhone?.trim() || ''
@@ -345,59 +478,36 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const openSMS = (reg: Registration) => {
     const phone = effectiveContactPhone(reg)
     if (!phone) return
+    const template = buildImpayeTemplate(ribPhone, ribIban, ribBic)
     // Si on passe par le numéro de réservation, on personnalise le rappel
     const body = usesBookingPhone(reg)
-      ? `Bonjour,\n\nConcernant l'inscription de ${reg.firstName} ${reg.lastName} au Parcours Sportif : il semble que le règlement n'ait pas été effectué.\n${SMS_TEMPLATE}`
-      : SMS_TEMPLATE
+      ? `Bonjour,\n\nConcernant l'inscription de ${reg.firstName} ${reg.lastName} au Parcours Sportif : il semble que le règlement n'ait pas été effectué.\n${template}`
+      : template
     window.open(`sms:${phone}?body=${encodeURIComponent(body)}`, '_blank')
   }
 
-  const handleReminderSMS = async (reg: Registration) => {
+  const handleReminderSMS = (reg: Registration) => {
     if (!session || !reg.phone) return
     const heure = fmtHeure(session.date)
     const locationDisplay = session.locationLabel || session.location || session.locationCoords || ''
     const link = `${window.location.origin}/parcours-sportif`
+    const manageLink = reg.uniqueToken ? `${window.location.origin}/mon-inscription/${reg.uniqueToken}` : ''
+    const manageSection = manageLink
+      ? `\n\nPour voir ou gérer votre inscription (vous désinscrire si besoin) : ${manageLink}.`
+      : ''
 
-    let unpaidSection = ''
-    try {
-      if (reg.email) {
-        const prevSnap = await getDocs(
-          query(collection(db, 'registrations'),
-            where('email', '==', reg.email.toLowerCase()),
-            where('paymentStatus', '==', 'pending')
-          )
-        )
-        const prevRegs = prevSnap.docs
-          .map((d) => ({ id: d.id, ...d.data() } as Registration))
-          .filter((r) => r.sessionId !== sessionId)
-
-        if (prevRegs.length > 0) {
-          const sessionSnaps = await Promise.all(
-            prevRegs.map((r) => getDoc(doc(db, 'sessions', r.sessionId)))
-          )
-          const pastUnpaid = sessionSnaps
-            .map((snap, i) => ({ snap, r: prevRegs[i] }))
-            .filter(({ snap }) => snap.exists() && (snap.data().date?.toMillis?.() ?? 0) < Date.now())
-            .sort((a, b) => (b.snap.data().date?.seconds ?? 0) - (a.snap.data().date?.seconds ?? 0))
-
-          if (pastUnpaid.length > 0) {
-            const dateStr = pastUnpaid[0].snap.data().date.toDate().toLocaleDateString('fr-FR', {
-              day: '2-digit', month: '2-digit', year: 'numeric',
-            })
-            unpaidSection = `\n\n⚠️ Rappel d'impayé lors du dernier parcours : ${dateStr}. L'impayé peut être réglé par virement sur le compte suivant :\nIBAN : FR76 1600 6200 1100 8401 5620 604\nBIC : AGRIFRPP860`
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Unpaid check error:', err)
-    }
+    // Rappel d'impayé d'un parcours précédent (pré-calculé au chargement → disponible instantanément)
+    const unpaidDate = reg.email ? pastUnpaidByEmail[reg.email.toLowerCase()] : undefined
+    const unpaidSection = unpaidDate
+      ? `\n\n⚠️ Rappel d'impayé lors du dernier parcours : ${unpaidDate}. L'impayé peut être réglé par virement sur le compte suivant :\nIBAN : ${ribIban}\nBIC : ${ribBic}`
+      : ''
 
     const sms = `Bonjour,
 
 Rappel de votre inscription pour le Parcours Sportif d'aujourd'hui à ${heure}.
 Lieu du rendez-vous : ${locationDisplay}.
 
-Si vous avez un imprévu, merci de revenir vers moi au plus vite.${unpaidSection}
+Si vous avez un imprévu, merci de revenir vers moi au plus vite.${unpaidSection}${manageSection}
 
 Je vous joins également le formulaire d'inscription aux Parcours pour que vous l'ayez à porté de main pour les prochaines dates si vous souhaitez y participer : ${link}.
 
@@ -405,7 +515,33 @@ Bonne journée et à toute à l'heure.
 
 Teddy`
 
-    window.open(`sms:${reg.phone}?body=${encodeURIComponent(sms)}`, '_blank')
+    // Ouvrir l'app SMS IMMÉDIATEMENT, dans le geste de clic (sinon bloqué sur mobile)
+    window.location.href = `sms:${reg.phone}?body=${encodeURIComponent(sms)}`
+
+    // Notification push + in-app au participant s'il a un compte (async, sans bloquer l'ouverture du SMS)
+    void (async () => {
+      try {
+        let targetUid = reg.userId || null
+        if (!targetUid && reg.email) {
+          const uSnap = await getDocs(query(collection(db, 'users'), where('email', '==', reg.email.toLowerCase())))
+          if (!uSnap.empty) targetUid = uSnap.docs[0].id
+        }
+        if (targetUid) {
+          fetch('/api/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: targetUid,
+              persist: true,
+              type: 'PARCOURS_RAPPEL',
+              title: 'Rappel Parcours Sportif',
+              body: `Rappel de votre séance "${session.title}"${heure ? ` aujourd'hui à ${heure}` : ''}. Lieu : ${locationDisplay}.`,
+              url: '/mes-parcours',
+            }),
+          }).catch(() => {})
+        }
+      } catch {}
+    })()
   }
 
   if (!isAdmin) return <div className="flex items-center justify-center py-20"><p className="text-gray-500">Accès réservé aux administrateurs.</p></div>
@@ -415,6 +551,9 @@ Teddy`
   const isCancelled = session.status === 'cancelled'
   const coordsLink = parseCoordsLink(session.locationCoords)
   const locationDisplay = session.locationLabel || session.location || session.locationCoords || '—'
+  // La séance est "passée" si elle a eu lieu un jour antérieur (une séance du jour même n'est pas encore passée)
+  const startOfTodayMs = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() })()
+  const isPast = session.date.toMillis() < startOfTodayMs
   const unpaidWithPhone = registrations.filter((r) => r.paymentStatus === 'pending' && effectiveContactPhone(r))
 
   const filteredRegistrations = registrations.filter((r) => {
@@ -461,6 +600,13 @@ Teddy`
             className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">
             {togglingHidden ? '...' : session.hidden ? 'Afficher' : 'Masquer'}
           </button>
+          {/* SMS Annulation */}
+          {registrations.some((r) => r.phone) && (
+            <button onClick={() => setShowCancelSmsModal(true)}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 transition">
+              SMS Annulation
+            </button>
+          )}
           {/* Modifier */}
           {!isCancelled && (
             <button onClick={() => setShowEdit((v) => !v)}
@@ -754,8 +900,8 @@ Teddy`
             </div>
           )}
 
-          {/* SMS groupés */}
-          {unpaidWithPhone.length > 0 && (
+          {/* SMS groupés — uniquement une fois la séance passée (jour antérieur) */}
+          {isPast && unpaidWithPhone.length > 0 && (
             <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
               <p className="text-xs font-semibold text-orange-700 mb-1">
                 <ChatBubbleLeftIcon className="w-3.5 h-3.5 inline mr-1" />
@@ -840,7 +986,12 @@ Teddy`
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="divide-y divide-gray-50">
                 {filteredRegistrations.map((reg) => (
-                  <div key={reg.id} className="p-4">
+                  <div
+                    key={reg.id}
+                    id={`reg-${reg.id}`}
+                    style={highlightedId === reg.id ? { boxShadow: 'inset 4px 0 0 0 #f59e0b' } : undefined}
+                    className={`p-4 transition-all duration-700 ${highlightedId === reg.id ? 'bg-amber-50' : ''}`}
+                  >
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -874,7 +1025,10 @@ Teddy`
                           </div>
                         )}
                         {reg.suggestions && (
-                          <p className="text-xs text-gray-400 italic mt-1 bg-gray-50 rounded-lg px-2 py-1">« {reg.suggestions} »</p>
+                          <div className="mt-2 flex items-start gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+                            <svg className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3-3-3z" /></svg>
+                            <p className="text-xs font-medium text-amber-800">« {reg.suggestions} »</p>
+                          </div>
                         )}
                       </div>
                       <div className="flex flex-col items-end gap-2 shrink-0">
@@ -907,6 +1061,13 @@ Teddy`
                         <XCircleIcon className="w-3.5 h-3.5" />Absent
                       </button>
                       {reg.phone && (
+                        <button onClick={() => openDirectSMS(reg.phone)}
+                          title="Ouvrir un SMS vide vers ce contact"
+                          className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
+                          <ChatBubbleLeftIcon className="w-3.5 h-3.5" />SMS
+                        </button>
+                      )}
+                      {reg.phone && (
                         <button onClick={() => handleReminderSMS(reg)}
                           className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition">
                           <ChatBubbleLeftIcon className="w-3.5 h-3.5" />Rappel
@@ -928,6 +1089,52 @@ Teddy`
           )}
         </div>
       </div>
+
+      {/* ── Modal SMS Annulation ── */}
+      {showCancelSmsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setShowCancelSmsModal(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-800">SMS Annulation</h3>
+            <p className="text-sm text-gray-500">
+              Envoi à <strong>{registrations.filter((r) => r.phone).length}</strong> participant(s) avec numéro de téléphone.
+            </p>
+
+            {/* Raison */}
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-2">Raison (optionnelle)</p>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {CANCEL_REASON_PRESETS.map((preset) => (
+                  <button key={preset} type="button"
+                    onClick={() => setCancelReason(cancelReason === preset ? '' : preset)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${cancelReason === preset ? 'bg-red-600 text-white border-red-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <input type="text" value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Ou saisissez une raison personnalisée…"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
+            </div>
+
+            {/* Aperçu */}
+            <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-500 whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto">
+              {`Bonjour,\n\nAu vu du nombre d'inscrits pour le Parcours Sportif de ce soir et de la météo annoncée, je suis contraint d'annuler la séance.${cancelReason ? `\n\nRaison : ${cancelReason}.` : ''}\nJ'en suis sincèrement désolé et vous donne rendez-vous lors du prochain Parcours.\n\nVoici le lien du formulaire d'inscription pour voir les prochaines dates programmées : [lien public].\n\nBonne journée et à très vite.\n\nTeddy`}
+            </div>
+
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={() => setShowCancelSmsModal(false)}
+                className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm hover:bg-gray-50 transition">
+                Annuler
+              </button>
+              <button type="button" onClick={sendCancelSmsToAll}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold transition">
+                Envoyer les SMS
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

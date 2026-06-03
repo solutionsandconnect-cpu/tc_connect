@@ -141,12 +141,22 @@ service cloud.firestore {
     }
 
     // ─── Belote (accès partagé entre utilisateurs connectés) ───────────────────
+    // Données privées à chaque utilisateur : créateur OU admin (admin pour le nettoyage à l'archivage)
     match /belote_teams/{document} {
-      allow read, write, delete: if request.auth != null;
+      allow read, update, delete: if request.auth != null && (
+        resource.data.createdBy == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin'
+      );
+      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
     }
     match /belote_games/{document} {
-      allow read, write, delete: if request.auth != null;
+      allow read, update, delete: if request.auth != null && (
+        resource.data.createdBy == request.auth.uid ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin'
+      );
+      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
     }
+    // Tours : liés à une partie ; accès authentifié (toujours consultés via une partie possédée)
     match /belote_rounds/{document} {
       allow read, write, delete: if request.auth != null;
     }
@@ -253,13 +263,20 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin'
       );
       allow create: if request.auth != null;
-      allow update: if request.auth != null &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
-      // Suppression : l'admin OU le titulaire de la souscription (se désabonner)
-      allow delete: if request.auth != null && (
-        resource.data.userUid == request.auth.uid ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin'
+      // Mise à jour : l'admin (tout) OU le titulaire UNIQUEMENT pour se désabonner
+      // (passage en 'cancelled', sans pouvoir changer d'app ni se ré-attribuer la souscription).
+      allow update: if request.auth != null && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin' ||
+        (
+          resource.data.userUid == request.auth.uid &&
+          request.resource.data.statut == 'cancelled' &&
+          request.resource.data.appId == resource.data.appId &&
+          request.resource.data.userUid == resource.data.userUid
+        )
       );
+      // Suppression : réservée à l'admin (les utilisateurs n'effacent plus, on garde une trace).
+      allow delete: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
     }
 
     match /urssaf_periodes/{document} {
@@ -275,6 +292,13 @@ service cloud.firestore {
       match /messages_messagerie/{msgId} {
         allow read, create: if request.auth != null;
       }
+    }
+
+    // Paramètres globaux de l'app (Parcours Sportif, etc.) — lecture publique, écriture admin
+    match /settings/{document} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
     }
 
     match /{document=**} {

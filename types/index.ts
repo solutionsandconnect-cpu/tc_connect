@@ -53,6 +53,7 @@ export interface User {
   contactUrgenceRelation?: string
   lastLoginAt?: Timestamp
   accueilShortcuts?: string[]
+  documentsSeenAt?: Timestamp
 }
 
 // Collection : team
@@ -196,6 +197,8 @@ export interface Notification {
   date_declenchement: Timestamp
   action_via_planning: string
   type_vue_pour_cond_action: string
+  url?: string
+  ref_planning?: any
 }
 
 // Collection : calendrier_team
@@ -629,6 +632,23 @@ export interface StoreLimiteConfig {
 
 export type StoreSubStatut = 'active' | 'suspended' | 'cancelled' | 'pending'
 
+export type StoreSubEventType =
+  | 'created'        // demande de souscription
+  | 'activated'      // accès validé / activé par l'admin
+  | 'renewed'        // paiement validé / renouvelé
+  | 'reminder'       // relance envoyée
+  | 'suspended'      // suspendu (échéance dépassée ou admin)
+  | 'cancelled'      // annulé / arrêté
+  | 'unsubscribed'   // désabonnement par l'utilisateur
+  | 'archived'       // archivé (retiré des alertes)
+  | 'cleaned'        // données purgées
+
+export interface StoreSubEvent {
+  type: StoreSubEventType
+  date: Timestamp
+  note?: string
+}
+
 export interface StoreSubscription {
   id: string
   appId: string
@@ -637,6 +657,7 @@ export interface StoreSubscription {
   clientNom: string
   clientEmail?: string
   userUid?: string         // UID TC Connect — pour contrôle d'accès
+  prix?: number            // tarif au moment de la commande (apps payantes)
   statut: StoreSubStatut
   dateDebut: Timestamp
   dateFin?: Timestamp | null
@@ -646,6 +667,9 @@ export interface StoreSubscription {
   limites?: Record<string, number>
   nextPaymentDate?: Timestamp | null   // prochaine échéance de paiement (apps payantes)
   lastPaymentAt?: Timestamp | null      // dernier paiement validé
+  archivedAt?: Timestamp | null         // date d'archivage (abonnement terminé/arrêté)
+  dataCleanedAt?: Timestamp | null      // date de purge des données de l'utilisateur (après archivage)
+  events?: StoreSubEvent[]              // historique complet (demande, validation, ...)
   createdBy: string
   createdAt: Timestamp
   updatedAt?: Timestamp

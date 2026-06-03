@@ -333,7 +333,7 @@ export default function LoginPage() {
 
             {resetError && <p className="px-6 text-red-500 text-sm">{resetError}</p>}
             {resetSent && (
-              <p className="px-6 text-green-600 text-sm">Email envoyé ! Vérifiez votre boîte mail.</p>
+              <p className="px-6 text-green-600 text-sm">Email envoyé ! Vérifiez votre boîte mail ainsi que vos courriers indésirables.</p>
             )}
 
             {/* Button */}

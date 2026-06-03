@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { doc, updateDoc } from 'firebase/firestore'
-import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth'
+import { updatePassword, EmailAuthProvider, reauthenticateWithCredential, verifyBeforeUpdateEmail } from 'firebase/auth'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { uploadImage } from '@/lib/uploadImage'
@@ -30,6 +30,7 @@ import {
   PencilIcon, ArrowRightOnRectangleIcon,
   UserCircleIcon, EnvelopeIcon, PhoneIcon, ShieldCheckIcon,
   BellIcon, MapPinIcon, DocumentTextIcon, TrashIcon,
+  EyeIcon, EyeSlashIcon,
 } from '@heroicons/react/24/outline'
 
 const toUpperName = (s: string) => s.toUpperCase()
@@ -50,6 +51,12 @@ export default function ProfilPage() {
     if (searchParams.get('setup') === '1') setShowEditModal(true)
   }, [])
   const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [showPwdCurrent, setShowPwdCurrent] = useState(false)
+  const [showPwdNext, setShowPwdNext] = useState(false)
+  const [showPwdConfirm, setShowPwdConfirm] = useState(false)
+  const [showEmailModal, setShowEmailModal] = useState(false)
+  const [showEmailPwd, setShowEmailPwd] = useState(false)
+  const [emailForm, setEmailForm] = useState({ newEmail: '', confirmEmail: '', currentPassword: '' })
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
@@ -91,7 +98,7 @@ export default function ProfilPage() {
       indicatif_tel: form.indicatif_tel,
       phone_number: form.phone_number,
       genre: form.genre,
-      display_name: `${form.prenom} ${form.nom}`,
+      display_name: `${form.nom} ${form.prenom}`,
       date_naissance: dnTs,
       adresse_postale: form.adresse_postale,
       rue_adresse: form.rue_adresse,
@@ -142,6 +149,53 @@ export default function ProfilPage() {
       setTimeout(() => setSuccessMsg(''), 3000)
     } catch {
       setErrorMsg('Mot de passe actuel incorrect')
+    }
+  }
+
+  const handleChangeEmail = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErrorMsg('')
+    if (!currentUser || !currentUser.email) return
+
+    // Validations locales avant d'appeler Firebase
+    if (emailForm.newEmail === currentUser.email) {
+      setErrorMsg("C'est déjà votre adresse email actuelle.")
+      return
+    }
+    if (emailForm.newEmail !== emailForm.confirmEmail) {
+      setErrorMsg('Les deux adresses email ne correspondent pas.')
+      return
+    }
+    if (!emailForm.currentPassword) {
+      setErrorMsg('Veuillez saisir votre mot de passe actuel.')
+      return
+    }
+
+    try {
+      const credential = EmailAuthProvider.credential(currentUser.email, emailForm.currentPassword)
+      await reauthenticateWithCredential(currentUser, credential)
+      const actionCodeSettings = {
+        url: `${window.location.origin}/profil`,
+        handleCodeInApp: false,
+      }
+      await verifyBeforeUpdateEmail(currentUser, emailForm.newEmail, actionCodeSettings)
+      setShowEmailModal(false)
+      setEmailForm({ newEmail: '', confirmEmail: '', currentPassword: '' })
+      setShowEmailPwd(false)
+      setSuccessMsg("Email de vérification envoyé à votre nouvelle adresse. Vérifiez aussi vos courriers indésirables (spam). Le changement sera effectif après avoir cliqué le lien.")
+      setTimeout(() => setSuccessMsg(''), 15000)
+    } catch (err: any) {
+      if (err?.code === 'auth/wrong-password' || err?.code === 'auth/invalid-credential') {
+        setErrorMsg('Mot de passe incorrect. Veuillez vérifier votre saisie.')
+      } else if (err?.code === 'auth/email-already-in-use') {
+        setErrorMsg('Cette adresse email est déjà utilisée par un autre compte.')
+      } else if (err?.code === 'auth/requires-recent-login') {
+        setErrorMsg('Session expirée. Déconnectez-vous et reconnectez-vous puis réessayez.')
+      } else if (err?.code === 'auth/invalid-email') {
+        setErrorMsg('Adresse email invalide.')
+      } else {
+        setErrorMsg(`Erreur : ${err?.code ?? 'inconnue'}`)
+      }
     }
   }
 
@@ -252,14 +306,19 @@ export default function ProfilPage() {
             <div className="space-y-3">
               <InfoRow label="Prénom" value={userProfile?.prenom} />
               <InfoRow label="Nom" value={userProfile?.nom} />
-              <div className="flex items-center justify-between py-2 border-b border-gray-50">
-                <span className="text-sm text-gray-500 flex items-center gap-1.5">
-                  <EnvelopeIcon className="w-4 h-4" /> Email
+              <div className="flex items-center justify-between gap-3 py-2 border-b border-gray-50">
+                <span className="text-sm text-gray-500 flex items-center gap-1.5 shrink-0">
+                  <EnvelopeIcon className="w-4 h-4 shrink-0" /> Email
                 </span>
-                <a href={`mailto:${currentUser?.email}`}
-                  className="text-sm text-blue-600 hover:underline font-medium">
-                  {currentUser?.email || '—'}
-                </a>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm text-gray-800 font-medium truncate" title={currentUser?.email || ''}>{currentUser?.email || '—'}</span>
+                  <button
+                    onClick={() => { setEmailForm({ newEmail: '', confirmEmail: '', currentPassword: '' }); setErrorMsg(''); setShowEmailPwd(false); setShowEmailModal(true) }}
+                    className="text-xs text-blue-600 border border-blue-200 px-2.5 py-1 rounded-lg hover:bg-blue-50 transition font-medium shrink-0"
+                  >
+                    Modifier
+                  </button>
+                </div>
               </div>
               <div className="flex items-center justify-between py-2 border-b border-gray-50">
                 <span className="text-sm text-gray-500 flex items-center gap-1.5">
@@ -566,36 +625,108 @@ export default function ProfilPage() {
       </Modal>
 
       {/* Modal changement mot de passe */}
-      <Modal isOpen={showPasswordModal} onClose={() => { setShowPasswordModal(false); setErrorMsg('') }}
+      <Modal isOpen={showPasswordModal} onClose={() => { setShowPasswordModal(false); setErrorMsg(''); setShowPwdCurrent(false); setShowPwdNext(false); setShowPwdConfirm(false) }}
         title="Changer mon mot de passe" size="sm">
         <form onSubmit={handleChangePassword} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Mot de passe actuel</label>
-            <input type="password" value={passwordForm.current}
-              onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })} required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <div className="relative">
+              <input type={showPwdCurrent ? 'text' : 'password'} value={passwordForm.current}
+                onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })} required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <button type="button" onClick={() => setShowPwdCurrent(!showPwdCurrent)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                {showPwdCurrent ? <EyeIcon className="w-4 h-4" /> : <EyeSlashIcon className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Nouveau mot de passe</label>
-            <input type="password" value={passwordForm.next}
-              onChange={(e) => setPasswordForm({ ...passwordForm, next: e.target.value })} required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <div className="relative">
+              <input type={showPwdNext ? 'text' : 'password'} value={passwordForm.next}
+                onChange={(e) => setPasswordForm({ ...passwordForm, next: e.target.value })} required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <button type="button" onClick={() => setShowPwdNext(!showPwdNext)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                {showPwdNext ? <EyeIcon className="w-4 h-4" /> : <EyeSlashIcon className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Confirmer</label>
-            <input type="password" value={passwordForm.confirm}
-              onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })} required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <div className="relative">
+              <input type={showPwdConfirm ? 'text' : 'password'} value={passwordForm.confirm}
+                onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })} required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <button type="button" onClick={() => setShowPwdConfirm(!showPwdConfirm)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                {showPwdConfirm ? <EyeIcon className="w-4 h-4" /> : <EyeSlashIcon className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
           {errorMsg && <p className="text-red-500 text-sm">{errorMsg}</p>}
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={() => { setShowPasswordModal(false); setErrorMsg('') }}
+            <button type="button" onClick={() => { setShowPasswordModal(false); setErrorMsg(''); setShowPwdCurrent(false); setShowPwdNext(false); setShowPwdConfirm(false) }}
               className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
               Annuler
             </button>
             <button type="submit"
               className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
               Enregistrer
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal changement email */}
+      <Modal isOpen={showEmailModal} onClose={() => { setShowEmailModal(false); setErrorMsg(''); setEmailForm({ newEmail: '', confirmEmail: '', currentPassword: '' }); setShowEmailPwd(false) }}
+        title="Changer mon adresse email" size="sm">
+        <form onSubmit={handleChangeEmail} className="space-y-4">
+          <p className="text-sm text-gray-500">
+            Un email de vérification sera envoyé à votre nouvelle adresse. Le changement sera effectif après avoir cliqué le lien.
+          </p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nouvelle adresse email</label>
+            <input type="email" value={emailForm.newEmail}
+              onChange={(e) => setEmailForm({ ...emailForm, newEmail: e.target.value })} required
+              placeholder="nouvelle@email.com"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Confirmer la nouvelle adresse email</label>
+            <input type="email" value={emailForm.confirmEmail}
+              onChange={(e) => setEmailForm({ ...emailForm, confirmEmail: e.target.value })} required
+              placeholder="nouvelle@email.com"
+              className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                emailForm.confirmEmail && emailForm.confirmEmail !== emailForm.newEmail
+                  ? 'border-red-400 bg-red-50'
+                  : 'border-gray-300'
+              }`} />
+            {emailForm.confirmEmail && emailForm.confirmEmail !== emailForm.newEmail && (
+              <p className="text-xs text-red-500 mt-1">Les adresses ne correspondent pas</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mot de passe actuel (confirmation)</label>
+            <div className="relative">
+              <input type={showEmailPwd ? 'text' : 'password'} value={emailForm.currentPassword}
+                onChange={(e) => setEmailForm({ ...emailForm, currentPassword: e.target.value })} required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <button type="button" onClick={() => setShowEmailPwd(!showEmailPwd)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                {showEmailPwd ? <EyeIcon className="w-4 h-4" /> : <EyeSlashIcon className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          {errorMsg && <p className="text-red-500 text-sm">{errorMsg}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={() => { setShowEmailModal(false); setErrorMsg(''); setEmailForm({ newEmail: '', confirmEmail: '', currentPassword: '' }); setShowEmailPwd(false) }}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button type="submit"
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+              Envoyer la vérification
             </button>
           </div>
         </form>

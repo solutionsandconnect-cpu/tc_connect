@@ -1254,6 +1254,7 @@ function ClientRow({ client, isAdmin, abonnements, aboLoading, collapseAllTick, 
   onEditAbo: (a: Abonnement) => void; onDeleteAbo: (id: string) => void;
   onViewAbo: (a: Abonnement, linkedUserId: string | undefined) => void;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const highlightRef = useRef<HTMLDivElement>(null);
 
@@ -1292,49 +1293,76 @@ function ClientRow({ client, isAdmin, abonnements, aboLoading, collapseAllTick, 
 
   return (
     <div className="border-b last:border-0">
-      <div className="px-5 py-4 flex items-center gap-4 hover:bg-gray-50 transition cursor-pointer" onClick={() => setOpen((o) => !o)}>
-        <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-semibold text-sm shrink-0">{initials}</div>
+      <div className="px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition cursor-pointer" onClick={() => setOpen((o) => !o)}>
+        {/* Avatar */}
+        <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-semibold text-sm shrink-0 mt-0.5">{initials}</div>
+
+        {/* Contenu central */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="font-medium text-sm text-gray-900">{client.nom} {client.prenom}</div>
+          {/* Ligne 1 : nom + badges statut/actif */}
+          <div className="flex items-center flex-wrap gap-1.5 leading-tight">
+            <span className="font-medium text-sm text-gray-900 mr-0.5">{client.nom} {client.prenom}</span>
             {client.statut && (
-              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${STATUT_STYLE[client.statut] ?? "bg-gray-100 text-gray-500"}`}>{client.statut}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium leading-none ${STATUT_STYLE[client.statut] ?? "bg-gray-100 text-gray-500"}`}>{client.statut}</span>
+            )}
+            {!client.actif && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-medium leading-none">Inactif</span>
             )}
           </div>
-          <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-0.5">
+
+          {/* Ligne 2 : sport / profession */}
+          {client.sportPratique && (
+            <div className="text-xs text-gray-400 mt-0.5 truncate">{client.sportPratique}{client.niveauSportif ? ` · ${client.niveauSportif}` : ""}{client.distanceKm ? ` · ${client.distanceKm} km` : ""}</div>
+          )}
+
+          {/* Ligne 3 : abonnements + liens rapides */}
+          <div className="flex items-center flex-wrap gap-1.5 mt-1">
+            {!loading && actifCount > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium leading-none">{actifCount} actif{actifCount > 1 ? "s" : ""}</span>}
+            {!loading && inactifCount > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-medium leading-none">{inactifCount} inactif{inactifCount > 1 ? "s" : ""}</span>}
+            {!loading && prospectCount > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium leading-none">{prospectCount} prospect{prospectCount > 1 ? "s" : ""}</span>}
+            {!loading && hasIncomplete && <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-medium leading-none">⚠ Incomplet</span>}
             {client.email && (
-              <a href={`mailto:${client.email}`} onClick={(e) => e.stopPropagation()} title={client.email} className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition"><EnvelopeIcon className="w-3 h-3 shrink-0" />Mail</a>
+              <a href={`mailto:${client.email}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition leading-none">
+                <EnvelopeIcon className="w-3 h-3 shrink-0" />Mail
+              </a>
             )}
             {client.telephone && (
-              <span className="flex items-center gap-1.5">
-                <a href={`tel:${client.telephone}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md border border-green-200 text-green-700 hover:bg-green-50 transition"><PhoneIcon className="w-3 h-3" />Appeler</a>
-                <a href={`sms:${client.telephone}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50 transition"><ChatBubbleLeftEllipsisIcon className="w-3 h-3" />SMS</a>
-              </span>
+              <>
+                <a href={`tel:${client.telephone}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border border-green-200 text-green-700 hover:bg-green-50 transition leading-none">
+                  <PhoneIcon className="w-3 h-3 shrink-0" />Tel
+                </a>
+                <a href={`sms:${client.telephone}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 transition leading-none">
+                  <ChatBubbleLeftEllipsisIcon className="w-3 h-3 shrink-0" />SMS
+                </a>
+              </>
             )}
           </div>
-          {client.sportPratique && <div className="text-xs text-gray-400 mt-0.5">{client.sportPratique}{client.niveauSportif ? ` · ${client.niveauSportif}` : ""}{client.distanceKm ? ` · ${client.distanceKm} km` : ""}</div>}
-          {!loading && abonnements.length > 0 && (
-            <div className="flex items-center gap-1 mt-1 flex-wrap">
-              {actifCount > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700">{actifCount} actif{actifCount > 1 ? "s" : ""}</span>}
-              {inactifCount > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-600">{inactifCount} inactif{inactifCount > 1 ? "s" : ""}</span>}
-              {prospectCount > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">{prospectCount} prospect{prospectCount > 1 ? "s" : ""}</span>}
-              {hasIncomplete && <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700">⚠ Incomplet</span>}
-            </div>
-          )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {!client.actif && <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-medium">Inactif</span>}
+
+        {/* Actions droite : icônes uniquement + chevron */}
+        <div className="flex items-center gap-1 shrink-0 mt-0.5" onClick={(e) => e.stopPropagation()}>
           {isAdmin && (
             <>
-              <button onClick={(e) => { e.stopPropagation(); onEdit(isSCOnly(abonnements)); }} className="p-1.5 rounded-lg hover:bg-gray-200 text-gray-500 transition" title="Modifier">
+              {(client as any).linkedUserId && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); router.push(`/clients/${(client as any).linkedUserId}/stats`) }}
+                  className="p-1.5 rounded-lg hover:bg-purple-50 text-purple-500 transition"
+                  title="Évolution"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                </button>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); onEdit(isSCOnly(abonnements)); }} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition" title="Modifier">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
               </button>
-              <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1.5 rounded-lg hover:bg-red-100 text-gray-400 hover:text-red-500 transition" title="Supprimer">
+              <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition" title="Supprimer">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
               </button>
             </>
           )}
-          <svg className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+          <div className="p-1.5 pointer-events-none">
+            <svg className={`w-4 h-4 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+          </div>
         </div>
       </div>
       {open && (

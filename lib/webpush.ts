@@ -1,8 +1,12 @@
 import webpush from 'web-push'
 import { getAdminDb } from '@/lib/firebaseAdmin'
 
+// web-push exige un "subject" au format mailto: ou https: — on normalise un email nu.
+const rawSubject = process.env.VAPID_EMAIL || ''
+const vapidSubject = /^(mailto:|https?:)/.test(rawSubject) ? rawSubject : `mailto:${rawSubject}`
+
 webpush.setVapidDetails(
-  process.env.VAPID_EMAIL!,
+  vapidSubject,
   process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!,
   process.env.VAPID_PRIVATE_KEY!,
 )

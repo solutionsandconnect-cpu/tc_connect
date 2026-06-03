@@ -23,6 +23,7 @@ export interface BeloteTeam {
   id: string
   name: string                 // auto-généré depuis les prénoms : "Marie & Pierre"
   players: BelotePlayer[]      // 2 joueurs
+  createdBy?: string           // UID du créateur (données privées à chaque utilisateur)
   createdAt: Timestamp
 }
 
@@ -38,6 +39,7 @@ export interface BeloteGame {
   status: BeloteGameStatus
   winnerId: string | null
   totalScore: Score
+  createdBy?: string           // UID du créateur (pour nettoyage des données à l'archivage)
   createdAt: Timestamp
   finishedAt: Timestamp | null
 }

@@ -6,11 +6,13 @@ import { useAuth } from "@/context/AuthContext";
 import { useStoreApps } from "@/hooks/useStoreApps";
 import { useMyStoreSubscriptions } from "@/hooks/useStoreSubscriptions";
 import { usePendingSubscriptions } from "@/hooks/usePendingSubscriptions";
-import { createStoreSubscription, listenAppReviews, upsertReview, deleteReview, deleteStoreSubscription, notifyAdmins } from "@/lib/storeService";
-import { doc, updateDoc, Timestamp } from "firebase/firestore";
+import { createStoreSubscription, listenAppReviews, upsertReview, deleteReview, updateSubWithEvent, notifyAdmins, orderRef, isSubExpired } from "@/lib/storeService";
+import { doc, updateDoc, getDoc, Timestamp, collection, addDoc, getDocs, query, where, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { copyText } from "@/lib/clipboard";
+import Modal from "@/components/ui/Modal";
 import { DEFAULT_DROITS } from "@/types";
-import type { StoreApp, StoreSubStatut, StoreReview } from "@/types";
+import type { StoreApp, StoreSubStatut, StoreReview, StoreSubscription } from "@/types";
 
 const STATUT_LABEL: Record<StoreSubStatut, string> = {
   active: "Actif",
@@ -41,6 +43,26 @@ export default function BoutiquePage() {
   const [requesting, setRequesting] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const pendingCount = usePendingSubscriptions();
+
+  // RIB pour règlement par virement (apps payantes en attente)
+  const [ribIban, setRibIban] = useState("");
+  const [ribBic, setRibBic] = useState("");
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [commandeSub, setCommandeSub] = useState<StoreSubscription | null>(null);
+  useEffect(() => {
+    getDoc(doc(db, "settings", "boutique")).then((snap) => {
+      if (snap.exists()) {
+        const d = snap.data();
+        if (d.iban) setRibIban(d.iban);
+        if (d.bic) setRibBic(d.bic);
+      }
+    }).catch(() => {});
+  }, []);
+  const copyField = async (value: string, key: string) => {
+    await copyText(value);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
 
   // Check boutique access for non-admin
   const boutiqueAccess = isAdmin || (userProfile?.droits?.boutique ?? DEFAULT_DROITS.boutique);
@@ -73,8 +95,9 @@ export default function BoutiquePage() {
     return true;
   });
 
+  // On ignore les abonnements annulés (gardés pour l'historique admin) : l'utilisateur peut re-souscrire.
   const getMySub = (appId: string) =>
-    subscriptions.find((s) => s.appId === appId) ?? null;
+    subscriptions.find((s) => s.appId === appId && s.statut !== "cancelled") ?? null;
 
   // ── Filtres ────────────────────────────────────────────────────────────────
   const [search, setSearch] = useState("");
@@ -126,9 +149,11 @@ export default function BoutiquePage() {
         clientNom: userProfile?.display_name || currentUser.email || "—",
         clientEmail: currentUser.email ?? undefined,
         userUid: currentUser.uid,
+        prix: app.prix,
         statut,
         dateDebut: Timestamp.now(),
         createdBy: currentUser.uid,
+        events: [{ type: "created", date: Timestamp.now() }],
       });
       const who = userProfile?.display_name || currentUser.email || "Un utilisateur";
       const subMsg = isFree ? `${who} a souscrit à ${app.nom} (gratuit)` : `${who} souhaite accéder à ${app.nom}`;
@@ -143,7 +168,7 @@ export default function BoutiquePage() {
           url: "/boutique/admin",
         }),
       }).catch(() => {});
-      showToast(isFree ? `Accès à "${app.nom}" activé !` : "Demande envoyée ! Votre coach traitera votre demande.");
+      showToast(isFree ? `Accès à "${app.nom}" activé !` : "Demande envoyée ! Nous traitons votre demande.");
     } catch {
       showToast("Erreur lors de la demande.", false);
     } finally {
@@ -151,13 +176,69 @@ export default function BoutiquePage() {
     }
   };
 
+  // Ouvre (ou crée) une discussion avec le coach à propos d'une app
+  const handleMessageAboutApp = async (app: StoreApp) => {
+    if (!currentUser) return;
+    try {
+      // Discussion déjà existante pour cette app ?
+      const mineSnap = await getDocs(query(collection(db, "messagerie"), where("participants_ids", "array-contains", currentUser.uid)));
+      const existing = mineSnap.docs.find((d) => (d.data() as any).appId === app.id);
+      if (existing) { router.push(`/messagerie/${existing.id}`); return; }
+
+      // Destinataires : les administrateurs (coachs)
+      const adminSnap = await getDocs(query(collection(db, "users"), where("role_app", "==", "Admin")));
+      const adminIds = adminSnap.docs.map((d) => d.id).filter((id) => id !== currentUser.uid);
+      if (adminIds.length === 0) { showToast("Aucun destinataire disponible pour le moment.", false); return; }
+
+      const discRef = await addDoc(collection(db, "messagerie"), {
+        objet_message: `Question — ${app.nom}`,
+        appId: app.id,
+        service: "Boutique",
+        date_create: serverTimestamp(),
+        date_last_message: serverTimestamp(),
+        participants_ids: [currentUser.uid, ...adminIds],
+        non_lus_ids: adminIds,
+        archives_par: [],
+      });
+      await addDoc(collection(db, "messagerie", discRef.id, "messages_messagerie"), {
+        ref_user: doc(db, "usersapp", currentUser.uid),
+        message_text: `Bonjour, j'aurais une ou plusieurs questions concernant l'application « ${app.nom} ».`,
+        date_create: serverTimestamp(),
+        document_image_list: [],
+        document_pdf_list: [],
+        document_video_list: [],
+      });
+      // Push aux coachs uniquement (pas d'entrée dans la section Notifications :
+      // la discussion apparaît déjà comme non lue dans la Messagerie)
+      fetch("/api/push/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          toAdmins: true,
+          title: "Nouvelle question boutique",
+          body: `${userProfile?.display_name || currentUser.email || "Un utilisateur"} a une question sur "${app.nom}".`,
+          url: `/messagerie/${discRef.id}`,
+        }),
+      }).catch(() => {});
+      router.push(`/messagerie/${discRef.id}`);
+    } catch (e) {
+      console.error("[handleMessageAboutApp]", e);
+      showToast("Impossible de créer la discussion.", false);
+    }
+  };
+
   const handleUnsubscribe = async (app: StoreApp) => {
     if (!currentUser) return;
-    const sub = subscriptions.find(s => s.appId === app.id);
+    const sub = subscriptions.find(s => s.appId === app.id && s.statut !== "cancelled");
     if (!sub) return;
     if (!confirm(`Retirer votre accès à "${app.nom}" ? Vous pourrez à nouveau souscrire plus tard.`)) return;
     try {
-      await deleteStoreSubscription(sub.id);
+      // On NE supprime PAS l'abonnement : on l'archive (statut "cancelled") pour garder une trace côté admin.
+      await updateSubWithEvent(
+        sub.id,
+        { statut: "cancelled", archivedAt: Timestamp.now() },
+        "unsubscribed",
+      );
       // Retirer aussi le raccourci accueil éventuel
       if (shortcuts.includes(app.id)) {
         await updateDoc(doc(db, "users", currentUser.uid), { accueilShortcuts: shortcuts.filter(id => id !== app.id) });
@@ -278,6 +359,84 @@ export default function BoutiquePage() {
         )}
       </div>
 
+      {/* Règlement en attente (apps payantes en attente de validation) */}
+      {(() => {
+        const pendingPaid = subscriptions.filter((s) => {
+          if (s.statut !== "pending") return false;
+          const app = apps.find((a) => a.id === s.appId);
+          return app ? app.prix > 0 : false;
+        });
+        if (pendingPaid.length === 0 || (!ribIban && !ribBic)) return null;
+        return (
+          <div className="mb-8 bg-orange-50 border border-orange-200 rounded-2xl p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <svg className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-orange-800">
+                  {pendingPaid.length === 1 ? "1 règlement en attente" : `${pendingPaid.length} règlements en attente`}
+                </p>
+                <p className="text-xs text-orange-600 mt-0.5">Réglez par virement bancaire pour activer votre accès. Nous validerons la souscription à réception.</p>
+                <div className="mt-2 space-y-2">
+                  {pendingPaid.map((s) => {
+                    const app = apps.find((a) => a.id === s.appId);
+                    const ref = orderRef(s.id);
+                    return (
+                      <div key={s.id} className="bg-white border border-orange-100 rounded-lg px-2.5 py-2">
+                        <p className="text-xs font-medium text-orange-800">
+                          {s.appNom}{app?.prix ? ` — ${app.prix.toLocaleString("fr-FR")} €` : ""}
+                        </p>
+                        <div className="flex items-center justify-between gap-2 mt-1">
+                          <span className="text-[11px] text-gray-600">
+                            Réf. virement : <span className="font-mono font-semibold text-gray-800">{ref}</span>
+                          </span>
+                          <button onClick={() => copyField(ref, `ref-${s.id}`)}
+                            className="flex items-center gap-1 text-[10px] font-medium text-orange-700 border border-orange-300 bg-white px-2 py-0.5 rounded-lg hover:bg-orange-50 transition shrink-0">
+                            {copiedKey === `ref-${s.id}` ? "✓ Copié" : "Copier réf."}
+                          </button>
+                        </div>
+                        <button onClick={() => setCommandeSub(s)}
+                          className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:underline">
+                          Voir le bon de commande
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-orange-100 p-4 space-y-3">
+              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Virement bancaire</p>
+              {ribIban && (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-gray-400 font-medium">IBAN</p>
+                    <p className="text-sm font-mono text-gray-800 tracking-wide truncate">{ribIban.match(/.{1,4}/g)?.join(" ") ?? ribIban}</p>
+                  </div>
+                  <button onClick={() => copyField(ribIban, "iban")}
+                    className="text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                    {copiedKey === "iban" ? "✓ Copié" : "Copier"}
+                  </button>
+                </div>
+              )}
+              {ribBic && (
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] text-gray-400 font-medium">BIC</p>
+                    <p className="text-sm font-mono text-gray-800">{ribBic}</p>
+                  </div>
+                  <button onClick={() => copyField(ribBic, "bic")}
+                    className="text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                    {copiedKey === "bic" ? "✓ Copié" : "Copier"}
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-gray-400">Indiquez la <strong>référence de commande</strong> (CMD-…) en référence du virement — elle nous permet d&apos;identifier votre paiement et d&apos;activer l&apos;accès. Retrouvez votre bon de commande dans « Documents ».</p>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Mes accès actifs */}
       {subscriptions.filter((s) => s.statut === "active").length > 0 && (
         <div className="mb-8">
@@ -386,6 +545,9 @@ export default function BoutiquePage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {displayedApps.map((app) => {
             const sub = getMySub(app.id);
+            // Un abonnement expiré (date de fin dépassée) est traité comme "suspendu" côté affichage,
+            // même si le statut en base n'a pas encore été basculé.
+            const effectiveStatut = sub ? (isSubExpired(sub) ? "suspended" : sub.statut) : null;
             const reviews = appReviews[app.id] ?? [];
             const myReview = reviews.find(r => r.userUid === currentUser?.uid);
             const avgRating = reviews.length > 0
@@ -395,7 +557,7 @@ export default function BoutiquePage() {
               <AppCard
                 key={app.id}
                 app={app}
-                sub={sub ? sub.statut : null}
+                sub={effectiveStatut}
                 isAdmin={isAdmin}
                 requesting={requesting === app.id}
                 isShortcutted={shortcuts.includes(app.id)}
@@ -410,6 +572,7 @@ export default function BoutiquePage() {
                 onReview={() => handleOpenReview(app.id)}
                 onDeleteReview={handleDeleteReview}
                 onUnsubscribe={() => handleUnsubscribe(app)}
+                onMessage={() => handleMessageAboutApp(app)}
               />
             );
           })}
@@ -454,13 +617,102 @@ export default function BoutiquePage() {
           </div>
         );
       })()}
+
+      {/* Modal Bon de commande (consultation directe depuis la boutique) */}
+      <Modal isOpen={!!commandeSub} onClose={() => setCommandeSub(null)} title="Bon de commande" size="md">
+        {commandeSub && (() => {
+          const s = commandeSub;
+          const app = apps.find((a) => a.id === s.appId);
+          const ref = orderRef(s.id);
+          const isPending = s.statut === "pending";
+          const dateLabel = s.dateDebut?.toDate?.().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }) ?? "—";
+          const prix = app?.prix ?? s.prix ?? 0;
+          return (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-amber-50 flex items-center justify-center text-xl shrink-0">
+                  {app?.icon ?? "🛍️"}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-base font-bold text-gray-900">{s.appNom}</p>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUT_COLOR[s.statut]}`}>{STATUT_LABEL[s.statut]}</span>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-500">Référence de commande</span>
+                  <span className="font-mono font-semibold text-gray-800">{ref}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-500">Date de la demande</span>
+                  <span className="text-gray-800">{dateLabel}</span>
+                </div>
+                {app && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-gray-500">Formule</span>
+                    <span className="text-gray-800">{PERIOD_LABEL[app.periodicite]}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-500">Montant</span>
+                  <span className="font-bold text-gray-900">{prix.toLocaleString("fr-FR")} €</span>
+                </div>
+              </div>
+
+              {isPending && (
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-3">
+                  <p className="text-sm font-bold text-orange-800">Règlement par virement</p>
+                  <p className="text-xs text-orange-600">
+                    Effectuez un virement du montant ci-dessus en indiquant impérativement la <strong>référence de commande</strong>. Votre accès sera activé dès réception.
+                  </p>
+                  <div className="bg-white rounded-lg border border-orange-100 px-3 py-2 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-gray-400 font-medium">Référence du virement</p>
+                      <p className="text-sm font-mono font-semibold text-gray-800 truncate">{ref}</p>
+                    </div>
+                    <button onClick={() => copyField(ref, `cmd-ref`)}
+                      className="text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                      {copiedKey === "cmd-ref" ? "✓ Copié" : "Copier"}
+                    </button>
+                  </div>
+                  {ribIban && (
+                    <div className="bg-white rounded-lg border border-orange-100 px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-gray-400 font-medium">IBAN</p>
+                        <p className="text-sm font-mono text-gray-800 truncate">{ribIban.match(/.{1,4}/g)?.join(" ") ?? ribIban}</p>
+                      </div>
+                      <button onClick={() => copyField(ribIban, "cmd-iban")}
+                        className="text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                        {copiedKey === "cmd-iban" ? "✓ Copié" : "Copier"}
+                      </button>
+                    </div>
+                  )}
+                  {ribBic && (
+                    <div className="bg-white rounded-lg border border-orange-100 px-3 py-2 flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-[10px] text-gray-400 font-medium">BIC</p>
+                        <p className="text-sm font-mono text-gray-800">{ribBic}</p>
+                      </div>
+                      <button onClick={() => copyField(ribBic, "cmd-bic")}
+                        className="text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                        {copiedKey === "cmd-bic" ? "✓ Copié" : "Copier"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }
 
 function AppCard({
   app, sub, isAdmin, requesting, isShortcutted, myReview, avgRating, reviews, currentUid, hasSub,
-  onRequest, onAccess, onToggleShortcut, onReview, onDeleteReview, onUnsubscribe,
+  onRequest, onAccess, onToggleShortcut, onReview, onDeleteReview, onUnsubscribe, onMessage,
 }: {
   app: StoreApp;
   sub: StoreSubStatut | null;
@@ -478,6 +730,7 @@ function AppCard({
   onReview: () => void;
   onDeleteReview: (reviewId: string) => void;
   onUnsubscribe: () => void;
+  onMessage: () => void;
 }) {
   const canAccess = sub === "active" || isAdmin;
   const isPending = sub === "pending";
@@ -530,7 +783,16 @@ function AppCard({
         <h3 className="font-semibold text-gray-900 text-base">{app.nom}</h3>
         {app.shortDesc && <p className="text-sm text-gray-500 mt-1 leading-relaxed">{app.shortDesc}</p>}
         {app.description && app.description !== app.shortDesc && (
-          <p className="text-sm text-gray-600 mt-2 leading-relaxed whitespace-pre-wrap">{app.description}</p>
+          // Toujours rendu en HTML : si la description contient des balises (gras, listes…)
+          // elles sont interprétées ; sinon le texte brut est affiché (avec sauts de ligne).
+          <div
+            className="rich-content text-sm text-gray-600 mt-2 leading-relaxed"
+            dangerouslySetInnerHTML={{
+              __html: /<[a-z][\s\S]*>/i.test(app.description)
+                ? app.description
+                : app.description.replace(/\n/g, '<br>'),
+            }}
+          />
         )}
         {app.tags && app.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
@@ -662,8 +924,8 @@ function AppCard({
       )}
 
       {/* Prix + action */}
-      <div className="flex items-center justify-between pt-3 border-t">
-        <div>
+      <div className="flex items-center justify-between pt-3 border-t gap-2">
+        <div className="min-w-0">
           {app.prix === 0 ? (
             <span className="text-sm font-bold text-green-600">Gratuit</span>
           ) : (
@@ -673,6 +935,17 @@ function AppCard({
             </span>
           )}
         </div>
+        <div className="flex items-center gap-2 shrink-0">
+        {!isAdmin && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onMessage(); }}
+            title="Poser une question au coach sur cette application"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm font-medium text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 transition"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4-.83L3 20l1.17-3.5A7.9 7.9 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+            <span className="hidden sm:inline">Une question ?</span>
+          </button>
+        )}
         {canAccess ? (
           <button
             onClick={onAccess}
@@ -701,6 +974,7 @@ function AppCard({
             {requesting ? "…" : "Souscrire"}
           </button>
         )}
+        </div>
       </div>
 
       {/* Se désabonner (utilisateur non-admin ayant une souscription) */}

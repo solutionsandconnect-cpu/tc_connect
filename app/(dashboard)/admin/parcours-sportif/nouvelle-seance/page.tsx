@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { collection, addDoc, Timestamp } from 'firebase/firestore'
+import { useState, useEffect } from 'react'
+import { collection, addDoc, Timestamp, doc, getDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
@@ -43,9 +43,19 @@ export default function NouvelleSeancePage() {
     price: '5',
     durationMinutes: '60',
     contactPhone: '+33679408254',
+    hidden: true,
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+
+  // Pré-remplir le numéro de téléphone depuis les paramètres
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'parcours_sportif')).then((snap) => {
+      if (snap.exists() && snap.data().contactPhone) {
+        setForm((f) => ({ ...f, contactPhone: snap.data().contactPhone }))
+      }
+    }).catch(() => {})
+  }, [])
 
   const title = autoTitle(form.datetime)
   const previewLink = form.locationCoords ? parseCoordsLink(form.locationCoords) : null
@@ -85,6 +95,7 @@ export default function NouvelleSeancePage() {
         contactPhone: form.contactPhone.trim(),
         registeredCount: 0,
         status: 'open',
+        hidden: form.hidden,
         createdAt: Timestamp.now(),
       })
       router.push('/admin/parcours-sportif')
@@ -189,6 +200,22 @@ export default function NouvelleSeancePage() {
               onChange={(e) => setForm((f) => ({ ...f, contactPhone: e.target.value }))}
               placeholder="0679408254"
               className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          {/* Visibilité */}
+          <div className="sm:col-span-2">
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <div
+                onClick={() => setForm((f) => ({ ...f, hidden: !f.hidden }))}
+                className={`relative w-10 h-5 rounded-full transition ${form.hidden ? 'bg-gray-300' : 'bg-green-500'}`}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.hidden ? 'translate-x-0.5' : 'translate-x-5'}`} />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-700">{form.hidden ? 'Masquée (non visible sur la page publique)' : 'Visible sur la page publique'}</p>
+                <p className="text-xs text-gray-400">Vous pourrez la rendre visible depuis la fiche de la séance</p>
+              </div>
+            </label>
           </div>
 
           {error && (

@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useMessagerieUnread } from '@/hooks/useMessagerieUnread'
 import { usePendingSubscriptions } from '@/hooks/usePendingSubscriptions'
+import { useUnseenDocuments } from '@/hooks/useUnseenDocuments'
 import {
   HomeIcon, CalendarIcon, BellIcon, UserIcon,
   UsersIcon, ClipboardDocumentListIcon, BookOpenIcon,
@@ -100,6 +101,7 @@ export default function Navbar() {
   const { unreadCount } = useNotifications()
   const messagerieUnread = useMessagerieUnread()
   const pendingSubscriptions = usePendingSubscriptions()
+  const unseenDocuments = useUnseenDocuments()
 
   const handleLogout = async () => {
     await logout()
@@ -132,7 +134,6 @@ export default function Navbar() {
               )}
               <div className="min-w-0 text-left">
                 <p className="text-sm font-medium text-gray-800 truncate">{userProfile.prenom} {userProfile.nom}</p>
-                {userProfile.email && <p className="text-xs text-gray-400 truncate">{userProfile.email}</p>}
               </div>
             </button>
           )}
@@ -169,7 +170,8 @@ export default function Navbar() {
                     const isNotif = item.href === '/notifications'
                     const isMsg = item.href === '/messagerie'
                     const isBoutique = item.href === '/boutique'
-                    const badgeCount = isNotif ? unreadCount : isMsg ? messagerieUnread : isBoutique ? pendingSubscriptions : 0
+                    const isDocuments = item.href === '/documents'
+                    const badgeCount = isNotif ? unreadCount : isMsg ? messagerieUnread : isBoutique ? pendingSubscriptions : isDocuments ? unseenDocuments : 0
                     return (
                       <button
                         key={item.href}
@@ -233,7 +235,8 @@ export default function Navbar() {
               const isNotif = item.href === '/notifications'
               const isMsg = item.href === '/messagerie'
               const isBoutique = item.href === '/boutique'
-              const mobileBadge = isNotif ? unreadCount : isMsg ? messagerieUnread : isBoutique ? pendingSubscriptions : 0
+              const isDocuments = item.href === '/documents'
+              const mobileBadge = isNotif ? unreadCount : isMsg ? messagerieUnread : isBoutique ? pendingSubscriptions : isDocuments ? unseenDocuments : 0
               return (
                 <button
                   key={item.href}

@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
-import { doc, getDoc, updateDoc } from 'firebase/firestore'
+import { doc, getDoc, updateDoc, getDocs, collection, query, where } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import type { PainPoint } from '@/types'
 import { ZONES_DOULEUR } from '@/lib/painZones'
@@ -196,6 +196,7 @@ export default function QuestionnairePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitting(true)
+    const wasAlreadyFilled = !!(planning?.questionnaire_rempli || planning?.indice_hooper != null)
     const indice_hooper =
       (form.qualite_sommeil || 0) +
       (form.niveau_fatigue || 0) +
@@ -216,16 +217,44 @@ export default function QuestionnairePage() {
         indice_hooper,
       })
       setSubmitted(true)
-      fetch('/api/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toAdmins: true,
-          title: 'Questionnaire rempli',
-          body: 'Un client vient de remplir son questionnaire de forme.',
-          url: `/planning/${id}`,
-        }),
+      // Marquer la notification QUESTIONNAIRE_FORME comme lue
+      getDocs(query(
+        collection(db, 'Notifications'),
+        where('type_notification', '==', 'QUESTIONNAIRE_FORME'),
+        where('ref_planning', '==', doc(db, 'planning_pro', id)),
+        where('etat_notification', '==', 'Non lu'),
+      )).then((snap) => {
+        snap.docs.forEach((d) => updateDoc(d.ref, { etat_notification: 'Lu', date_lecture: new Date() }).catch(() => {}))
       }).catch(() => {})
+      if (wasAlreadyFilled) {
+        // Notification de modification (push + Firestore pour les admins)
+        fetch('/api/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            toAdmins: true,
+            title: 'Questionnaire modifié',
+            body: 'Un client vient de modifier son questionnaire de forme.',
+            url: `/planning/${id}`,
+            persist: true,
+            type: 'QUESTIONNAIRE_MODIFICATION',
+          }),
+        }).catch(() => {})
+      } else {
+        // Notification de premier remplissage (push + Firestore pour les admins)
+        fetch('/api/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            toAdmins: true,
+            title: 'Questionnaire rempli',
+            body: 'Un client vient de remplir son questionnaire de forme.',
+            url: `/planning/${id}`,
+            persist: true,
+            type: 'QUESTIONNAIRE_FORME',
+          }),
+        }).catch(() => {})
+      }
     } catch (err: any) {
       alert(`Erreur : ${err?.message ?? 'inconnue'}`)
     } finally {
@@ -249,13 +278,26 @@ export default function QuestionnairePage() {
     )
   }
 
+  // Verrouiller une fois l'heure de fin du RDV dépassée
+  // Fallback sur fin de journée de date_planning si heure_planning_fin non renseigné
+  const sessionEndTime: Date | null = (() => {
+    if (planning.heure_planning_fin?.toDate) return planning.heure_planning_fin.toDate()
+    if (planning.date_planning?.toDate) {
+      const d = new Date(planning.date_planning.toDate())
+      d.setHours(23, 59, 59, 999)
+      return d
+    }
+    return null
+  })()
+  const isSessionPast = sessionEndTime ? sessionEndTime < new Date() : false
   // Déterminer si la modification est autorisée :
-  // - Questionnaire pas encore rempli → toujours éditable (premier remplissage)
+  // - RDV passé → toujours lecture seule (admin édite depuis la fiche planning)
+  // - Questionnaire pas encore rempli → éditable si RDV pas encore passé
   // - Questionnaire déjà rempli + admin a défini une date future → éditable
   // - Questionnaire déjà rempli + pas de permission → lecture seule
   const alreadyFilled = !!(planning.questionnaire_rempli || planning.indice_hooper != null)
   const editableUntil: Date | null = planning.questionnaire_editable_until?.toDate?.() ?? null
-  const canEdit = !alreadyFilled || (editableUntil !== null && editableUntil > new Date())
+  const canEdit = !isSessionPast && (!alreadyFilled || (editableUntil !== null && editableUntil > new Date()))
 
   // ── Vue lecture seule ──────────────────────────────────────────────────────
   if (alreadyFilled && !canEdit) {
@@ -342,7 +384,9 @@ export default function QuestionnairePage() {
           )}
 
           <p className="text-center text-xs text-gray-400">
-            Ce questionnaire est en lecture seule.
+            {isSessionPast
+              ? 'La séance est terminée — ce questionnaire est maintenant verrouillé.'
+              : 'Ce questionnaire est en lecture seule.'}
           </p>
         </div>
       </div>

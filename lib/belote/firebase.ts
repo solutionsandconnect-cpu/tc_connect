@@ -16,23 +16,29 @@ export function teamNameFromPlayers(players: BelotePlayer[]): string {
 
 // ─── Équipes ────────────────────────────────────────────────────────────────────
 
-export const listenBeloteTeams = (cb: (teams: BeloteTeam[]) => void) =>
-  onSnapshot(query(teamsCol, orderBy('createdAt', 'desc')), (snap) => {
-    cb(snap.docs.map(d => ({ id: d.id, ...d.data() } as BeloteTeam)))
+// Données privées à chaque utilisateur : on filtre par createdBy (tri côté client → pas d'index composite).
+export const listenBeloteTeams = (userUid: string, cb: (teams: BeloteTeam[]) => void) =>
+  onSnapshot(query(teamsCol, where('createdBy', '==', userUid)), (snap) => {
+    cb(snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as BeloteTeam))
+      .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0)))
   })
 
-export const createBeloteTeam = (players: BelotePlayer[]) =>
+export const createBeloteTeam = (players: BelotePlayer[], userUid: string) =>
   addDoc(teamsCol, {
     name: teamNameFromPlayers(players),
     players,
+    createdBy: userUid,
     createdAt: Timestamp.now(),
   })
 
 // ─── Parties ────────────────────────────────────────────────────────────────────
 
-export const listenBeloteGames = (cb: (games: BeloteGame[]) => void) =>
-  onSnapshot(query(gamesCol, orderBy('createdAt', 'desc')), (snap) => {
-    cb(snap.docs.map(d => ({ id: d.id, ...d.data() } as BeloteGame)))
+export const listenBeloteGames = (userUid: string, cb: (games: BeloteGame[]) => void) =>
+  onSnapshot(query(gamesCol, where('createdBy', '==', userUid)), (snap) => {
+    cb(snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as BeloteGame))
+      .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0)))
   })
 
 export const listenBeloteGame = (gameId: string, cb: (game: BeloteGame | null) => void) =>

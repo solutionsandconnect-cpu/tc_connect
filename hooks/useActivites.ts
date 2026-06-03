@@ -16,6 +16,10 @@ export interface Activite {
   distance_km?: number | null
   calories?: number | null
   notes?: string
+  // Liaison avec une inscription Parcours Sportif (pour ajout/suppression auto au planning)
+  registrationId?: string
+  sessionId?: string
+  source?: string
   date_create: Timestamp
 }
 

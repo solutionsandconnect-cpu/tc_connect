@@ -19,8 +19,13 @@ export function useStoreAccess(appRoute: string) {
   if (isAdmin) return { hasAccess: true, loading: false };
 
   const app = apps.find((a) => a.route === appRoute);
+  const nowMs = Date.now();
   const hasAccess = !!app && subscriptions.some(
-    (s) => s.appId === app.id && s.statut === "active"
+    (s) =>
+      s.appId === app.id &&
+      s.statut === "active" &&
+      // Accès illimité si pas de date de fin, sinon valable tant que la date n'est pas dépassée
+      (!s.dateFin || (s.dateFin.toMillis?.() ?? 0) > nowMs)
   );
 
   return { hasAccess, loading };

@@ -13,7 +13,7 @@ export function useBeloteGames() {
 
   useEffect(() => {
     if (!currentUser) { setLoading(false); return }
-    const unsub = listenBeloteGames((g) => {
+    const unsub = listenBeloteGames(currentUser.uid, (g) => {
       setGames(g)
       setLoading(false)
     })

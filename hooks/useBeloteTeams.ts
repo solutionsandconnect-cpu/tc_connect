@@ -13,14 +13,17 @@ export function useBeloteTeams() {
 
   useEffect(() => {
     if (!currentUser) { setLoading(false); return }
-    const unsub = listenBeloteTeams((t) => {
+    const unsub = listenBeloteTeams(currentUser.uid, (t) => {
       setTeams(t)
       setLoading(false)
     })
     return unsub
   }, [currentUser])
 
-  const createTeam = (players: BelotePlayer[]) => createBeloteTeam(players)
+  const createTeam = (players: BelotePlayer[]) => {
+    if (!currentUser) throw new Error('Non authentifié')
+    return createBeloteTeam(players, currentUser.uid)
+  }
 
   return { teams, loading, createTeam }
 }

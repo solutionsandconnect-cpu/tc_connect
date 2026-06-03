@@ -83,7 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const c = clientSnap.docs[0].data()
         if (c.prenom) userData.prenom = c.prenom
         if (c.nom) userData.nom = c.nom
-        if (c.prenom || c.nom) userData.display_name = `${c.prenom ?? ''} ${c.nom ?? ''}`.trim()
+        if (c.prenom || c.nom) userData.display_name = `${c.nom ?? ''} ${c.prenom ?? ''}`.trim()
         if (c.telephone) userData.phone_number = c.telephone
         if (c.dateNaissance) userData.date_naissance = c.dateNaissance
         if (c.adresse) userData.adresse_postale = c.adresse

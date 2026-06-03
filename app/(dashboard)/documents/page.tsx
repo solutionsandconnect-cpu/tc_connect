@@ -1,22 +1,25 @@
 'use client'
 
 import { useEffect, useRef, useState, useMemo } from 'react'
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc, Timestamp } from 'firebase/firestore'
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useUsers } from '@/hooks/useUsers'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { uploadImage, deleteImage } from '@/lib/uploadImage'
+import { copyText } from '@/lib/clipboard'
+import { orderRef, deleteStoreSubscription } from '@/lib/storeService'
+import Modal from '@/components/ui/Modal'
 import {
   FolderOpenIcon, DocumentTextIcon, ArrowTopRightOnSquareIcon,
   ClipboardDocumentListIcon, ArrowRightIcon, MagnifyingGlassIcon,
-  ArrowUpTrayIcon, TrashIcon, ShareIcon,
+  ArrowUpTrayIcon, TrashIcon, ShareIcon, ShoppingBagIcon, CheckIcon,
 } from '@heroicons/react/24/outline'
 import type { FactureStatus, FactureType } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type DocCategory = 'facturation' | 'questionnaire' | 'shared'
+type DocCategory = 'facturation' | 'questionnaire' | 'shared' | 'commande'
 
 interface BaseDoc {
   id: string
@@ -46,7 +49,20 @@ interface SharedDoc extends BaseDoc {
   uploadedBy: string
 }
 
-type AnyDoc = FactureDoc | QuestionnaireDoc | SharedDoc
+interface CommandeDoc extends BaseDoc {
+  category: 'commande'
+  subId: string
+  appNom: string
+  appIcon?: string
+  prix: number
+  periodicite: string
+  statut: string
+  orderReference: string
+  dateDebut?: number
+  dateFin?: number | null
+}
+
+type AnyDoc = FactureDoc | QuestionnaireDoc | SharedDoc | CommandeDoc
 
 type TabKey = 'tous' | DocCategory
 
@@ -80,6 +96,16 @@ function toMs(ts: any): number {
   if (ts?.seconds) return ts.seconds * 1000
   if (ts instanceof Date) return ts.getTime()
   return 0
+}
+
+const PERIOD_LABEL: Record<string, string> = {
+  mensuel: 'Abonnement mensuel', annuel: 'Abonnement annuel', unique: 'Paiement unique',
+}
+const CMD_STATUT: Record<string, { label: string; color: string }> = {
+  pending:   { label: 'En attente de paiement', color: 'bg-yellow-100 text-yellow-700' },
+  active:    { label: 'Accès activé',            color: 'bg-green-100 text-green-700' },
+  suspended: { label: 'Suspendu',                color: 'bg-red-100 text-red-600' },
+  cancelled: { label: 'Annulé',                  color: 'bg-gray-100 text-gray-500' },
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -178,9 +204,43 @@ function SharedDocCard({ doc: d }: { doc: SharedDoc }) {
   )
 }
 
-function DocCard({ doc: d, router }: { doc: AnyDoc; router: ReturnType<typeof useRouter> }) {
+function CommandeCard({ doc: d, onOpen }: { doc: CommandeDoc; onOpen: (d: CommandeDoc) => void }) {
+  const st = CMD_STATUT[d.statut] ?? CMD_STATUT.pending
+  return (
+    <button
+      onClick={() => onOpen(d)}
+      className="w-full flex items-center gap-4 bg-white border border-gray-200 rounded-xl px-4 py-4 hover:border-amber-200 hover:shadow-sm transition group text-left"
+    >
+      <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center shrink-0 text-lg">
+        {d.appIcon ?? <ShoppingBagIcon className="w-5 h-5 text-amber-500" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-gray-900">{d.appNom}</span>
+          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Bon de commande</span>
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${st.color}`}>{st.label}</span>
+        </div>
+        <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+          <p className="text-xs text-gray-400">{d.dateLabel}</p>
+          <p className="text-xs font-mono text-gray-500">{d.orderReference}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3 shrink-0">
+        <span className="text-sm font-bold text-gray-900">{fmtMoney(d.prix)}</span>
+        <ArrowRightIcon className="w-4 h-4 text-gray-400 group-hover:text-amber-500 transition" />
+      </div>
+    </button>
+  )
+}
+
+function DocCard({ doc: d, router, onOpenCommande }: {
+  doc: AnyDoc
+  router: ReturnType<typeof useRouter>
+  onOpenCommande: (d: CommandeDoc) => void
+}) {
   if (d.category === 'facturation') return <FactureCard doc={d} />
   if (d.category === 'questionnaire') return <QuestionnaireCard doc={d} router={router} />
+  if (d.category === 'commande') return <CommandeCard doc={d} onOpen={onOpenCommande} />
   return <SharedDocCard doc={d} />
 }
 
@@ -206,8 +266,28 @@ function AdminPanel({ adminUid }: { adminUid: string }) {
   const [error, setError] = useState('')
   const [sharedDocs, setSharedDocs] = useState<AdminSharedDoc[]>([])
   const [loadingDocs, setLoadingDocs] = useState(true)
+  // Combobox utilisateur destinataire
+  const [userSearch, setUserSearch] = useState('')
+  const [showUserList, setShowUserList] = useState(false)
+  // Bons de commande des utilisateurs
+  const [orders, setOrders] = useState<any[]>([])
+  const [loadingOrders, setLoadingOrders] = useState(true)
+  const [docToDelete, setDocToDelete] = useState<AdminSharedDoc | null>(null)
+  const [orderToDelete, setOrderToDelete] = useState<any | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const utilisateurs = users.filter((u) => u.role_app === 'Utilisateur')
+
+  // Libellé "NOM Prénom" + liste triée alphabétiquement / filtrée par la recherche
+  const userLabel = (u: any) =>
+    `${(u?.nom ?? '').toUpperCase()} ${u?.prenom ?? ''}`.trim() || u?.display_name || u?.email || '—'
+  const sortedUsers = [...utilisateurs].sort((a, b) => userLabel(a).localeCompare(userLabel(b), 'fr'))
+  const filteredUserList = userSearch.trim()
+    ? sortedUsers.filter((u) =>
+        userLabel(u).toLowerCase().includes(userSearch.toLowerCase()) ||
+        (u.email ?? '').toLowerCase().includes(userSearch.toLowerCase()))
+    : sortedUsers
+  const selectedUserLabel = targetUserId ? userLabel(sortedUsers.find((u) => u.uid === targetUserId)) : ''
 
   useEffect(() => {
     async function loadShared() {
@@ -227,6 +307,42 @@ function AdminPanel({ adminUid }: { adminUid: string }) {
       setLoadingDocs(false)
     }
     loadShared()
+  }, [adminUid])
+
+  // Charger les bons de commande de tous les utilisateurs (apps payantes)
+  useEffect(() => {
+    async function loadOrders() {
+      setLoadingOrders(true)
+      try {
+        const [appsSnap, subsSnap] = await Promise.all([
+          getDocs(collection(db, 'store_apps')),
+          getDocs(collection(db, 'store_subscriptions')),
+        ])
+        const appMap: Record<string, any> = {}
+        appsSnap.docs.forEach((d) => { appMap[d.id] = d.data() })
+        const list = subsSnap.docs
+          .map((d) => {
+            const data = d.data() as any
+            const app = appMap[data.appId]
+            return {
+              id: d.id,
+              userUid: data.userUid ?? '',
+              appNom: data.appNom ?? app?.nom ?? 'Application',
+              appIcon: app?.icon,
+              prix: data.prix ?? app?.prix ?? 0,
+              statut: data.statut ?? 'pending',
+              createdAt: data.createdAt,
+            }
+          })
+          .filter((o) => (o.prix ?? 0) > 0)
+          .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt))
+        setOrders(list)
+      } catch (e) {
+        console.error('[AdminPanel orders]', e)
+      }
+      setLoadingOrders(false)
+    }
+    loadOrders()
   }, [adminUid])
 
   const handleUpload = async () => {
@@ -266,14 +382,34 @@ function AdminPanel({ adminUid }: { adminUid: string }) {
     setUploading(false)
   }
 
-  const handleDelete = async (docId: string, fileUrl: string) => {
-    if (!confirm('Supprimer ce document ?')) return
+  // Suppression confirmée via une modale in-app (window.confirm n'est pas fiable en PWA/mobile)
+  const confirmDelete = async () => {
+    if (!docToDelete) return
+    setDeleting(true)
     try {
-      await deleteDoc(doc(db, 'shared_documents', docId))
-      await deleteImage(fileUrl)
-      setSharedDocs((prev) => prev.filter((d) => d.id !== docId))
+      await deleteDoc(doc(db, 'shared_documents', docToDelete.id))
+      await deleteImage(docToDelete.fileUrl).catch(() => {})
+      setSharedDocs((prev) => prev.filter((d) => d.id !== docToDelete.id))
+      setDocToDelete(null)
     } catch (e) {
       console.error('[AdminPanel delete]', e)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  // Supprime un bon de commande (= la souscription store correspondante). Réservé à l'admin.
+  const confirmDeleteOrder = async () => {
+    if (!orderToDelete) return
+    setDeleting(true)
+    try {
+      await deleteStoreSubscription(orderToDelete.id)
+      setOrders((prev) => prev.filter((o) => o.id !== orderToDelete.id))
+      setOrderToDelete(null)
+    } catch (e) {
+      console.error('[AdminPanel delete order]', e)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -288,18 +424,36 @@ function AdminPanel({ adminUid }: { adminUid: string }) {
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Utilisateur destinataire</label>
-            <select
-              value={targetUserId}
-              onChange={(e) => setTargetUserId(e.target.value)}
-              className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-            >
-              <option value="">Sélectionner un utilisateur…</option>
-              {utilisateurs.map((u) => (
-                <option key={u.uid} value={u.uid}>
-                  {`${u.prenom ?? ''} ${u.nom ?? ''}`.trim() || u.display_name || u.email}
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <input
+                type="text"
+                value={showUserList ? userSearch : selectedUserLabel}
+                onChange={(e) => { setUserSearch(e.target.value); setShowUserList(true) }}
+                onFocus={() => { setShowUserList(true); setUserSearch('') }}
+                onBlur={() => setTimeout(() => setShowUserList(false), 150)}
+                placeholder="Rechercher un utilisateur (NOM Prénom)…"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+              />
+              {showUserList && (
+                <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-56 overflow-y-auto">
+                  {filteredUserList.length === 0 ? (
+                    <p className="px-3 py-2 text-sm text-gray-400">Aucun utilisateur</p>
+                  ) : (
+                    filteredUserList.map((u) => (
+                      <button
+                        key={u.uid}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { setTargetUserId(u.uid); setShowUserList(false); setUserSearch('') }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition ${targetUserId === u.uid ? 'bg-blue-50 font-medium text-blue-700' : 'text-gray-700'}`}
+                      >
+                        {userLabel(u)}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Nom du document</label>
@@ -374,8 +528,8 @@ function AdminPanel({ adminUid }: { adminUid: string }) {
                           className="p-1.5 text-gray-400 hover:text-blue-600 transition shrink-0">
                           <ArrowTopRightOnSquareIcon className="w-4 h-4" />
                         </a>
-                        <button onClick={() => handleDelete(d.id, d.fileUrl)}
-                          className="p-1.5 text-gray-400 hover:text-red-500 transition shrink-0">
+                        <button onClick={() => setDocToDelete(d)}
+                          className="p-1.5 text-gray-400 hover:text-red-500 transition shrink-0" title="Supprimer">
                           <TrashIcon className="w-4 h-4" />
                         </button>
                       </div>
@@ -387,6 +541,106 @@ function AdminPanel({ adminUid }: { adminUid: string }) {
           );
         })()}
       </div>
+
+      {/* Bons de commande des utilisateurs */}
+      <div>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+          <ShoppingBagIcon className="w-4 h-4 text-amber-500" />
+          Bons de commande ({orders.length})
+        </h2>
+        {loadingOrders ? (
+          <div className="space-y-3">
+            {[1, 2].map((i) => <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />)}
+          </div>
+        ) : orders.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-8">Aucun bon de commande pour l'instant.</p>
+        ) : (() => {
+          const groups = orders.reduce<Record<string, any[]>>((acc, o) => {
+            const key = o.userUid || '—'
+            if (!acc[key]) acc[key] = []
+            acc[key].push(o)
+            return acc
+          }, {})
+          return (
+            <div className="space-y-4">
+              {Object.entries(groups).map(([uid, userOrders]) => {
+                const u = users.find((x) => x.uid === uid || x.id === uid)
+                const name = u ? userLabel(u) : 'Utilisateur'
+                return (
+                  <div key={uid} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+                      <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                        <span className="text-xs font-bold text-amber-600">{name[0]?.toUpperCase() ?? '?'}</span>
+                      </div>
+                      <span className="text-sm font-semibold text-gray-800">{name}</span>
+                      <span className="ml-auto text-xs text-gray-400">{userOrders.length} commande{userOrders.length !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div className="divide-y divide-gray-50">
+                      {userOrders.map((o) => {
+                        const st = CMD_STATUT[o.statut] ?? CMD_STATUT.pending
+                        return (
+                          <div key={o.id} className="flex items-center gap-3 px-4 py-3">
+                            <div className="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center shrink-0 text-base">
+                              {o.appIcon ?? <ShoppingBagIcon className="w-4 h-4 text-amber-500" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-medium text-gray-900 truncate">{o.appNom}</p>
+                                <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded-full ${st.color}`}>{st.label}</span>
+                              </div>
+                              <p className="text-xs text-gray-400 font-mono">{orderRef(o.id)} · {fmtDate(toMs(o.createdAt))}</p>
+                            </div>
+                            <span className="text-sm font-bold text-gray-900 shrink-0">{fmtMoney(o.prix)}</span>
+                            <button onClick={() => setOrderToDelete(o)}
+                              className="p-1.5 text-gray-400 hover:text-red-500 transition shrink-0" title="Supprimer le bon de commande">
+                              <TrashIcon className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
+      </div>
+
+      {/* Confirmation de suppression (modale in-app, fiable sur mobile/PWA) */}
+      <Modal isOpen={!!docToDelete} onClose={() => !deleting && setDocToDelete(null)} title="Supprimer le document" size="sm">
+        <p className="text-sm text-gray-600">
+          Supprimer définitivement « <span className="font-medium text-gray-900">{docToDelete?.nom}</span> » ? Cette action est irréversible.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={() => setDocToDelete(null)} disabled={deleting}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition disabled:opacity-50">
+            Annuler
+          </button>
+          <button onClick={confirmDelete} disabled={deleting}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50">
+            {deleting ? 'Suppression…' : 'Supprimer'}
+          </button>
+        </div>
+      </Modal>
+
+      {/* Confirmation de suppression d'un bon de commande */}
+      <Modal isOpen={!!orderToDelete} onClose={() => !deleting && setOrderToDelete(null)} title="Supprimer le bon de commande" size="sm">
+        <p className="text-sm text-gray-600">
+          Supprimer le bon de commande <span className="font-mono text-gray-900">{orderToDelete ? orderRef(orderToDelete.id) : ''}</span>
+          {orderToDelete?.appNom ? <> ({orderToDelete.appNom})</> : null} ? L&apos;abonnement correspondant sera retiré. Cette action est irréversible.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={() => setOrderToDelete(null)} disabled={deleting}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition disabled:opacity-50">
+            Annuler
+          </button>
+          <button onClick={confirmDeleteOrder} disabled={deleting}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-700 text-white transition disabled:opacity-50">
+            {deleting ? 'Suppression…' : 'Supprimer'}
+          </button>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -395,6 +649,7 @@ function AdminPanel({ adminUid }: { adminUid: string }) {
 
 const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: 'tous',          label: 'Tous',            icon: FolderOpenIcon },
+  { key: 'commande',      label: 'Commandes',       icon: ShoppingBagIcon },
   { key: 'facturation',   label: 'Facturation',     icon: DocumentTextIcon },
   { key: 'questionnaire', label: 'Questionnaires',  icon: ClipboardDocumentListIcon },
   { key: 'shared',        label: 'Partagés',        icon: ShareIcon },
@@ -403,12 +658,43 @@ const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
 export default function DocumentsPage() {
   const { currentUser, userProfile } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const commandeParam = searchParams.get('commande')
   const isAdmin = userProfile?.role_app === 'Admin'
+
+  // Marquer "Documents" comme consulté → retire la pastille (une seule fois par visite,
+  // sinon la mise à jour du profil relancerait l'effet en boucle)
+  const seenMarked = useRef(false)
+  useEffect(() => {
+    if (seenMarked.current || !currentUser || !userProfile) return
+    if (userProfile.role_app === 'Admin') return
+    seenMarked.current = true
+    updateDoc(doc(db, 'users', currentUser.uid), { documentsSeenAt: Timestamp.now() }).catch(() => {})
+  }, [currentUser, userProfile])
 
   const [docs, setDocs] = useState<AnyDoc[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<TabKey>('tous')
   const [search, setSearch] = useState('')
+  const [commandeModal, setCommandeModal] = useState<CommandeDoc | null>(null)
+  const [boutiqueRib, setBoutiqueRib] = useState({ iban: '', bic: '' })
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  const copyVal = async (value: string, key: string) => {
+    await copyText(value)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(null), 2000)
+  }
+
+  // RIB boutique (pour les instructions de virement du bon de commande)
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'boutique')).then((snap) => {
+      if (snap.exists()) {
+        const d = snap.data()
+        setBoutiqueRib({ iban: d.iban ?? '', bic: d.bic ?? '' })
+      }
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (!currentUser || !userProfile) return
@@ -502,6 +788,41 @@ export default function DocumentsPage() {
           } satisfies SharedDoc)
         })
 
+        // ── 4. Bons de commande boutique (apps payantes uniquement) ──────────
+        try {
+          const [appsSnap, subsSnap] = await Promise.all([
+            getDocs(collection(db, 'store_apps')),
+            getDocs(query(collection(db, 'store_subscriptions'), where('userUid', '==', currentUser!.uid))),
+          ])
+          const appMap: Record<string, any> = {}
+          appsSnap.docs.forEach((d) => { appMap[d.id] = d.data() })
+          subsSnap.docs.forEach((d) => {
+            const data = d.data() as any
+            const app = appMap[data.appId]
+            const prix = app?.prix ?? 0
+            if (prix <= 0) return // app gratuite → pas de bon de commande
+            const ms = toMs(data.createdAt)
+            all.push({
+              id: d.id,
+              category: 'commande',
+              subId: d.id,
+              title: data.appNom ?? app?.nom ?? 'Application',
+              date: ms,
+              dateLabel: fmtDate(ms),
+              appNom: data.appNom ?? app?.nom ?? 'Application',
+              appIcon: app?.icon,
+              prix,
+              periodicite: app?.periodicite ?? 'unique',
+              statut: data.statut ?? 'pending',
+              orderReference: orderRef(d.id),
+              dateDebut: data.dateDebut ? toMs(data.dateDebut) : undefined,
+              dateFin: data.dateFin ? toMs(data.dateFin) : null,
+            } satisfies CommandeDoc)
+          })
+        } catch (e) {
+          console.warn('[DocumentsPage] commandes non accessibles', e)
+        }
+
       } catch (e) {
         console.error('[DocumentsPage]', e)
       }
@@ -514,9 +835,20 @@ export default function DocumentsPage() {
     load()
   }, [currentUser, userProfile, isAdmin])
 
+  // Ouverture automatique d'un bon de commande depuis un lien (?commande=<subId>)
+  useEffect(() => {
+    if (!commandeParam || !docs.length) return
+    const c = docs.find((d) => d.category === 'commande' && (d as CommandeDoc).subId === commandeParam) as CommandeDoc | undefined
+    if (c) { setCommandeModal(c); setTab('commande') }
+  }, [commandeParam, docs])
+
   const visibleTabs = useMemo(() => {
     const sharedCount = docs.filter((d) => d.category === 'shared').length
-    return TABS.filter((t) => t.key !== 'shared' || sharedCount > 0)
+    const commandeCount = docs.filter((d) => d.category === 'commande').length
+    return TABS.filter((t) =>
+      (t.key !== 'shared' || sharedCount > 0) &&
+      (t.key !== 'commande' || commandeCount > 0)
+    )
   }, [docs])
 
   const visible = useMemo(() => {
@@ -532,6 +864,7 @@ export default function DocumentsPage() {
 
   const counts = useMemo(() => ({
     tous: docs.length,
+    commande: docs.filter((d) => d.category === 'commande').length,
     facturation: docs.filter((d) => d.category === 'facturation').length,
     questionnaire: docs.filter((d) => d.category === 'questionnaire').length,
     shared: docs.filter((d) => d.category === 'shared').length,
@@ -626,11 +959,116 @@ export default function DocumentsPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {visible.map((d) => <DocCard key={`${d.category}-${d.id}`} doc={d} router={router} />)}
+              {visible.map((d) => <DocCard key={`${d.category}-${d.id}`} doc={d} router={router} onOpenCommande={setCommandeModal} />)}
             </div>
           )}
         </>
       )}
+
+      {/* Modal Bon de commande */}
+      <Modal isOpen={!!commandeModal} onClose={() => setCommandeModal(null)} title="Bon de commande" size="md">
+        {commandeModal && (() => {
+          const c = commandeModal
+          const st = CMD_STATUT[c.statut] ?? CMD_STATUT.pending
+          const isPending = c.statut === 'pending'
+          return (
+            <div className="space-y-4">
+              {/* En-tête */}
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-amber-50 flex items-center justify-center text-xl shrink-0">
+                  {c.appIcon ?? <ShoppingBagIcon className="w-6 h-6 text-amber-500" />}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-base font-bold text-gray-900">{c.appNom}</p>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${st.color}`}>{st.label}</span>
+                </div>
+              </div>
+
+              {/* Détails */}
+              <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Référence de commande</span>
+                  <span className="font-mono font-semibold text-gray-800">{c.orderReference}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Date de la demande</span>
+                  <span className="text-gray-800">{c.dateLabel}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Formule</span>
+                  <span className="text-gray-800">{PERIOD_LABEL[c.periodicite] ?? c.periodicite}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Montant</span>
+                  <span className="font-bold text-gray-900">{fmtMoney(c.prix)}</span>
+                </div>
+                {c.statut === 'active' && c.dateDebut && (
+                  <div className="flex items-center justify-between border-t border-gray-200 pt-2">
+                    <span className="text-gray-500">Accès</span>
+                    <span className="text-gray-800">
+                      {fmtDate(c.dateDebut)}{c.dateFin ? ` → ${fmtDate(c.dateFin)}` : ' · illimité'}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Instructions de virement (si pas encore validé) */}
+              {isPending && (
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-3">
+                  <p className="text-sm font-bold text-orange-800">Règlement par virement</p>
+                  <p className="text-xs text-orange-600">
+                    Effectuez un virement du montant ci-dessus en indiquant impérativement la <strong>référence de commande</strong> ci-dessous. Votre accès sera activé dès réception.
+                  </p>
+                  {/* Référence à copier */}
+                  <div className="bg-white rounded-lg border border-orange-100 px-3 py-2 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-gray-400 font-medium">Référence du virement</p>
+                      <p className="text-sm font-mono font-semibold text-gray-800 truncate">{c.orderReference}</p>
+                    </div>
+                    <button onClick={() => copyVal(c.orderReference, 'ref')}
+                      className="text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                      {copiedKey === 'ref' ? <CheckIcon className="w-3.5 h-3.5 text-green-600" /> : 'Copier'}
+                    </button>
+                  </div>
+                  {boutiqueRib.iban && (
+                    <div className="bg-white rounded-lg border border-orange-100 px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-gray-400 font-medium">IBAN</p>
+                        <p className="text-sm font-mono text-gray-800 truncate">{boutiqueRib.iban.match(/.{1,4}/g)?.join(' ') ?? boutiqueRib.iban}</p>
+                      </div>
+                      <button onClick={() => copyVal(boutiqueRib.iban, 'iban')}
+                        className="text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                        {copiedKey === 'iban' ? <CheckIcon className="w-3.5 h-3.5 text-green-600" /> : 'Copier'}
+                      </button>
+                    </div>
+                  )}
+                  {boutiqueRib.bic && (
+                    <div className="bg-white rounded-lg border border-orange-100 px-3 py-2 flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-[10px] text-gray-400 font-medium">BIC</p>
+                        <p className="text-sm font-mono text-gray-800">{boutiqueRib.bic}</p>
+                      </div>
+                      <button onClick={() => copyVal(boutiqueRib.bic, 'bic')}
+                        className="text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                        {copiedKey === 'bic' ? <CheckIcon className="w-3.5 h-3.5 text-green-600" /> : 'Copier'}
+                      </button>
+                    </div>
+                  )}
+                  {!boutiqueRib.iban && !boutiqueRib.bic && (
+                    <p className="text-xs text-orange-500">Les coordonnées bancaires ne sont pas encore configurées. Contactez votre coach pour le règlement.</p>
+                  )}
+                </div>
+              )}
+
+              {c.statut === 'active' && (
+                <p className="text-xs text-green-600 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+                  ✓ Votre accès est activé. Merci !
+                </p>
+              )}
+            </div>
+          )
+        })()}
+      </Modal>
     </div>
   )
 }

@@ -3,10 +3,12 @@
 import { useState, useEffect } from 'react'
 import {
   collection, query, orderBy, onSnapshot, where,
-  doc, runTransaction, Timestamp, getDocs, addDoc, deleteDoc,
+  doc, runTransaction, Timestamp, getDocs, addDoc, deleteDoc, getDoc,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { uploadImage } from '@/lib/uploadImage'
+import { randomUUID } from '@/lib/uuid'
+import { addParcoursActivite } from '@/lib/parcoursPlanning'
 import { useAuth } from '@/context/AuthContext'
 import Modal from '@/components/ui/Modal'
 import {
@@ -14,8 +16,8 @@ import {
   UsersIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon,
   PlusIcon, TrashIcon, ChatBubbleLeftIcon, UserGroupIcon,
   DocumentArrowUpIcon, FireIcon, HeartIcon, SparklesIcon,
-  BoltIcon, ArrowRightIcon, PhoneIcon, EnvelopeIcon, GlobeAltIcon,
-  StarIcon as StarOutline, PhotoIcon,
+  BoltIcon, ArrowRightIcon, ArrowLeftIcon, PhoneIcon, EnvelopeIcon, GlobeAltIcon,
+  StarIcon as StarOutline, PhotoIcon, BeakerIcon,
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 
@@ -67,6 +69,7 @@ interface Review {
   rating: number
   comment: string
   photoUrl?: string | null
+  userUid?: string | null
   createdAt?: Timestamp
 }
 
@@ -109,18 +112,26 @@ function sessionTimeRange(s: Session): string {
 
 // Numéro de contact du coach (celui de la séance, sinon le numéro par défaut)
 const DEFAULT_CONTACT_PHONE = '+33679408254'
-function sessionCancelSmsLink(s: Session): string {
+function sessionCancelSmsLink(s: Session, signature = '[Votre prénom et nom]'): string {
   const phone = (s.contactPhone || DEFAULT_CONTACT_PHONE).replace(/\s/g, '')
   const dateLabel = fmtDate(s.date)
-  const body = `Bonjour Teddy,\n\nJe suis inscrit(e) au Parcours Sportif du ${dateLabel} mais je ne pourrai malheureusement pas être présent(e).\n\nDésolé(e) pour le désagrément et merci de votre compréhension.`
+  const body = `Bonjour Teddy,\n\nJe suis inscrit(e) au Parcours Sportif du ${dateLabel} mais je ne pourrai malheureusement pas être présent(e).\n\nDésolé(e) pour le désagrément et merci de votre compréhension.\n\n${signature}`
   return `sms:${phone}?body=${encodeURIComponent(body)}`
 }
 
-const IMPORTANT_NOTES = [
-  { icon: CheckCircleIcon, bg: 'bg-blue-50', color: 'text-blue-600', text: 'Inscription avant 12h00 le Jour J' },
-  { icon: UserGroupIcon,   bg: 'bg-orange-50', color: 'text-orange-500', text: 'Séance maintenue à partir de 6 participants' },
-  { icon: ChatBubbleLeftIcon, bg: 'bg-red-50', color: 'text-red-500', text: 'Prévenez en cas d\'imprévu' },
-  { icon: UsersIcon,       bg: 'bg-purple-50', color: 'text-purple-500', text: 'Prévoyez votre propre bouteille d\'eau' },
+function WaterDropIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 3C12 3 5.5 10 5.5 15a6.5 6.5 0 0 0 13 0C18.5 10 12 3 12 3z" />
+    </svg>
+  )
+}
+
+const IMPORTANT_NOTES_BASE = [
+  { key: 'heure',   Icon: CheckCircleIcon,   bg: 'bg-blue-50',   color: 'text-blue-600',   text: 'Inscription avant 12h le Jour J',            href: null },
+  { key: 'min',     Icon: UserGroupIcon,      bg: 'bg-orange-50', color: 'text-orange-500', text: 'Séance maintenue à partir de 6 participants', href: null },
+  { key: 'imprévu', Icon: PhoneIcon,          bg: 'bg-red-50',    color: 'text-red-500',    text: 'Prévenez en cas d\'imprévu',                 href: '__SMS__' },
+  { key: 'eau',     Icon: WaterDropIcon,      bg: 'bg-purple-50', color: 'text-purple-500', text: 'Prévoyez votre propre bouteille d\'eau',     href: null },
 ]
 
 const BENEFITS = [
@@ -138,7 +149,11 @@ D'autres dates seront potentiellement rajoutées par la suite !
 
 Attention : Si vous vous inscrivez mais que vous ne venez pas, cela pourrait compromettre l'organisation des Parcours. Merci de me prévenir au plus tôt si vous ne pouvez finalement pas vous libérer.
 
-Information importante : Je ne prends plus les bouteilles d'eau dans mon sac à dos. Merci de prévoir en conséquent.`
+Information importante : Je ne prends plus les bouteilles d'eau dans mon sac à dos. Merci de prévoir en conséquent.
+
+Vous pouvez également regarder la description du cours un peu plus bas sur la page. N'oubliez pas, le cours est ouvert à TOUS et adaptable à TOUS !!!!
+
+Si vous avez des questions, n'hésitez pas à revenir vers moi.`
 
 export default function ParcoursPublicPage() {
   const { currentUser, userProfile, loading: authLoading } = useAuth()
@@ -146,6 +161,16 @@ export default function ParcoursPublicPage() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loadingSessions, setLoadingSessions] = useState(true)
   const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null)
+  const [settingsPhone, setSettingsPhone] = useState(DEFAULT_CONTACT_PHONE)
+
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'parcours_sportif')).then((snap) => {
+      if (snap.exists()) {
+        const phone = snap.data().contactPhone
+        if (phone) setSettingsPhone(phone)
+      }
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     getDocs(collection(db, 'companies')).then((snap) => {
@@ -160,6 +185,7 @@ export default function ParcoursPublicPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [successCount, setSuccessCount] = useState(0)
+  const [successToken, setSuccessToken] = useState('')
   const [showFullInfo, setShowFullInfo] = useState(false)
   const [showWhat, setShowWhat] = useState(false)
 
@@ -207,17 +233,42 @@ export default function ParcoursPublicPage() {
           photoUrl = await uploadImage(reviewForm.photo, path)
         } catch { photoUrl = null }
       }
-      await addDoc(collection(db, 'parcours_reviews'), {
+      // Relier l'avis à un compte si l'email correspond à un utilisateur existant
+      const reviewEmail = reviewForm.email.trim().toLowerCase()
+      let userUid: string | null = null
+      if (currentUser?.email?.toLowerCase() === reviewEmail) {
+        userUid = currentUser.uid
+      } else {
+        try {
+          const uSnap = await getDocs(query(collection(db, 'users'), where('email', '==', reviewEmail)))
+          if (!uSnap.empty) userUid = uSnap.docs[0].id
+        } catch {}
+      }
+      const reviewRef = await addDoc(collection(db, 'parcours_reviews'), {
         name: reviewForm.name.trim(),
-        email: reviewForm.email.trim().toLowerCase(),
+        email: reviewEmail,
         rating: reviewForm.rating,
         comment: reviewForm.comment.trim(),
         photoUrl,
+        userUid,
         createdAt: Timestamp.now(),
       })
       setReviewSuccess(true)
       setReviewForm({ name: '', email: '', rating: 5, comment: '', photo: null })
       setTimeout(() => { setShowReviewModal(false); setReviewSuccess(false) }, 1500)
+      // Notifier les admins — URL avec l'ID de l'avis pour le surligner
+      fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toAdmins: true,
+          title: 'Nouvel avis Parcours Sportif',
+          body: `${reviewForm.name.trim()} a laissé un avis ${reviewForm.rating}/5.`,
+          url: `/admin/parcours-sportif?highlight=${reviewRef.id}`,
+          persist: true,
+          type: 'AVIS_PARCOURS',
+        }),
+      }).catch(() => {})
     } catch (err: any) {
       setReviewError(err.message ?? 'Erreur lors de l\'envoi de l\'avis')
     }
@@ -247,16 +298,18 @@ export default function ParcoursPublicPage() {
 
   const handleRegisterClick = (session: Session) => {
     if (authLoading) return
-    // Inscription ouverte à tous — pas besoin de compte
+    // Ne pas pré-remplir en mode impersonation (admin prenant la main sur un compte)
+    const isImpersonating = typeof window !== 'undefined' && !!localStorage.getItem('tc_impersonation')
+    const canPrefill = currentUser && userProfile && !isImpersonating
     setSelected(session)
     setSuccessCount(0)
     setError('')
     setParticipants([{
       ...emptyParticipant(),
-      firstName: userProfile?.prenom ?? '',
-      lastName: userProfile?.nom ?? '',
-      email: currentUser?.email ?? '',
-      phone: userProfile?.phone_number ?? '',
+      firstName: canPrefill ? (userProfile?.prenom ?? '') : '',
+      lastName:  canPrefill ? (userProfile?.nom ?? '')    : '',
+      email:     canPrefill ? (currentUser?.email ?? '')  : '',
+      phone:     canPrefill ? (userProfile?.phone_number ?? '') : '',
     }])
   }
 
@@ -317,7 +370,7 @@ export default function ParcoursPublicPage() {
         })
       )
 
-      const { notify } = await runTransaction(db, async (tx) => {
+      const { notify, firstRegId, firstToken } = await runTransaction(db, async (tx) => {
         const sessionRef = doc(db, 'sessions', selected.id)
         const snap = await tx.get(sessionRef)
         if (!snap.exists()) throw new Error('Séance introuvable')
@@ -327,14 +380,16 @@ export default function ParcoursPublicPage() {
           available <= 0 ? 'Cette séance est complète' : `Il ne reste que ${available} place${available > 1 ? 's' : ''}`
         )
         const newCount = data.registeredCount + n
-        // Téléphone + email de l'inscription principale (participant 1) — sert de contact
-        // groupé pour joindre les participants secondaires (impayés notamment)
         const bookingPhone = participants[0]?.phone.trim() ?? ''
         const bookingEmail = participants[0]?.email.trim().toLowerCase() ?? ''
         const bookingName = `${participants[0]?.firstName ?? ''} ${participants[0]?.lastName ?? ''}`.trim()
-        const groupId = crypto.randomUUID()
+        const groupId = randomUUID()
+        let firstRegId = ''
+        let firstToken = ''
         participants.forEach((p, idx) => {
           const regRef = doc(collection(db, 'registrations'))
+          const token = randomUUID()
+          if (idx === 0) { firstRegId = regRef.id; firstToken = token }
           tx.set(regRef, {
             sessionId: selected.id,
             userId: currentUser?.uid ?? null,
@@ -359,7 +414,7 @@ export default function ParcoursPublicPage() {
             paymentStatus: 'pending',
             attendance: 'unknown',
             registeredAt: Timestamp.now(),
-            uniqueToken: crypto.randomUUID(),
+            uniqueToken: token,
           })
         })
         tx.update(sessionRef, {
@@ -370,7 +425,7 @@ export default function ParcoursPublicPage() {
         const notify = data.maxSpots > 10 &&
           prevCount < data.maxSpots - 10 &&
           newCount >= data.maxSpots - 10
-        return { notify }
+        return { notify, firstRegId, firstToken }
       })
       // Notification admin à chaque inscription (push + section Notifications)
       const who = `${participants[0]?.firstName ?? ''} ${participants[0]?.lastName ?? ''}`.trim() || 'Un participant'
@@ -385,7 +440,7 @@ export default function ParcoursPublicPage() {
           body: n > 1
             ? `${who} a inscrit ${n} personnes à "${selected.title}"`
             : `${who} s'est inscrit(e) à "${selected.title}"`,
-          url: `/admin/parcours-sportif`,
+          url: `/admin/parcours-sportif/${selected.id}?highlight=${firstRegId}`,
         }),
       }).catch(() => {})
 
@@ -403,11 +458,38 @@ export default function ParcoursPublicPage() {
           }),
         }).catch(() => {})
       }
+      // Si le participant principal a un compte, ajouter la séance à son planning
+      if (currentUser) {
+        await addParcoursActivite({
+          userId: currentUser.uid,
+          registrationId: firstRegId,
+          sessionId: selected.id,
+          session: selected as any,
+        })
+      }
+      setSuccessToken(firstToken)
       setSuccessCount(n)
     } catch (err: any) {
       setError(err.message ?? 'Erreur lors de l\'inscription')
     }
     setSubmitting(false)
+  }
+
+  // Signature SMS : nom de l'utilisateur connecté, sinon un repère à compléter
+  const userSignature = currentUser && userProfile
+    ? `${userProfile.prenom ?? ''} ${userProfile.nom ?? ''}`.trim()
+    : ''
+  const smsSignature = userSignature ? `\n\n${userSignature}` : '\n\n[Votre prénom et nom]'
+
+  const openReviewModal = () => {
+    setReviewSuccess(false)
+    setReviewError('')
+    setReviewForm((f) => ({
+      ...f,
+      name: f.name || userProfile?.prenom || '',
+      email: currentUser?.email ?? f.email,
+    }))
+    setShowReviewModal(true)
   }
 
   return (
@@ -421,7 +503,12 @@ export default function ParcoursPublicPage() {
             <h1 className="text-lg sm:text-xl font-extrabold text-gray-900 leading-tight truncate">Teddy Coaching</h1>
             <p className="text-xs sm:text-sm font-semibold text-blue-600">Parcours Sportifs</p>
           </div>
-          {!currentUser && !authLoading && (
+          {currentUser ? (
+            <a href="/mes-parcours" className="flex items-center gap-1.5 text-xs font-medium text-gray-600 border border-gray-200 bg-white hover:bg-gray-50 px-3 py-1.5 rounded-lg transition shrink-0">
+              <ArrowLeftIcon className="w-3.5 h-3.5" />
+              Retour
+            </a>
+          ) : !authLoading && (
             <a href="/login" className="text-xs font-medium text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition shrink-0">
               Se connecter
             </a>
@@ -482,13 +569,23 @@ export default function ParcoursPublicPage() {
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
           <h2 className="text-sm font-bold text-gray-800 mb-2.5">À savoir avant de s'inscrire</h2>
           <div className="grid sm:grid-cols-2 gap-2 mb-2.5">
-            {IMPORTANT_NOTES.map((n) => {
-              const Icon = n.icon
-              return (
-                <div key={n.text} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${n.bg}`}>
-                  <div className={`shrink-0 ${n.color}`}>
-                    <Icon className="w-4 h-4" />
+            {IMPORTANT_NOTES_BASE.map((n) => {
+              const { Icon } = n
+              const smsHref = n.href === '__SMS__'
+                ? `sms:${settingsPhone.replace(/\s/g, '')}?body=${encodeURIComponent(`Bonjour Teddy,\n\nJe suis inscrit(e) au Parcours Sportif mais ne pourrai malheureusement pas être présent(e).\n\nDésolé(e) pour le désagrément.${smsSignature}`)}`
+                : null
+              return smsHref ? (
+                <a key={n.key} href={smsHref}
+                  className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 ${n.bg} hover:opacity-80 transition group`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className={`shrink-0 ${n.color}`}><Icon className="w-4 h-4" /></div>
+                    <p className="text-xs sm:text-sm text-gray-700">{n.text}</p>
                   </div>
+                  <span className="text-[10px] font-medium text-red-400 bg-white/70 px-1.5 py-0.5 rounded-full shrink-0 group-hover:bg-white transition">SMS</span>
+                </a>
+              ) : (
+                <div key={n.key} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${n.bg}`}>
+                  <div className={`shrink-0 ${n.color}`}><Icon className="w-4 h-4" /></div>
                   <p className="text-xs sm:text-sm text-gray-700">{n.text}</p>
                 </div>
               )
@@ -587,7 +684,7 @@ export default function ParcoursPublicPage() {
                       {isFull ? 'Séance complète' : 'S\'inscrire'}
                     </div>
                     <a
-                      href={sessionCancelSmsLink(session)}
+                      href={sessionCancelSmsLink(session, userSignature || '[Votre prénom et nom]')}
                       onClick={(e) => e.stopPropagation()}
                       className="mt-2 flex items-center justify-center gap-1.5 text-xs font-medium text-gray-500 border border-gray-200 bg-gray-50 hover:bg-red-50 hover:text-red-500 hover:border-red-200 px-3 py-1.5 rounded-lg transition"
                     >
@@ -632,7 +729,7 @@ export default function ParcoursPublicPage() {
                   <div>
                     <p className="text-sm font-bold text-gray-800">Le circuit training</p>
                     <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">
-                      Pour faire monter le cardio et se renforcer musculairement — avec des options moins ou plus intenses, adaptées à chacun.
+                      Pour faire monter le cardio et se renforcer musculairement — avec des options plus ou moins intenses, adaptées à chacun.
                     </p>
                   </div>
                 </div>
@@ -642,7 +739,7 @@ export default function ParcoursPublicPage() {
                 et s'arrêter près des plages de Pénestin pour réaliser différents circuits training !
               </p>
               <p className="text-sm font-semibold text-gray-800 mt-3">
-                Un cours pour tous, adapté à chacun, et avec une vue magnifique. 🌊 Venez vous défouler avec nous !
+                Un cours pour tous, adapté à chacun, et avec une vue magnifique. Venez vous défouler avec nous !
               </p>
             </div>
           )}
@@ -661,7 +758,7 @@ export default function ParcoursPublicPage() {
                 </span>
               )}
             </div>
-            <button onClick={() => { setReviewSuccess(false); setReviewError(''); setShowReviewModal(true) }}
+            <button onClick={openReviewModal}
               className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition">
               <PlusIcon className="w-3.5 h-3.5" />
               Laisser un avis
@@ -680,6 +777,7 @@ export default function ParcoursPublicPage() {
                 <div key={r.id} className="border border-gray-100 rounded-xl p-3 bg-gray-50/50">
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <div className="flex items-center gap-2 min-w-0">
+                      {/* Avatar : toujours l'initiale du prénom */}
                       <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">
                         {r.name?.[0]?.toUpperCase() ?? '?'}
                       </div>
@@ -687,25 +785,28 @@ export default function ParcoursPublicPage() {
                     </div>
                     <Stars value={r.rating} size="w-3.5 h-3.5" />
                   </div>
-                  {r.photoUrl && (
-                    <img src={r.photoUrl} alt="" loading="lazy"
-                      className="w-full h-32 object-cover rounded-lg mb-2 bg-gray-100" />
-                  )}
                   <p className="text-sm text-gray-600 leading-relaxed">{r.comment}</p>
-                  <div className="flex items-center justify-between gap-2 mt-1.5">
-                    {r.createdAt ? (
-                      <p className="text-[11px] text-gray-400">
-                        {r.createdAt.toDate().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
-                      </p>
-                    ) : <span />}
-                    {canDeleteReview(r) && (
-                      <button onClick={() => handleDeleteReview(r)}
-                        className="flex items-center gap-1 text-[11px] font-medium text-gray-400 hover:text-red-500 transition">
-                        <TrashIcon className="w-3.5 h-3.5" />
-                        Supprimer
-                      </button>
-                    )}
-                  </div>
+                  {/* Photo : thumbnail contenu (pas de zoom/recadrage) */}
+                  {r.photoUrl && (
+                    <div className="mt-2 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                      <img src={r.photoUrl} alt={`Photo de ${r.name}`} loading="lazy"
+                        className="max-h-40 w-auto object-contain" />
+                    </div>
+                  )}
+                    <div className="flex items-center justify-between gap-2 mt-1.5">
+                      {r.createdAt ? (
+                        <p className="text-[11px] text-gray-400">
+                          {r.createdAt.toDate().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                        </p>
+                      ) : <span />}
+                      {canDeleteReview(r) && (
+                        <button onClick={() => handleDeleteReview(r)}
+                          className="flex items-center gap-1 text-[11px] font-medium text-gray-400 hover:text-red-500 transition">
+                          <TrashIcon className="w-3.5 h-3.5" />
+                          Supprimer
+                        </button>
+                      )}
+                    </div>
                 </div>
               ))}
             </div>
@@ -745,12 +846,12 @@ export default function ParcoursPublicPage() {
               </svg>
               <span className="text-sm text-gray-700">@teddy.coaching</span>
             </a>
-            <a href="https://www.facebook.com/groups/630784581317039/" target="_blank" rel="noopener noreferrer"
+            <a href="https://www.facebook.com/teddybcoaching" target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-2.5 border border-gray-200 hover:bg-gray-50 rounded-xl px-3 py-2.5 transition sm:col-span-2">
               <svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07c0 6.02 4.39 11.01 10.13 11.93v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.96.93-1.96 1.89v2.25h3.33l-.53 3.49h-2.8V24C19.61 23.08 24 18.09 24 12.07"/>
               </svg>
-              <span className="text-sm text-gray-700">Groupe Facebook — Teddy Coaching</span>
+              <span className="text-sm text-gray-700">Teddy Coaching</span>
             </a>
           </div>
         </div>
@@ -771,6 +872,14 @@ export default function ParcoursPublicPage() {
                 {successCount === 1 ? 'Votre place est réservée.' : `${successCount} places réservées.`}
               </p>
             </div>
+
+            {/* Lien de gestion de l'inscription (valide sans compte) */}
+            {successToken && (
+              <a href={`/mon-inscription/${successToken}`}
+                className="flex items-center justify-center gap-2 w-full border border-gray-200 text-gray-700 text-sm font-semibold py-2.5 rounded-xl hover:bg-gray-50 transition">
+                Voir / gérer mon inscription
+              </a>
+            )}
 
             {currentUser ? (
               /* Déjà connecté — accès direct à ses inscriptions */
@@ -1000,23 +1109,27 @@ export default function ParcoursPublicPage() {
           </div>
         ) : (
           <form onSubmit={handleReviewSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className={currentUser ? '' : 'grid grid-cols-2 gap-3'}>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Votre prénom *</label>
                 <input type="text" required value={reviewForm.name}
                   onChange={(e) => setReviewForm((f) => ({ ...f, name: e.target.value }))}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Votre email *</label>
-                <input type="email" required value={reviewForm.email}
-                  onChange={(e) => setReviewForm((f) => ({ ...f, email: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
+              {!currentUser && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Votre email *</label>
+                  <input type="email" required value={reviewForm.email}
+                    onChange={(e) => setReviewForm((f) => ({ ...f, email: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              )}
             </div>
-            <p className="text-xs text-gray-400 -mt-2">
-              Votre email reste privé. Il vous permettra de gérer votre avis si vous créez un compte avec la même adresse.
-            </p>
+            {!currentUser && (
+              <p className="text-xs text-gray-400 -mt-2">
+                Votre email reste privé. Il vous permettra de gérer votre avis si vous créez un compte avec la même adresse.
+              </p>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Votre note</label>
               <div className="flex items-center gap-1">

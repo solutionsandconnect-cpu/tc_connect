@@ -780,9 +780,19 @@ export default function OverviewSeancePage() {
               <div className="flex-1">
                 <p className="text-sm font-semibold text-gray-700">Bilan de fin de séance</p>
                 {bilanFinFilled
-                  ? <p className={`text-xs font-medium mt-0.5 ${scale5Color(motivSeance)}`}>
-                      Motivation : {MOTIV_LABELS[motivSeance - 1]?.split('— ')[1]}
-                    </p>
+                  ? <div className="flex flex-wrap gap-2 mt-0.5">
+                      <p className={`text-xs font-medium ${scale5Color(motivSeance)}`}>
+                        Motiv. : {motivSeance}/5
+                      </p>
+                      <p className={`text-xs font-medium ${scale5Color(intensiteMise)}`}>
+                        Intensité : {intensiteMise}/5
+                      </p>
+                      {intensiteSeance > 0 && (
+                        <p className={`text-xs font-medium ${rpeColor(intensiteSeance)}`}>
+                          RPE : {intensiteSeance}/10
+                        </p>
+                      )}
+                    </div>
                   : <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full mt-1">✗ Non rempli</span>
                 }
               </div>

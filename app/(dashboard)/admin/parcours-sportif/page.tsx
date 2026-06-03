@@ -1,16 +1,17 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { collection, query, orderBy, onSnapshot, getDocs, where, Timestamp, doc, deleteDoc } from 'firebase/firestore'
+import { collection, query, orderBy, onSnapshot, getDocs, where, Timestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { copyText } from '@/lib/clipboard'
 import { useAuth } from '@/context/AuthContext'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Badge from '@/components/ui/Badge'
 import {
   PlusIcon, CalendarIcon, MapPinIcon, UsersIcon,
   ChevronRightIcon, BanknotesIcon, ClipboardDocumentIcon,
   CheckIcon, ShareIcon, ChatBubbleLeftIcon, FireIcon, TrashIcon,
+  EyeIcon, EyeSlashIcon, Cog6ToothIcon,
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 
@@ -33,6 +34,7 @@ interface Session {
   registeredCount: number
   status: 'open' | 'full' | 'cancelled'
   price?: number
+  hidden?: boolean
 }
 
 function fmtDate(ts: Timestamp) {
@@ -54,16 +56,53 @@ function sessionBadge(s: Session) {
 
 export default function AdminParcoursPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const highlightId = searchParams.get('highlight')
   const { userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
 
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
-  // registrations count by sessionId for financial calc
   const [paidBySession, setPaidBySession] = useState<Record<string, number>>({})
   const [copied, setCopied] = useState(false)
   const [reviews, setReviews] = useState<Review[]>([])
   const [deleteReviewConfirm, setDeleteReviewConfirm] = useState<string | null>(null)
+  const [highlightedReviewId, setHighlightedReviewId] = useState<string | null>(highlightId)
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
+  const [filterReviewStars, setFilterReviewStars] = useState(0)
+  const [filterReviewYear, setFilterReviewYear] = useState<number | null>(null)
+
+  const reviewYears = Array.from(
+    new Set(reviews.map((r) => r.createdAt?.toDate().getFullYear()).filter((y): y is number => !!y))
+  ).sort((a, b) => b - a)
+  const filteredReviews = reviews.filter((r) => {
+    if (filterReviewStars > 0 && r.rating !== filterReviewStars) return false
+    if (filterReviewYear && r.createdAt?.toDate().getFullYear() !== filterReviewYear) return false
+    return true
+  })
+
+  const downloadPhoto = async (url: string, name: string) => {
+    try {
+      const res = await fetch(url)
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = name
+      a.click()
+      URL.revokeObjectURL(a.href)
+    } catch { window.open(url, '_blank') }
+  }
+
+  // Scroll vers + surligner l'avis depuis une notification
+  useEffect(() => {
+    if (!highlightedReviewId || !reviews.length) return
+    const scrollT = setTimeout(() => {
+      const el = document.getElementById(`review-${highlightedReviewId}`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 350)
+    const clearT = setTimeout(() => setHighlightedReviewId(null), 5000)
+    return () => { clearTimeout(scrollT); clearTimeout(clearT) }
+  }, [highlightedReviewId, reviews])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -165,14 +204,19 @@ export default function AdminParcoursPage() {
     const price = s.price ?? 5
     const earned = (paidBySession[s.id] ?? 0) * price
     return (
-      <button
-        onClick={() => router.push(`/admin/parcours-sportif/${s.id}`)}
-        className="w-full flex items-center gap-4 bg-white border border-gray-100 rounded-2xl p-4 hover:border-blue-200 hover:shadow-sm transition text-left"
-      >
-        <div className="flex-1 min-w-0">
+      <div className={`w-full flex items-center gap-3 bg-white border rounded-2xl p-4 hover:border-blue-200 hover:shadow-sm transition ${s.hidden ? 'border-gray-300 opacity-70' : 'border-gray-100'}`}>
+        <button
+          onClick={() => router.push(`/admin/parcours-sportif/${s.id}`)}
+          className="flex-1 min-w-0 text-left"
+        >
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-sm font-semibold text-gray-900">{s.title}</span>
             <Badge label={badge.label} variant={badge.variant} />
+            {s.hidden && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-full">
+                <EyeSlashIcon className="w-3 h-3" /> Masquée
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-0.5">
             <span className="flex items-center gap-1 text-xs text-gray-500">
@@ -188,9 +232,16 @@ export default function AdminParcoursPage() {
               </span>
             )}
           </div>
-        </div>
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'sessions', s.id), { hidden: !s.hidden }) }}
+          title={s.hidden ? 'Rendre visible' : 'Masquer'}
+          className={`shrink-0 p-2 rounded-lg border transition ${s.hidden ? 'border-green-200 text-green-600 hover:bg-green-50' : 'border-gray-200 text-gray-400 hover:bg-gray-50'}`}
+        >
+          {s.hidden ? <EyeIcon className="w-4 h-4" /> : <EyeSlashIcon className="w-4 h-4" />}
+        </button>
         <ChevronRightIcon className="w-4 h-4 text-gray-400 shrink-0" />
-      </button>
+      </div>
     )
   }
 
@@ -207,13 +258,23 @@ export default function AdminParcoursPage() {
             <p className="text-sm text-gray-500">Séances de sport en groupe</p>
           </div>
         </div>
-        <button
-          onClick={() => router.push('/admin/parcours-sportif/nouvelle-seance')}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
-        >
-          <PlusIcon className="w-4 h-4" />
-          Nouvelle séance
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push('/admin/parcours-sportif/parametres')}
+            className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            title="Paramètres"
+          >
+            <Cog6ToothIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">Paramètres</span>
+          </button>
+          <button
+            onClick={() => router.push('/admin/parcours-sportif/nouvelle-seance')}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
+          >
+            <PlusIcon className="w-4 h-4" />
+            Nouvelle séance
+          </button>
+        </div>
       </div>
 
       {/* Bilan financier global */}
@@ -306,19 +367,58 @@ export default function AdminParcoursPage() {
 
       {/* ── Avis ── */}
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
-          <StarSolid className="w-4 h-4 text-yellow-400" />
-          Avis des participants ({reviews.length})
-        </h2>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+            <StarSolid className="w-4 h-4 text-yellow-400" />
+            Avis des participants ({filteredReviews.length}{filteredReviews.length !== reviews.length ? ` / ${reviews.length}` : ''})
+          </h2>
+        </div>
+
+        {/* Filtres avis */}
+        {reviews.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1">
+              {[5, 4, 3, 2, 1].map((n) => (
+                <button key={n} onClick={() => setFilterReviewStars(filterReviewStars === n ? 0 : n)}
+                  className={`flex items-center gap-0.5 text-xs font-medium px-2 py-1 rounded-lg border transition ${filterReviewStars === n ? 'bg-yellow-400 text-white border-yellow-400' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {n}<StarSolid className="w-3 h-3" />
+                </button>
+              ))}
+            </div>
+            {reviewYears.length > 0 && (
+              <select value={filterReviewYear ?? ''} onChange={(e) => setFilterReviewYear(e.target.value ? Number(e.target.value) : null)}
+                className="text-xs font-medium border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+                <option value="">Toutes les années</option>
+                {reviewYears.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            )}
+            {(filterReviewStars > 0 || filterReviewYear) && (
+              <button onClick={() => { setFilterReviewStars(0); setFilterReviewYear(null) }}
+                className="text-xs text-gray-400 hover:text-gray-600 underline">
+                Réinitialiser
+              </button>
+            )}
+          </div>
+        )}
+
         {reviews.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
             <StarSolid className="w-8 h-8 text-gray-200 mx-auto mb-2" />
             <p className="text-sm text-gray-400">Aucun avis pour l'instant</p>
           </div>
+        ) : filteredReviews.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
+            <StarSolid className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+            <p className="text-sm text-gray-400">Aucun avis ne correspond à ces filtres</p>
+          </div>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {reviews.map((r) => (
-              <div key={r.id} className="bg-white border border-gray-100 rounded-2xl shadow-sm p-4">
+            {filteredReviews.map((r) => (
+              <div
+                key={r.id}
+                id={`review-${r.id}`}
+                className={`bg-white border rounded-2xl shadow-sm p-4 transition-all duration-700 ${highlightedReviewId === r.id ? 'border-amber-300 bg-amber-50 ring-2 ring-amber-300' : 'border-gray-100'}`}
+              >
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">
@@ -336,8 +436,13 @@ export default function AdminParcoursPage() {
                   </div>
                 </div>
                 {r.photoUrl && (
-                  <img src={r.photoUrl} alt="" loading="lazy"
-                    className="w-full h-32 object-cover rounded-lg mb-2 bg-gray-100" />
+                  <div
+                    className="mb-2 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center cursor-zoom-in"
+                    onClick={() => setLightboxUrl(r.photoUrl!)}
+                  >
+                    <img src={r.photoUrl} alt="" loading="lazy"
+                      className="max-h-36 w-auto object-contain" />
+                  </div>
                 )}
                 <p className="text-sm text-gray-600 leading-relaxed">{r.comment}</p>
                 <div className="flex items-center justify-between gap-2 mt-2">
@@ -366,6 +471,36 @@ export default function AdminParcoursPage() {
           </div>
         )}
       </div>
+
+      {/* ── Lightbox photo ── */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex flex-col items-center justify-center p-4"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <img
+            src={lightboxUrl}
+            alt="Avis photo"
+            className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div className="flex items-center gap-3 mt-4" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => downloadPhoto(lightboxUrl, `avis-parcours-${Date.now()}.jpg`)}
+              className="flex items-center gap-2 bg-white text-gray-800 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-gray-100 transition"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" /></svg>
+              Télécharger
+            </button>
+            <button
+              onClick={() => setLightboxUrl(null)}
+              className="flex items-center gap-2 bg-white/20 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-white/30 transition"
+            >
+              Fermer
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

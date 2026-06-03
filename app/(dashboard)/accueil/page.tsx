@@ -9,6 +9,8 @@ import {
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useNotifications } from '@/hooks/useNotifications'
+import { usePendingSubscriptions } from '@/hooks/usePendingSubscriptions'
+import { useUnseenDocuments } from '@/hooks/useUnseenDocuments'
 import {
   CalendarIcon, BellIcon, ChevronRightIcon,
   MapPinIcon, GlobeAltIcon,
@@ -17,7 +19,8 @@ import Badge from '@/components/ui/Badge'
 import { formatHeure, getEtatBadge } from '@/lib/planningUtils'
 import { navItems } from '@/components/layout/Navbar'
 import { useStoreApps } from '@/hooks/useStoreApps'
-import { listenStoreSubscriptions, updateStoreSubscription } from '@/lib/storeService'
+import { listenStoreSubscriptions, updateStoreSubscription, updateSubWithEvent, appendSubEvent, computeDateFin, suspendExpiredSubscriptions } from '@/lib/storeService'
+import { cleanupArchivedSubscriptions } from '@/lib/storeCleanup'
 
 // Ajoute une période (mensuel = +1 mois, annuel = +1 an) à un timestamp ms
 function addPeriodMs(fromMs: number, periodicite: string): number {
@@ -30,6 +33,8 @@ function addPeriodMs(fromMs: number, periodicite: string): number {
 export default function AccueilPage() {
   const { currentUser, userProfile } = useAuth()
   const { unreadCount } = useNotifications()
+  const pendingSubscriptions = usePendingSubscriptions()
+  const unseenDocuments = useUnseenDocuments()
   const router = useRouter()
   const isAdmin = userProfile?.role_app === 'Admin'
   const droits = userProfile?.droits as any
@@ -51,6 +56,18 @@ export default function AccueilPage() {
     const unsub = listenStoreSubscriptions(setAllStoreSubs)
     return unsub
   }, [currentUser, isAdmin])
+
+  // Bascule automatiquement en "suspended" les abonnements expirés (date de fin dépassée)
+  useEffect(() => {
+    if (!isAdmin || allStoreSubs.length === 0) return
+    suspendExpiredSubscriptions(allStoreSubs as any)
+  }, [isAdmin, allStoreSubs])
+
+  // Purge les données des abonnements archivés depuis plus de 90 jours
+  useEffect(() => {
+    if (!isAdmin || allStoreSubs.length === 0 || storeApps.length === 0) return
+    cleanupArchivedSubscriptions(allStoreSubs as any, storeApps as any)
+  }, [isAdmin, allStoreSubs, storeApps])
 
   useEffect(() => {
     if (!currentUser) return
@@ -291,31 +308,85 @@ export default function AccueilPage() {
     return 'Bonsoir'
   }
 
-  // Rappels de paiement : souscriptions actives d'apps payantes dont l'échéance approche
+  // Abonnements boutique (apps payantes récurrentes) dont l'accès arrive à échéance ou est expiré
   const nowMs = Date.now()
   const paymentAlerts = isAdmin
     ? allStoreSubs
-        .filter((s) => s.statut === 'active')
+        // Abonnements actifs (échéance proche) OU suspendus suite à expiration
+        .filter((s) => s.statut === 'active' || s.statut === 'suspended')
         .map((s) => {
           const app = storeApps.find((a) => a.id === s.appId)
           if (!app || app.prix <= 0 || app.periodicite === 'unique') return null
-          const baseMs = s.nextPaymentDate?.toMillis?.()
+          // Échéance = date de fin d'accès (dateFin), sinon repli sur l'ancienne logique
+          const baseMs = s.dateFin?.toMillis?.()
+            ?? s.nextPaymentDate?.toMillis?.()
             ?? (s.dateDebut?.toMillis ? addPeriodMs(s.dateDebut.toMillis(), app.periodicite) : null)
           if (!baseMs) return null
           const daysLeft = Math.round((baseMs - nowMs) / 86400000)
-          if (daysLeft > 7) return null
+          // Actif : alerte à partir de J-7. Suspendu : seulement s'il a réellement expiré.
+          if (s.statut === 'active' && daysLeft > 7) return null
+          if (s.statut === 'suspended' && daysLeft >= 0) return null
           return { sub: s, app, dueMs: baseMs, daysLeft }
         })
         .filter(Boolean)
         .sort((a: any, b: any) => a.dueMs - b.dueMs) as { sub: any; app: any; dueMs: number; daysLeft: number }[]
     : []
 
+  // Marque payé : prolonge l'accès d'une période ET réactive l'abonnement si suspendu
   const validatePayment = async (alert: { sub: any; app: any; dueMs: number }) => {
-    const next = addPeriodMs(alert.dueMs, alert.app.periodicite)
-    await updateStoreSubscription(alert.sub.id, {
-      nextPaymentDate: Timestamp.fromMillis(next),
+    const fromMs = Math.max(alert.dueMs, Date.now()) // repart de l'échéance, ou de maintenant si déjà expiré
+    const finMs = computeDateFin(fromMs, alert.app.periodicite) ?? fromMs
+    await updateSubWithEvent(alert.sub.id, {
+      statut: 'active',
+      dateFin: Timestamp.fromMillis(finMs),
       lastPaymentAt: Timestamp.now(),
-    })
+    }, 'renewed')
+    // Prévenir l'utilisateur que son accès est renouvelé
+    if (alert.sub.userUid) {
+      fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: alert.sub.userUid,
+          persist: true,
+          type: 'BOUTIQUE_VALIDATION',
+          title: 'Abonnement renouvelé',
+          body: `Votre accès à "${alert.app.nom}" a été renouvelé. Bonne utilisation !`,
+          url: alert.app.route ?? '/boutique',
+        }),
+      }).catch(() => {})
+    }
+  }
+
+  // Archive un abonnement terminé (la personne a arrêté) → sort des alertes
+  const archiveSub = async (alert: { sub: any }) => {
+    await updateSubWithEvent(alert.sub.id, {
+      statut: 'cancelled',
+      archivedAt: Timestamp.now(),
+    } as any, 'archived')
+  }
+
+  // Relance l'utilisateur (push + notification in-app) pour renouveler son abonnement
+  const [relancedIds, setRelancedIds] = useState<Set<string>>(new Set())
+  const relancePayment = (alert: { sub: any; app: any; daysLeft: number }) => {
+    if (!alert.sub.userUid) return
+    const expired = alert.daysLeft < 0
+    fetch('/api/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: alert.sub.userUid,
+        persist: true,
+        type: 'BOUTIQUE_ECHEANCE',
+        title: expired ? 'Abonnement expiré' : 'Abonnement à renouveler',
+        body: expired
+          ? `Votre accès à "${alert.app.nom}" a expiré. Renouvelez pour continuer à l'utiliser.`
+          : `Votre accès à "${alert.app.nom}" arrive à échéance. Pensez à le renouveler pour ne pas perdre l'accès.`,
+        url: '/boutique',
+      }),
+    }).catch(() => {})
+    appendSubEvent(alert.sub.id, 'reminder', expired ? 'Abonnement expiré' : 'Échéance proche').catch(() => {})
+    setRelancedIds((prev) => new Set(prev).add(alert.sub.id))
   }
 
   const facturerSub = (alert: { sub: any; app: any }) => {
@@ -391,37 +462,48 @@ export default function AccueilPage() {
         </section>
       )}
 
-      {/* RAPPELS DE PAIEMENT BOUTIQUE — admin uniquement */}
-      {isAdmin && paymentAlerts.length > 0 && (
-        <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3">
+      {/* ABONNEMENTS BOUTIQUE À ÉCHÉANCE — admin uniquement */}
+      {isAdmin && paymentAlerts.length > 0 && (() => {
+        const expiredCount = paymentAlerts.filter((a) => a.daysLeft < 0).length
+        return (
+        <div className={`rounded-xl px-4 py-3 border ${expiredCount > 0 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-purple-500">💳</span>
-            <p className="text-sm font-semibold text-purple-800">
-              {paymentAlerts.length} paiement{paymentAlerts.length > 1 ? 's' : ''} boutique à valider
+            <span>{expiredCount > 0 ? '⛔' : '⏳'}</span>
+            <p className={`text-sm font-semibold ${expiredCount > 0 ? 'text-red-800' : 'text-amber-800'}`}>
+              {paymentAlerts.length} abonnement{paymentAlerts.length > 1 ? 's' : ''} boutique à échéance
+              {expiredCount > 0 ? ` · ${expiredCount} expiré${expiredCount > 1 ? 's' : ''}` : ''}
             </p>
           </div>
           <div className="space-y-1.5">
             {paymentAlerts.map((a) => {
               const overdue = a.daysLeft < 0
-              const tag = overdue ? `en retard de ${-a.daysLeft}j` : a.daysLeft === 0 ? "aujourd'hui" : `dans ${a.daysLeft}j`
+              const tag = overdue ? `expiré depuis ${-a.daysLeft}j` : a.daysLeft === 0 ? "expire aujourd'hui" : `expire dans ${a.daysLeft}j`
+              const relanced = relancedIds.has(a.sub.id)
               return (
-                <div key={a.sub.id} className="flex items-center justify-between gap-2 text-xs py-1.5 px-2 rounded-lg bg-white/60 border border-purple-100">
+                <div key={a.sub.id} className="flex items-center justify-between gap-2 text-xs py-1.5 px-2 rounded-lg bg-white/70 border border-gray-100 flex-wrap">
                   <span className="text-gray-700 truncate min-w-0">
                     <span className="font-medium">{a.sub.clientNom || '—'}</span>
                     <span className="text-gray-400 mx-1">·</span>{a.app.nom}
                     <span className="text-gray-400 mx-1">·</span>{a.app.prix} €
-                    <span className={`ml-1 ${overdue ? 'text-red-600' : 'text-purple-600'}`}>· {tag}</span>
+                    <span className={`ml-1 font-medium ${overdue ? 'text-red-600' : 'text-amber-600'}`}>· {tag}</span>
                   </span>
-                  <span className="flex items-center gap-2 shrink-0">
+                  <span className="flex items-center gap-2.5 shrink-0">
+                    {a.sub.userUid && (
+                      relanced
+                        ? <span className="text-green-600">✓ Relancé</span>
+                        : <button onClick={() => relancePayment(a)} className="font-medium text-orange-600 hover:underline">Relancer</button>
+                    )}
                     <button onClick={() => facturerSub(a)} className="text-blue-600 hover:underline">Facturer</button>
-                    <button onClick={() => validatePayment(a)} className="text-green-600 hover:underline">Payé ✓</button>
+                    <button onClick={() => validatePayment(a)} title="Marquer payé et prolonger l'accès" className="text-green-600 hover:underline">Payé ✓ (+1 période)</button>
+                    <button onClick={() => archiveSub(a)} title="La personne a arrêté son abonnement — retirer des alertes" className="text-gray-500 hover:underline">Archiver</button>
                   </span>
                 </div>
               )
             })}
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* ALERTE ÉCHÉANCES À ÉMETTRE — admin uniquement */}
       {isAdmin && pendingEcheances.length > 0 && (
@@ -672,14 +754,20 @@ export default function AccueilPage() {
             <div className="grid grid-cols-3 gap-3">
               {extraItems.map((item) => {
                 const Icon = item.icon
+                const badge = item.href === '/boutique' ? pendingSubscriptions : item.href === '/documents' ? unseenDocuments : 0
                 return (
                   <button
                     key={item.href}
                     onClick={() => router.push(item.href)}
                     className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex flex-col items-center gap-2 hover:shadow-md transition"
                   >
-                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <div className="relative w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
                       <Icon className="w-5 h-5" />
+                      {badge > 0 && (
+                        <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
+                          {badge > 9 ? '9+' : badge}
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs font-medium text-gray-700 text-center leading-tight">{item.label}</span>
                   </button>

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import TeamSelector from './TeamSelector'
 import { createBeloteGame } from '@/lib/belote/firebase'
+import { useAuth } from '@/context/AuthContext'
 import type { BeloteTeam, BeloteEndCondition } from '@/lib/belote/types'
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function GameSetup({ onCreated, onError }: Props) {
+  const { currentUser } = useAuth()
   const [team1, setTeam1] = useState<BeloteTeam | null>(null)
   const [team2, setTeam2] = useState<BeloteTeam | null>(null)
   const [endCondition, setEndCondition] = useState<BeloteEndCondition>('score')
@@ -33,6 +35,7 @@ export default function GameSetup({ onCreated, onError }: Props) {
         status: 'in_progress',
         winnerId: null,
         totalScore: { team1: 0, team2: 0 },
+        createdBy: currentUser?.uid ?? '',
         finishedAt: null,
       })
       onCreated((ref as { id: string }).id)

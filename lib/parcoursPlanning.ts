@@ -1,0 +1,90 @@
+import { db } from '@/lib/firebase'
+import {
+  collection, addDoc, getDocs, query, where, deleteDoc, doc, Timestamp,
+} from 'firebase/firestore'
+
+/** Formate une heure (Timestamp) en "HH:MM". */
+function fmtHeure(ts?: Timestamp | null): string {
+  if (!ts?.toDate) return ''
+  return ts.toDate().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+}
+
+interface SessionLike {
+  date: Timestamp
+  dateEnd?: Timestamp | null
+  durationMinutes?: number
+  title?: string
+  locationLabel?: string
+  location?: string
+}
+
+/**
+ * Ajoute (sans doublon) une activité "Parcours Sportif" au planning de l'utilisateur,
+ * liée à son inscription. Ne fait rien si l'utilisateur n'a pas de compte (userId vide).
+ */
+export async function addParcoursActivite(params: {
+  userId: string | null | undefined
+  registrationId: string
+  sessionId: string
+  session: SessionLike
+}): Promise<void> {
+  const { userId, registrationId, sessionId, session } = params
+  if (!userId || !registrationId) return
+  try {
+    // Anti-doublon : une seule activité par inscription
+    const existing = await getDocs(
+      query(collection(db, 'activites_clients'), where('registrationId', '==', registrationId))
+    )
+    if (!existing.empty) return
+
+    const heureDebut = fmtHeure(session.date)
+    const heureFin = session.dateEnd
+      ? fmtHeure(session.dateEnd)
+      : session.durationMinutes
+        ? fmtHeure(Timestamp.fromMillis(session.date.toMillis() + session.durationMinutes * 60 * 1000))
+        : ''
+    const lieu = session.locationLabel || session.location || ''
+
+    await addDoc(collection(db, 'activites_clients'), {
+      userId,
+      clientId: '',
+      type_activite: 'Parcours Sportif',
+      date_activite: session.date,
+      heure_debut: heureDebut,
+      heure_fin: heureFin,
+      notes: [session.title, lieu].filter(Boolean).join(' · '),
+      registrationId,
+      sessionId,
+      source: 'parcours_sportif',
+      date_create: Timestamp.now(),
+    })
+  } catch (e) {
+    console.error('[addParcoursActivite]', e)
+  }
+}
+
+/** Supprime l'activité de planning liée à une inscription donnée. */
+export async function removeParcoursActivite(registrationId: string): Promise<void> {
+  if (!registrationId) return
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'activites_clients'), where('registrationId', '==', registrationId))
+    )
+    await Promise.all(snap.docs.map((d) => deleteDoc(doc(db, 'activites_clients', d.id))))
+  } catch (e) {
+    console.error('[removeParcoursActivite]', e)
+  }
+}
+
+/** Supprime toutes les activités de planning liées à une séance (annulation/suppression). */
+export async function removeParcoursActivitesForSession(sessionId: string): Promise<void> {
+  if (!sessionId) return
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'activites_clients'), where('sessionId', '==', sessionId))
+    )
+    await Promise.all(snap.docs.map((d) => deleteDoc(doc(db, 'activites_clients', d.id))))
+  } catch (e) {
+    console.error('[removeParcoursActivitesForSession]', e)
+  }
+}

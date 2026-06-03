@@ -12,7 +12,7 @@ export const createUser = async (
     prenom: data.prenom,
     email: data.email,
     phone_number: data.phone_number || "",
-    display_name: `${data.prenom} ${data.nom}`,
+    display_name: `${data.nom} ${data.prenom}`,
     uid: "",
     photo_url: "",
     actif: true,
@@ -34,7 +34,7 @@ export const updateUser = async (
     if (v !== undefined) updates[k] = v
   }
   if (data.nom !== undefined || data.prenom !== undefined) {
-    updates.display_name = `${data.prenom ?? ""} ${data.nom ?? ""}`.trim();
+    updates.display_name = `${data.nom ?? ""} ${data.prenom ?? ""}`.trim();
   }
   await updateDoc(doc(db, "users", id), updates);
 };

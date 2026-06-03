@@ -3,8 +3,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   collection, query, where, getDocs, doc, getDoc, onSnapshot,
-  runTransaction, Timestamp, orderBy,
+  runTransaction, Timestamp, orderBy, updateDoc, addDoc,
 } from 'firebase/firestore'
+import { copyText } from '@/lib/clipboard'
+import { uploadImage } from '@/lib/uploadImage'
+import { randomUUID } from '@/lib/uuid'
+import { addParcoursActivite, removeParcoursActivite } from '@/lib/parcoursPlanning'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
@@ -12,8 +16,34 @@ import Modal from '@/components/ui/Modal'
 import {
   CalendarIcon, MapPinIcon, CheckCircleIcon, XCircleIcon,
   FireIcon, BanknotesIcon, ClockIcon, UsersIcon, HeartIcon,
-  SparklesIcon, BoltIcon, ArrowRightIcon,
+  SparklesIcon, BoltIcon, ArrowRightIcon, ClipboardDocumentIcon, CheckIcon,
+  ExclamationCircleIcon, ChatBubbleLeftRightIcon, PhotoIcon, TrashIcon,
 } from '@heroicons/react/24/outline'
+import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
+import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
+
+interface Review {
+  id: string
+  name: string
+  email?: string
+  rating: number
+  comment: string
+  photoUrl?: string | null
+  userUid?: string | null
+  createdAt?: Timestamp
+}
+
+function ReviewStars({ value }: { value: number }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map((n) =>
+        n <= value
+          ? <StarSolid key={n} className="w-3.5 h-3.5 text-yellow-400" />
+          : <StarOutline key={n} className="w-3.5 h-3.5 text-gray-300" />
+      )}
+    </div>
+  )
+}
 
 interface Registration {
   id: string
@@ -55,6 +85,9 @@ const PAYMENT_LABELS: Record<string, string> = {
 
 function fmtDate(ts: Timestamp) {
   return ts.toDate().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+}
+function shortDate(ts?: Timestamp) {
+  return ts ? ts.toDate().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
 }
 function fmtHeure(ts: Timestamp) {
   return ts.toDate().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
@@ -101,6 +134,114 @@ export default function MesParcoursPage() {
   const [loading, setLoading] = useState(true)
   const [cancelConfirm, setCancelConfirm] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState(false)
+  const [iban, setIban] = useState('')
+  const [bic, setBic] = useState('')
+  const [contactPhone, setContactPhone] = useState('+33679408254')
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  useEffect(() => {
+    getDoc(doc(db, 'settings', 'parcours_sportif')).then((snap) => {
+      if (snap.exists()) {
+        const d = snap.data()
+        if (d.iban) setIban(d.iban)
+        if (d.bic) setBic(d.bic)
+        if (d.contactPhone) setContactPhone(d.contactPhone)
+      }
+    }).catch(() => {})
+  }, [])
+
+  // Lien SMS pour prévenir le coach d'un imprévu (signé avec le nom de l'utilisateur)
+  const cancelSmsHref = (reg: RegWithSession) => {
+    const dateLabel = reg.session ? fmtDate(reg.session.date) : ''
+    const signature = `${userProfile?.prenom ?? ''} ${userProfile?.nom ?? ''}`.trim() || '[Votre prénom et nom]'
+    const body = `Bonjour Teddy,\n\nJe suis inscrit(e) au Parcours Sportif du ${dateLabel} mais je ne pourrai malheureusement pas être présent(e).\n\nDésolé(e) pour le désagrément et merci de votre compréhension.\n\n${signature}`
+    return `sms:${contactPhone.replace(/\s/g, '')}?body=${encodeURIComponent(body)}`
+  }
+
+  const copyField = async (value: string, key: string) => {
+    await copyText(value)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(null), 2000)
+  }
+
+  // ── Avis (lecture seule ici, dépôt sur la page publique) ──
+  const [reviews, setReviews] = useState<Review[]>([])
+  useEffect(() => {
+    const q = query(collection(db, 'parcours_reviews'), orderBy('createdAt', 'desc'))
+    return onSnapshot(q,
+      (snap) => setReviews(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Review))),
+      () => setReviews([])
+    )
+  }, [])
+  // Relier rétroactivement les avis dont l'email correspond à mon compte
+  useEffect(() => {
+    if (!currentUser?.email || !reviews.length) return
+    const myEmail = currentUser.email.toLowerCase()
+    reviews
+      .filter((r) => !r.userUid && r.email && r.email.toLowerCase() === myEmail)
+      .forEach((r) => { updateDoc(doc(db, 'parcours_reviews', r.id), { userUid: currentUser.uid }).catch(() => {}) })
+  }, [reviews, currentUser])
+
+  const avgRating = reviews.length > 0
+    ? Math.round((reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length) * 10) / 10
+    : 0
+
+  // Modal "Laisser un avis"
+  const [showReviewModal, setShowReviewModal] = useState(false)
+  const [reviewForm, setReviewForm] = useState({ name: '', rating: 5, comment: '', photo: null as File | null })
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
+  const [reviewError, setReviewError] = useState('')
+  const [reviewSuccess, setReviewSuccess] = useState(false)
+
+  const openReviewModal = () => {
+    setReviewSuccess(false)
+    setReviewError('')
+    setReviewForm({ name: userProfile?.prenom || '', rating: 5, comment: '', photo: null })
+    setShowReviewModal(true)
+  }
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!currentUser) return
+    if (!reviewForm.name.trim()) { setReviewError('Veuillez indiquer votre prénom.'); return }
+    if (!reviewForm.comment.trim()) { setReviewError('Veuillez écrire un avis.'); return }
+    setReviewError('')
+    setReviewSubmitting(true)
+    try {
+      let photoUrl: string | null = null
+      if (reviewForm.photo) {
+        try {
+          photoUrl = await uploadImage(reviewForm.photo, `parcours_reviews/${Date.now()}_${reviewForm.photo.name}`)
+        } catch { photoUrl = null }
+      }
+      const reviewRef = await addDoc(collection(db, 'parcours_reviews'), {
+        name: reviewForm.name.trim(),
+        email: currentUser.email?.toLowerCase() ?? '',
+        rating: reviewForm.rating,
+        comment: reviewForm.comment.trim(),
+        photoUrl,
+        userUid: currentUser.uid,
+        createdAt: Timestamp.now(),
+      })
+      setReviewSuccess(true)
+      setTimeout(() => setShowReviewModal(false), 1500)
+      fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toAdmins: true,
+          title: 'Nouvel avis Parcours Sportif',
+          body: `${reviewForm.name.trim()} a laissé un avis ${reviewForm.rating}/5.`,
+          url: `/admin/parcours-sportif?highlight=${reviewRef.id}`,
+          persist: true,
+          type: 'AVIS_PARCOURS',
+        }),
+      }).catch(() => {})
+    } catch (err: any) {
+      setReviewError(err.message ?? "Erreur lors de l'envoi de l'avis")
+    }
+    setReviewSubmitting(false)
+  }
 
   // Modal inscription
   const [selected, setSelected] = useState<Session | null>(null)
@@ -180,6 +321,7 @@ export default function MesParcoursPage() {
     setError('')
     setSubmitting(true)
     try {
+      let newRegId = ''
       await runTransaction(db, async (tx) => {
         const sessionRef = doc(db, 'sessions', selected.id)
         const snap = await tx.get(sessionRef)
@@ -188,6 +330,7 @@ export default function MesParcoursPage() {
         if (data.registeredCount >= data.maxSpots) throw new Error('Cette séance est complète')
         const newCount = data.registeredCount + 1
         const regRef = doc(collection(db, 'registrations'))
+        newRegId = regRef.id
         tx.set(regRef, {
           sessionId: selected.id,
           userId: currentUser.uid,
@@ -204,14 +347,14 @@ export default function MesParcoursPage() {
           bookingName: `${form.firstName} ${form.lastName}`.trim(),
           isPrimaryBooking: true,
           registeredAt: Timestamp.now(),
-          uniqueToken: crypto.randomUUID(),
+          uniqueToken: randomUUID(),
         })
         tx.update(sessionRef, {
           registeredCount: newCount,
           status: newCount >= data.maxSpots ? 'full' : 'open',
         })
       })
-      // Notification admin (push + section Notifications)
+      // Notification admin (push + section Notifications) avec URL de highlight
       const who = `${form.firstName} ${form.lastName}`.trim() || 'Un participant'
       fetch('/api/push/send', {
         method: 'POST',
@@ -222,9 +365,16 @@ export default function MesParcoursPage() {
           type: 'PARCOURS_INSCRIPTION',
           title: 'Nouvelle inscription Parcours Sportif',
           body: `${who} s'est inscrit(e) à "${selected.title}"`,
-          url: '/admin/parcours-sportif',
+          url: `/admin/parcours-sportif/${selected.id}?highlight=${newRegId}`,
         }),
       }).catch(() => {})
+      // Ajouter la séance au planning de l'utilisateur (activité)
+      await addParcoursActivite({
+        userId: currentUser.uid,
+        registrationId: newRegId,
+        sessionId: selected.id,
+        session: selected as any,
+      })
       setSuccess(true)
       await loadRegistrations()
     } catch (err: any) {
@@ -250,6 +400,26 @@ export default function MesParcoursPage() {
         }
         tx.delete(regRef)
       })
+      // Retirer l'activité du planning
+      await removeParcoursActivite(reg.id)
+      // Prévenir les admins de la désinscription (push + section Notifications)
+      const who = [reg.firstName, reg.lastName].filter(Boolean).join(' ') || userProfile?.display_name || 'Un participant'
+      const dateStr = reg.session?.date ? shortDate(reg.session.date) : ''
+      try {
+        await fetch('/api/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          keepalive: true,
+          body: JSON.stringify({
+            toAdmins: true,
+            persist: true,
+            type: 'PARCOURS_DESINSCRIPTION',
+            title: 'Désinscription Parcours Sportif',
+            body: `${who} s'est désinscrit(e) du Parcours Sportif${dateStr ? ` du ${dateStr}` : ''}.`,
+            url: `/admin/parcours-sportif/${reg.sessionId}`,
+          }),
+        })
+      } catch { /* la désinscription a réussi même si la notif échoue */ }
       setItems((prev) => prev.filter((i) => i.id !== reg.id))
       setCancelConfirm(null)
     } catch (err) {
@@ -316,8 +486,9 @@ export default function MesParcoursPage() {
     const isPast = (session?.date?.toMillis() ?? 0) < now
     const isCancelled = session?.status === 'cancelled'
     const mapsLink = session ? sessionMapsLink(session) : null
+    const isUpcomingUnpaid = !isPast && !isCancelled && reg.paymentStatus === 'pending'
     return (
-      <div className={`bg-white rounded-2xl border shadow-sm p-5 ${isCancelled ? 'border-red-100 opacity-70' : 'border-gray-100'}`}>
+      <div className={`bg-white rounded-2xl border shadow-sm p-5 ${isCancelled ? 'border-red-100 opacity-70' : isUpcomingUnpaid ? 'border-yellow-200' : 'border-gray-100'}`}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex-1 min-w-0">
             <p className="text-base font-semibold text-gray-900 truncate">{session?.title ?? 'Séance'}</p>
@@ -353,22 +524,53 @@ export default function MesParcoursPage() {
             )}
           </div>
         )}
+        {/* Badge impayé discret sur les séances à venir */}
+        {isUpcomingUnpaid && (iban || bic) && (
+          <div className="mb-3 bg-yellow-50 border border-yellow-100 rounded-xl px-3 py-2 space-y-2">
+            <p className="text-xs font-semibold text-yellow-800 flex items-center gap-1">
+              <BanknotesIcon className="w-3.5 h-3.5" /> Règlement en attente
+            </p>
+            {iban && (
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                <p className="text-xs font-mono text-gray-700 break-all">{iban.match(/.{1,4}/g)?.join(' ') ?? iban}</p>
+                <button onClick={() => copyField(iban, `iban-${reg.id}`)}
+                  className="self-start text-[10px] font-medium text-blue-600 border border-blue-200 px-2 py-0.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                  {copiedKey === `iban-${reg.id}` ? '✓ Copié' : 'Copier IBAN'}
+                </button>
+              </div>
+            )}
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+              <p className="text-[10px] text-gray-400">Réf. : nom et prénom + date du parcours</p>
+              <button onClick={() => copyField(`${reg.firstName} ${reg.lastName} - Parcours Sportif du ${shortDate(reg.session?.date)}`.trim(), `ref-${reg.id}`)}
+                className="self-start text-[10px] font-medium text-blue-600 border border-blue-200 px-2 py-0.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                {copiedKey === `ref-${reg.id}` ? '✓ Copié' : 'Copier la référence'}
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${reg.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
             {PAYMENT_LABELS[reg.paymentStatus] ?? reg.paymentStatus}
           </span>
           {!isPast && !isCancelled && (
-            cancelConfirm === reg.id ? (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">Annuler ?</span>
-                <button onClick={() => setCancelConfirm(null)} className="text-xs text-gray-500 border border-gray-200 px-2 py-0.5 rounded-lg hover:bg-gray-50 transition">Non</button>
-                <button onClick={() => handleCancel(reg)} disabled={cancelling} className="text-xs text-white bg-red-500 hover:bg-red-600 px-2 py-0.5 rounded-lg transition disabled:opacity-50">{cancelling ? '...' : 'Oui'}</button>
-              </div>
-            ) : (
-              <button onClick={() => setCancelConfirm(reg.id)} className="text-xs text-red-500 border border-red-200 hover:bg-red-50 px-2.5 py-1 rounded-lg transition">
-                Se désinscrire
-              </button>
-            )
+            <div className="flex items-center gap-2 flex-wrap">
+              <a href={cancelSmsHref(reg)}
+                className="flex items-center gap-1 text-xs font-medium text-orange-600 border border-orange-200 bg-orange-50 hover:bg-orange-100 px-2.5 py-1 rounded-lg transition">
+                <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+                Prévenir d'un imprévu
+              </a>
+              {cancelConfirm === reg.id ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Annuler ?</span>
+                  <button onClick={() => setCancelConfirm(null)} className="text-xs text-gray-500 border border-gray-200 px-2 py-0.5 rounded-lg hover:bg-gray-50 transition">Non</button>
+                  <button onClick={() => handleCancel(reg)} disabled={cancelling} className="text-xs text-white bg-red-500 hover:bg-red-600 px-2 py-0.5 rounded-lg transition disabled:opacity-50">{cancelling ? '...' : 'Oui'}</button>
+                </div>
+              ) : (
+                <button onClick={() => setCancelConfirm(reg.id)} className="text-xs text-red-500 border border-red-200 hover:bg-red-50 px-2.5 py-1 rounded-lg transition">
+                  Se désinscrire
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -388,15 +590,23 @@ export default function MesParcoursPage() {
             Dépasse-toi en plein air,<br />à ton rythme.
           </h1>
           <p className="text-sm sm:text-base text-white/90 mt-2">
-            Des séances de sport en groupe, conviviales et accessibles à tous — au bord de la plage de la Mine d'Or.
+            Des séances de sport en groupe, conviviales et accessibles à tous — au bord de la plage.
           </p>
-          {availableSessions.length > 0 && (
-            <a href="#dispo"
-              className="inline-flex items-center gap-2 mt-4 bg-white text-orange-600 text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-orange-50 transition">
-              Voir les {availableSessions.length} séance{availableSessions.length > 1 ? 's' : ''} disponible{availableSessions.length > 1 ? 's' : ''}
+          <div className="flex flex-col items-start gap-2 mt-4">
+            <a href="/parcours-sportif"
+              className="inline-flex items-center gap-2 bg-white/15 border border-white/40 text-white text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-white/25 transition">
+              <FireIcon className="w-4 h-4" />
+              Parcours Sportif
               <ArrowRightIcon className="w-4 h-4" />
             </a>
-          )}
+            {availableSessions.length > 0 && (
+              <a href="#dispo"
+                className="inline-flex items-center gap-2 bg-white text-orange-600 text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-orange-50 transition">
+                Voir les {availableSessions.length} séance{availableSessions.length > 1 ? 's' : ''} disponible{availableSessions.length > 1 ? 's' : ''}
+                <ArrowRightIcon className="w-4 h-4" />
+              </a>
+            )}
+          </div>
         </div>
         <FireIcon className="absolute -right-6 -bottom-6 w-44 h-44 text-white/10" />
       </div>
@@ -416,6 +626,74 @@ export default function MesParcoursPage() {
           )
         })}
       </div>
+
+      {/* ── Règlements en attente PASSÉS (bannière, lendemain matin) ─ */}
+      {(() => {
+        const tomorrow0h = new Date(); tomorrow0h.setDate(tomorrow0h.getDate() + 1); tomorrow0h.setHours(0, 0, 0, 0)
+        const pastUnpaid = items.filter((i) => i.paymentStatus === 'pending' && i.session && (i.session.date?.toMillis() ?? 0) < tomorrow0h.getTime())
+        if (!pastUnpaid.length) return null
+        return (
+          <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <ExclamationCircleIcon className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold text-orange-800">
+                  {pastUnpaid.length === 1 ? '1 règlement en attente' : `${pastUnpaid.length} règlements en attente`}
+                </p>
+                <div className="mt-2 space-y-2">
+                  {pastUnpaid.map((reg) => {
+                    const ref = `${reg.firstName} ${reg.lastName} - Parcours Sportif du ${shortDate(reg.session?.date)}`.trim()
+                    return (
+                      <div key={reg.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                        <p className="text-xs text-orange-700">
+                          • {reg.session?.title}{reg.session?.price != null ? ` — ${reg.session.price}€` : ''}
+                        </p>
+                        <button onClick={() => copyField(ref, `ref-${reg.id}`)}
+                          className="self-start flex items-center gap-1 text-[10px] font-medium text-orange-700 border border-orange-300 bg-white px-2 py-0.5 rounded-lg hover:bg-orange-50 transition shrink-0">
+                          {copiedKey === `ref-${reg.id}` ? <CheckIcon className="w-3 h-3 text-green-600" /> : <ClipboardDocumentIcon className="w-3 h-3" />}
+                          {copiedKey === `ref-${reg.id}` ? 'Copié !' : 'Copier la référence'}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+            {(iban || bic) && (
+              <div className="bg-white rounded-xl border border-orange-100 p-4 space-y-3">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Virement bancaire</p>
+                {iban && (
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] text-gray-400 font-medium">IBAN</p>
+                      <p className="text-sm font-mono text-gray-800 tracking-wide">{iban.match(/.{1,4}/g)?.join(' ') ?? iban}</p>
+                    </div>
+                    <button onClick={() => copyField(iban, 'iban')}
+                      className="flex items-center gap-1 text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                      {copiedKey === 'iban' ? <CheckIcon className="w-3.5 h-3.5 text-green-600" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                      {copiedKey === 'iban' ? 'Copié !' : 'Copier'}
+                    </button>
+                  </div>
+                )}
+                {bic && (
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] text-gray-400 font-medium">BIC</p>
+                      <p className="text-sm font-mono text-gray-800">{bic}</p>
+                    </div>
+                    <button onClick={() => copyField(bic, 'bic')}
+                      className="flex items-center gap-1 text-xs font-medium text-blue-600 border border-blue-200 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition shrink-0">
+                      {copiedKey === 'bic' ? <CheckIcon className="w-3.5 h-3.5 text-green-600" /> : <ClipboardDocumentIcon className="w-3.5 h-3.5" />}
+                      {copiedKey === 'bic' ? 'Copié !' : 'Copier'}
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-gray-400">Indiquez votre nom et prénom ainsi que la date du parcours sportif en référence du virement (bouton « Copier réf. » ci-dessus).</p>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Mes prochaines séances */}
       {upcoming.length > 0 && (
@@ -463,6 +741,59 @@ export default function MesParcoursPage() {
           </div>
         </div>
       )}
+
+      {/* ── Avis des participants ── */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+            <ChatBubbleLeftRightIcon className="w-4 h-4 text-yellow-500" />
+            Avis des participants {reviews.length > 0 && `(${reviews.length})`}
+            {reviews.length > 0 && (
+              <span className="flex items-center gap-1 normal-case text-gray-600">
+                <StarSolid className="w-3.5 h-3.5 text-yellow-400" /> {avgRating}/5
+              </span>
+            )}
+          </h2>
+          <button onClick={openReviewModal}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition">
+            Laisser un avis
+          </button>
+        </div>
+        {reviews.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
+            <StarOutline className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm text-gray-500 font-medium">Aucun avis pour l'instant</p>
+            <p className="text-xs text-gray-400 mt-0.5">Soyez le premier à partager votre expérience depuis la page publique !</p>
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {reviews.map((r) => (
+              <div key={r.id} className="border border-gray-100 rounded-xl p-3 bg-white">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">
+                      {r.name?.[0]?.toUpperCase() ?? '?'}
+                    </div>
+                    <span className="text-sm font-semibold text-gray-800 truncate">{r.name}</span>
+                  </div>
+                  <ReviewStars value={r.rating} />
+                </div>
+                <p className="text-sm text-gray-600 leading-relaxed">{r.comment}</p>
+                {r.photoUrl && (
+                  <div className="mt-2 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                    <img src={r.photoUrl} alt={`Photo de ${r.name}`} loading="lazy" className="max-h-40 w-auto object-contain" />
+                  </div>
+                )}
+                {r.createdAt && (
+                  <p className="text-[11px] text-gray-400 mt-1.5">
+                    {r.createdAt.toDate().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Modal inscription */}
       <Modal isOpen={!!selected} onClose={() => setSelected(null)} title={success ? 'Inscription confirmée !' : 'Inscription'} size="md">
@@ -526,6 +857,80 @@ export default function MesParcoursPage() {
               <button type="submit" disabled={submitting}
                 className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-semibold transition">
                 {submitting ? 'Inscription...' : 'Confirmer mon inscription'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* Modal Laisser un avis */}
+      <Modal isOpen={showReviewModal} onClose={() => setShowReviewModal(false)} title="Laisser un avis" size="md">
+        {reviewSuccess ? (
+          <div className="text-center py-6">
+            <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <CheckCircleIcon className="w-7 h-7 text-green-600" />
+            </div>
+            <h3 className="text-lg font-bold text-gray-800 mb-1">Merci pour votre avis !</h3>
+            <p className="text-sm text-gray-500">Il est maintenant visible par tous.</p>
+          </div>
+        ) : (
+          <form onSubmit={handleReviewSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Votre prénom *</label>
+              <input type="text" required value={reviewForm.name}
+                onChange={(e) => setReviewForm((f) => ({ ...f, name: e.target.value }))}
+                className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Votre note</label>
+              <div className="flex items-center gap-1">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button key={n} type="button" onClick={() => setReviewForm((f) => ({ ...f, rating: n }))} className="p-0.5">
+                    {n <= reviewForm.rating
+                      ? <StarSolid className="w-8 h-8 text-yellow-400" />
+                      : <StarOutline className="w-8 h-8 text-gray-300 hover:text-yellow-300 transition" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Votre avis *</label>
+              <textarea required value={reviewForm.comment} rows={4}
+                onChange={(e) => setReviewForm((f) => ({ ...f, comment: e.target.value }))}
+                placeholder="Partagez votre expérience du Parcours Sportif..."
+                className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Photo <span className="font-normal text-gray-400">(optionnel)</span>
+              </label>
+              {reviewForm.photo ? (
+                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                  <PhotoIcon className="w-4 h-4 text-green-600 shrink-0" />
+                  <span className="text-xs text-gray-700 flex-1 truncate">{reviewForm.photo.name}</span>
+                  <button type="button" onClick={() => setReviewForm((f) => ({ ...f, photo: null }))}
+                    className="text-gray-400 hover:text-red-500 transition">
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <label className="flex items-center gap-2 bg-gray-50 border border-gray-200 border-dashed rounded-xl px-3 py-2.5 cursor-pointer hover:bg-gray-100 transition">
+                  <PhotoIcon className="w-4 h-4 text-gray-400 shrink-0" />
+                  <span className="text-xs text-gray-500">Ajouter une photo</span>
+                  <input type="file" accept="image/*" className="hidden"
+                    onChange={(e) => setReviewForm((f) => ({ ...f, photo: e.target.files?.[0] ?? null }))} />
+                </label>
+              )}
+            </div>
+            {reviewError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{reviewError}</p>}
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={() => setShowReviewModal(false)}
+                className="flex-1 border border-gray-300 text-gray-600 py-2.5 rounded-xl text-sm hover:bg-gray-50 transition">
+                Annuler
+              </button>
+              <button type="submit" disabled={reviewSubmitting}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-semibold transition">
+                {reviewSubmitting ? 'Envoi...' : 'Publier mon avis'}
               </button>
             </div>
           </form>

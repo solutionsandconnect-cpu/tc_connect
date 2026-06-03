@@ -1,8 +1,8 @@
 'use client'
 
 import { use, useState, useEffect, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
-import { Timestamp, doc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Timestamp, doc, collection, query, where, getDocs, updateDoc, addDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { usePlanning } from '@/hooks/usePlanning'
 import { useSeances } from '@/hooks/useSeances'
@@ -176,6 +176,8 @@ function SectionSep({ label }: { label: string }) {
 export default function DetailPlanningPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const backDate = searchParams.get('date')
   const { currentUser, userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
   const droits = userProfile?.droits
@@ -393,6 +395,9 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   const [bilanMotivationClient, setBilanMotivationClient] = useState(1)
   const [bilanIntensiteMiseClient, setBilanIntensiteMiseClient] = useState(1)
   const [intensitePlanifiee, setIntensitePlanifiee] = useState(1)
+  const [planifMateriel, setPlanifMateriel] = useState<string[]>([])
+  const [planifMarkRdvPret, setPlanifMarkRdvPret] = useState(false)
+  const [planifFromRdvPret, setPlanifFromRdvPret] = useState(false)
   const [pendingEtat, setPendingEtat] = useState<string | null>(null)
   const [searchClientEdit, setSearchClientEdit] = useState('')
 
@@ -542,6 +547,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
   const openQuestionnaireDirect = () => {
     if (!planning) return
+    if (!isAdmin && isSessionPastForLock) return
     setQuestionnaireForm({
       qualite_sommeil: (planning as any).qualite_sommeil || 1,
       niveau_fatigue: (planning as any).niveau_fatigue || 1,
@@ -609,8 +615,19 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     setPendingEtat(null)
   }
 
-  const handleToggleRdvPret = async () => {
-    await updatePlanning(id, { rdv_pret: (planning as any)?.rdv_pret === 'Oui' ? '' : 'Oui' } as any)
+  const handleToggleRdvPret = () => {
+    const isSeance = ((planning as any)?.type_planning ?? '') === 'Séance'
+    const isSetting = (planning as any)?.rdv_pret !== 'Oui'
+    if (isSeance && isSetting) {
+      // Ouvrir le modal planif pour vérifier matériel + RPE avant de marquer prêt
+      setIntensitePlanifiee((planning as any)?.intensite_seance_planifiee || 1)
+      setPlanifMateriel(Array.isArray((planning as any)?.materiel) ? [...(planning as any).materiel] : [])
+      setPlanifMarkRdvPret(true)
+      setPlanifFromRdvPret(true)
+      setShowPlanifModal(true)
+    } else {
+      updatePlanning(id, { rdv_pret: (planning as any)?.rdv_pret === 'Oui' ? '' : 'Oui' } as any)
+    }
   }
 
   const handleToggleRdvEffectue = async () => {
@@ -701,6 +718,8 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
   const handleSubmitQuestionnaire = async (e: React.FormEvent) => {
     e.preventDefault()
+    // Les non-admin ne peuvent plus modifier après la fin du RDV
+    if (!isAdmin && isSessionPastForLock) return
     const indice_hooper =
       questionnaireForm.qualite_sommeil +
       questionnaireForm.niveau_fatigue +
@@ -733,7 +752,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     setShowBilanClientModal(true)
   }
 
-  const handleSendSMS = () => {
+  const handleSendSMS = async () => {
     const phone = client?.phone_number || ''
     const debut = (planning as any)?.heure_planning_debut?.toDate?.()
     const heure = debut
@@ -755,6 +774,30 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
       ? `sms:${phone}?body=${encodeURIComponent(message)}`
       : `sms:?body=${encodeURIComponent(message)}`
     window.open(smsUrl, '_blank')
+
+    // Créer une notification in-app pour le client si c'est une séance
+    if (isSeance && clientId) {
+      try {
+        const planningRef = doc(db, 'planning_pro', id)
+        const clientRef = doc(db, 'users', clientId)
+        const existing = await getDocs(query(
+          collection(db, 'Notifications'),
+          where('refUsers', '==', clientRef),
+          where('type_notification', '==', 'QUESTIONNAIRE_FORME'),
+          where('ref_planning', '==', planningRef),
+        ))
+        if (existing.empty) {
+          await addDoc(collection(db, 'Notifications'), {
+            refUsers: clientRef,
+            type_notification: 'QUESTIONNAIRE_FORME',
+            notification: 'Pensez à remplir votre questionnaire de forme avant la séance.',
+            etat_notification: 'Non lu',
+            ref_planning: planningRef,
+            date_create: Timestamp.now(),
+          })
+        }
+      } catch {}
+    }
   }
 
   const handleAddToCalendar = () => {
@@ -832,12 +875,24 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
   const isSC = ((planning as any).type_planning ?? '').includes('S&C')
 
+  // Verrou questionnaire : RDV passé (heure_planning_fin, sinon fin de journée de date_planning)
+  const sessionEndForLock: Date | null = (() => {
+    const fin = (planning as any)?.heure_planning_fin?.toDate?.()
+    if (fin) return fin
+    const dp = (planning as any)?.date_planning?.toDate?.()
+    if (!dp) return null
+    const end = new Date(dp)
+    end.setHours(23, 59, 59, 999)
+    return end
+  })()
+  const isSessionPastForLock = sessionEndForLock ? sessionEndForLock < new Date() : false
+
   return (
     <div className="space-y-4">
 
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={() => router.push('/planning')} className="p-2 rounded-lg hover:bg-gray-100 transition">
+        <button onClick={() => router.push(backDate ? `/planning?date=${backDate}` : '/planning')} className="p-2 rounded-lg hover:bg-gray-100 transition">
           <ArrowLeftIcon className="w-5 h-5 text-gray-600" />
         </button>
         <div className="flex-1 min-w-0">
@@ -1034,18 +1089,40 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div
             onClick={() => setShowFicheClient((v) => !v)}
-            className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition cursor-pointer"
+            className="flex items-start gap-2 px-4 py-3 hover:bg-gray-50 transition cursor-pointer"
           >
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <span className="text-sm font-semibold text-gray-700">Fiche client</span>
-              {clientRecord.objectifs && clientRecord.objectifs.length > 0 && (
-                <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">{clientRecord.objectifs.length} objectif{clientRecord.objectifs.length > 1 ? 's' : ''}</span>
-              )}
-              {clientRecord.antecedentsMedicaux && clientRecord.antecedentsMedicaux.length > 0 && (
-                <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-medium">{clientRecord.antecedentsMedicaux.length} antécédent{clientRecord.antecedentsMedicaux.length > 1 ? 's' : ''}</span>
-              )}
+            {/* Partie gauche : titre + badges (wrappable) */}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-700 mb-1">Fiche client</p>
+              <div className="flex flex-wrap gap-1.5">
+                {clientRecord.objectifs && clientRecord.objectifs.length > 0 && (
+                  <span className="inline-flex items-center text-[10px] leading-none bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
+                    {clientRecord.objectifs.length} objectif{clientRecord.objectifs.length > 1 ? 's' : ''}
+                  </span>
+                )}
+                {clientRecord.antecedentsMedicaux && clientRecord.antecedentsMedicaux.length > 0 && (
+                  <span className="inline-flex items-center text-[10px] leading-none bg-red-100 text-red-600 px-2 py-1 rounded-full font-medium">
+                    {clientRecord.antecedentsMedicaux.length} antécédent{clientRecord.antecedentsMedicaux.length > 1 ? 's' : ''}
+                  </span>
+                )}
+                {clientRecord.antecedentsSportifs && clientRecord.antecedentsSportifs.length > 0 && (
+                  <span className="inline-flex items-center text-[10px] leading-none bg-orange-100 text-orange-600 px-2 py-1 rounded-full font-medium">
+                    {clientRecord.antecedentsSportifs.length} ant. sportif{clientRecord.antecedentsSportifs.length > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
             </div>
+            {/* Partie droite : actions */}
             <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+              {isAdmin && clientId && (
+                <button
+                  onClick={() => router.push(`/clients/${clientId}/stats`)}
+                  className="p-1.5 text-purple-500 hover:bg-purple-50 rounded-lg transition"
+                  title="Évolution du client"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                </button>
+              )}
               {isAdmin && (
                 <button
                   onClick={() => setShowEditFiche(true)}
@@ -1256,16 +1333,19 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                 </button>
               </>
             ) : (
-              (() => {
-                const rdvFin = (planning as any).heure_planning_fin?.toDate?.()
-                const canEdit = rdvFin && new Date() <= rdvFin
-                return canEdit ? (
+              isSessionPastForLock
+                ? (questionnaireRempli ? (
+                    <button onClick={() => setShowQuestionnaireModal(true)}
+                      className="text-xs text-gray-500 border border-gray-200 px-3 py-1.5 rounded-lg transition">
+                      Voir
+                    </button>
+                  ) : null)
+                : (
                   <button onClick={openQuestionnaireDirect}
                     className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
                     {questionnaireRempli ? 'Modifier' : 'Remplir'}
                   </button>
-                ) : null
-              })()
+                )
             )}
           </div>
         </div>
@@ -1418,7 +1498,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                   : <p className="text-xs text-gray-400">Non planifiée</p>
                 }
               </div>
-              <button onClick={() => { setIntensitePlanifiee((planning as any)?.intensite_seance_planifiee || 1); setShowPlanifModal(true) }}
+              <button onClick={() => { setIntensitePlanifiee((planning as any)?.intensite_seance_planifiee || 1); setPlanifMateriel(Array.isArray((planning as any)?.materiel) ? [...(planning as any).materiel] : []); setPlanifMarkRdvPret(false); setPlanifFromRdvPret(false); setShowPlanifModal(true) }}
                 className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
                 {(planning as any).intensite_seance_planifiee ? 'Modifier' : 'Planifier'}
               </button>
@@ -2199,35 +2279,56 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
       </Modal>
 
       {/* Modal planification */}
-      <Modal isOpen={showPlanifModal} onClose={() => setShowPlanifModal(false)} title="Planification séance" size="lg">
-        <div className="space-y-4">
-          <p className="text-sm font-semibold text-gray-700">
-            RPE planifié : <span className="text-blue-600">{intensitePlanifiee}/10</span>
-          </p>
-          <div className="space-y-2">
-            {RPE_LABELS.map((label, i) => {
-              const val = i + 1
-              return (
-                <button key={val} type="button" onClick={() => setIntensitePlanifiee(val)}
-                  className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
-                    intensitePlanifiee === val
-                      ? 'bg-blue-600 text-white border-blue-600 font-medium'
-                      : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
-                  }`}
-                >
-                  {label}
-                </button>
-              )
-            })}
+      <Modal isOpen={showPlanifModal} onClose={() => setShowPlanifModal(false)} title={planifFromRdvPret ? 'Confirmer RDV prêt' : 'Planification séance'} size="lg">
+        <div className="space-y-5">
+          {/* RPE planifié */}
+          <div>
+            <p className="text-sm font-semibold text-gray-700 mb-2">
+              RPE planifié : <span className="text-blue-600">{intensitePlanifiee}/10</span>
+            </p>
+            <div className="space-y-2">
+              {RPE_LABELS.map((label, i) => {
+                const val = i + 1
+                return (
+                  <button key={val} type="button" onClick={() => setIntensitePlanifiee(val)}
+                    className={`w-full text-left px-4 py-2.5 rounded-xl text-sm transition border ${
+                      intensitePlanifiee === val
+                        ? 'bg-blue-600 text-white border-blue-600 font-medium'
+                        : 'bg-gray-50 text-gray-700 border-gray-100 hover:bg-gray-100'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
+          {/* Matériel */}
+          <div>
+            <p className="text-sm font-semibold text-gray-700 mb-2">Matériel</p>
+            <MaterielSelect value={planifMateriel} onChange={setPlanifMateriel} />
+          </div>
+          {/* Option RDV prêt (si ouvert depuis Planifier) */}
+          {!planifFromRdvPret && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={planifMarkRdvPret} onChange={(e) => setPlanifMarkRdvPret(e.target.checked)}
+                className="w-4 h-4 accent-green-600" />
+              <span className="text-sm text-gray-700">Marquer le RDV comme prêt</span>
+            </label>
+          )}
           <div className="flex gap-3">
             <button onClick={() => setShowPlanifModal(false)}
               className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
               Annuler
             </button>
-            <button onClick={async () => { await updatePlanning(id, { intensite_seance_planifiee: intensitePlanifiee } as any); setShowPlanifModal(false) }}
+            <button onClick={async () => {
+              const payload: any = { intensite_seance_planifiee: intensitePlanifiee, materiel: planifMateriel }
+              if (planifFromRdvPret || planifMarkRdvPret) payload.rdv_pret = 'Oui'
+              await updatePlanning(id, payload)
+              setShowPlanifModal(false)
+            }}
               className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
-              Enregistrer
+              {planifFromRdvPret ? '✓ Marquer RDV prêt' : 'Enregistrer'}
             </button>
           </div>
         </div>

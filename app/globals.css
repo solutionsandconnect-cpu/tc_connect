@@ -170,3 +170,13 @@ label[for],
 select:not(:disabled) {
   cursor: pointer;
 }
+
+/* Contenu texte enrichi (descriptions boutique, etc.) — Tailwind reset les listes par défaut */
+.rich-content ul { list-style: disc; padding-left: 1.4rem; margin: 0.25rem 0; }
+.rich-content ol { list-style: decimal; padding-left: 1.4rem; margin: 0.25rem 0; }
+.rich-content li { margin: 0.1rem 0; }
+.rich-content b, .rich-content strong { font-weight: 700; }
+.rich-content i, .rich-content em { font-style: italic; }
+.rich-content u { text-decoration: underline; }
+.rich-content a { color: #2563eb; text-decoration: underline; }
+.rich-content p { margin: 0.25rem 0; }

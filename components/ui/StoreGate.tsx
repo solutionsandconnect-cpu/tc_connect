@@ -1,11 +1,46 @@
 "use client";
 
 import Link from "next/link";
+import { doc, updateDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { useAuth } from "@/context/AuthContext";
+import { useStoreApps } from "@/hooks/useStoreApps";
 import { useStoreAccess } from "@/hooks/useStoreAccess";
 
 interface Props {
   appRoute: string;
   children: React.ReactNode;
+}
+
+/** Bouton flottant pour épingler/retirer l'app de l'accueil, depuis la page de l'app. */
+function PinAppButton({ appRoute }: { appRoute: string }) {
+  const { currentUser, userProfile } = useAuth();
+  const { apps } = useStoreApps();
+  const app = apps.find((a) => a.route === appRoute);
+  if (!app || !currentUser) return null;
+
+  const shortcuts: string[] = (userProfile as any)?.accueilShortcuts ?? [];
+  const pinned = shortcuts.includes(app.id);
+
+  const toggle = async () => {
+    const next = pinned ? shortcuts.filter((id) => id !== app.id) : [...shortcuts, app.id];
+    try {
+      await updateDoc(doc(db, "users", currentUser.uid), { accueilShortcuts: next });
+    } catch { /* silencieux */ }
+  };
+
+  return (
+    <button
+      onClick={toggle}
+      title={pinned ? "Retirer de l'accueil" : "Épingler sur l'accueil"}
+      className={`fixed right-4 bottom-20 sm:bottom-6 z-40 flex items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border text-sm font-medium transition ${
+        pinned ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+      }`}
+    >
+      <span>📌</span>
+      <span className="hidden sm:inline">{pinned ? "Épinglée" : "Épingler"}</span>
+    </button>
+  );
 }
 
 export function StoreGate({ appRoute, children }: Props) {
@@ -31,7 +66,7 @@ export function StoreGate({ appRoute, children }: Props) {
           </div>
           <h2 className="text-lg font-semibold text-gray-900 mb-2">Accès non activé</h2>
           <p className="text-sm text-gray-500 mb-6">
-            Cette fonctionnalité est disponible via la boutique. Contactez votre coach ou activez votre accès depuis la boutique.
+            Cette fonctionnalité est disponible via la boutique. Contactez nous ou activez votre accès depuis la boutique.
           </p>
           <Link
             href="/boutique"
@@ -48,5 +83,10 @@ export function StoreGate({ appRoute, children }: Props) {
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      <PinAppButton appRoute={appRoute} />
+    </>
+  );
 }

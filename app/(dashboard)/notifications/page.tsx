@@ -113,13 +113,20 @@ export default function NotificationsPage() {
         <div className="space-y-2">
           {filtered.map((notif) => {
             const isUnread = notif.etat_notification !== 'Lu'
+            const hasLink = !!notif.url
+            const handleClick = () => {
+              if (isUnread) markAsRead(notif.id)
+              if (notif.url) router.push(notif.url)
+            }
             return (
               <div
                 key={notif.id}
-                onClick={() => isUnread && markAsRead(notif.id)}
+                onClick={handleClick}
                 className={`rounded-2xl shadow-sm p-4 transition ${
                   isUnread
                     ? 'border-l-[3px] border-l-blue-500 border border-blue-100 bg-blue-50 cursor-pointer hover:bg-blue-100/60'
+                    : hasLink
+                    ? 'bg-white border border-gray-100 cursor-pointer hover:bg-gray-50'
                     : 'bg-white border border-gray-100'
                 }`}
               >
@@ -130,7 +137,7 @@ export default function NotificationsPage() {
                     ) : (
                       <div className="w-2 h-2 shrink-0" />
                     )}
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <Badge
                           label={notif.type_notification || 'Info'}
@@ -146,6 +153,11 @@ export default function NotificationsPage() {
                               })
                             : '—'}
                         </span>
+                        {hasLink && (
+                          <span className="text-[10px] text-blue-500 font-medium bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded-full">
+                            → Voir
+                          </span>
+                        )}
                       </div>
                       <p className={`text-sm ${isUnread ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>
                         {notif.notification}

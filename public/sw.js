@@ -6,8 +6,8 @@ self.addEventListener('push', function (event) {
   event.waitUntil(
     self.registration.showNotification(data.title || 'TC Connect', {
       body: data.body || '',
-      icon: '/logo.PNG',
-      badge: '/logo.PNG',
+      icon: '/web-app-manifest-192x192.png',
+      badge: '/web-app-manifest-192x192.png',
       data: { url: data.url || '/accueil' },
     })
   )
