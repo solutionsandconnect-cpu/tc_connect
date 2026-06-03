@@ -43,7 +43,7 @@ export default function ProfilPage() {
   const droits = userProfile?.droits
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { permission, subscribed, loading: pushLoading, checking: pushChecking, subscribe, unsubscribe } = usePushNotifications()
+  const { permission, subscribed, loading: pushLoading, checking: pushChecking, error: pushError, subscribe, unsubscribe } = usePushNotifications()
 
   const [showEditModal, setShowEditModal] = useState(false)
 
@@ -460,6 +460,9 @@ export default function ProfilPage() {
                   {pushLoading ? '…' : subscribed ? 'Désactiver' : 'Activer'}
                 </button>
               </div>
+            )}
+            {pushError && (
+              <p className="text-xs text-red-500 mt-3 leading-relaxed bg-red-50 border border-red-100 rounded-lg px-3 py-2">{pushError}</p>
             )}
           </div>
 
