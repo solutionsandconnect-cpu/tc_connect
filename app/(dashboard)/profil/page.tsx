@@ -30,7 +30,7 @@ import {
   PencilIcon, ArrowRightOnRectangleIcon,
   UserCircleIcon, EnvelopeIcon, PhoneIcon, ShieldCheckIcon,
   BellIcon, MapPinIcon, DocumentTextIcon, TrashIcon,
-  EyeIcon, EyeSlashIcon,
+  EyeIcon, EyeSlashIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline'
 
 const toUpperName = (s: string) => s.toUpperCase()
@@ -46,6 +46,27 @@ export default function ProfilPage() {
   const { permission, subscribed, loading: pushLoading, checking: pushChecking, error: pushError, subscribe, unsubscribe } = usePushNotifications()
 
   const [showEditModal, setShowEditModal] = useState(false)
+  const [updatingApp, setUpdatingApp] = useState(false)
+
+  // Force la récupération de la dernière version déployée (utile en PWA : pas besoin de réinstaller)
+  const handleUpdateApp = async () => {
+    setUpdatingApp(true)
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration()
+        await reg?.update().catch(() => {})
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys()
+        await Promise.all(keys.map((k) => caches.delete(k)))
+      }
+    } catch {
+      // on recharge quand même
+    } finally {
+      // reload "dur" pour contourner tout cache de la PWA
+      window.location.reload()
+    }
+  }
 
   useEffect(() => {
     if (searchParams.get('setup') === '1') setShowEditModal(true)
@@ -466,6 +487,27 @@ export default function ProfilPage() {
             )}
           </div>
 
+          {/* Mise à jour de l'application */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
+              <ArrowPathIcon className="w-4 h-4 text-blue-500" />
+              Application
+            </h3>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-gray-700">Mettre à jour</p>
+                <p className="text-xs text-gray-400 mt-0.5">Récupère la dernière version sans réinstaller l&apos;app.</p>
+              </div>
+              <button
+                onClick={handleUpdateApp}
+                disabled={updatingApp}
+                className="text-sm font-medium px-4 py-2 rounded-xl transition bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 inline-flex items-center gap-2 shrink-0"
+              >
+                <ArrowPathIcon className={`w-4 h-4 ${updatingApp ? 'animate-spin' : ''}`} />
+                {updatingApp ? 'Mise à jour…' : 'Mettre à jour'}
+              </button>
+            </div>
+          </div>
 
         </div>
       </div>
