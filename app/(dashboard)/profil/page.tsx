@@ -30,7 +30,7 @@ import {
   PencilIcon, ArrowRightOnRectangleIcon,
   UserCircleIcon, EnvelopeIcon, PhoneIcon, ShieldCheckIcon,
   BellIcon, MapPinIcon, DocumentTextIcon, TrashIcon,
-  EyeIcon, EyeSlashIcon, ArrowPathIcon,
+  EyeIcon, EyeSlashIcon, ArrowPathIcon, ArrowDownTrayIcon,
 } from '@heroicons/react/24/outline'
 
 const toUpperName = (s: string) => s.toUpperCase()
@@ -47,6 +47,19 @@ export default function ProfilPage() {
 
   const [showEditModal, setShowEditModal] = useState(false)
   const [updatingApp, setUpdatingApp] = useState(false)
+  const [installPlatform, setInstallPlatform] = useState<'ios' | 'android' | 'desktop'>('desktop')
+  const [appInstalled, setAppInstalled] = useState(false)
+
+  useEffect(() => {
+    const ua = navigator.userAgent
+    if (/iphone|ipad|ipod/i.test(ua)) setInstallPlatform('ios')
+    else if (/android/i.test(ua)) setInstallPlatform('android')
+    else setInstallPlatform('desktop')
+    setAppInstalled(
+      window.matchMedia?.('(display-mode: standalone)').matches
+      || (navigator as any).standalone === true,
+    )
+  }, [])
 
   // Force la récupération de la dernière version déployée (utile en PWA : pas besoin de réinstaller)
   const handleUpdateApp = async () => {
@@ -110,6 +123,12 @@ export default function ProfilPage() {
   const handleEditProfile = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!currentUser) return
+    // Champs obligatoires (notamment au 1er remplissage après création du compte)
+    if (!form.prenom.trim() || !form.nom.trim() || !form.genre) {
+      setErrorMsg('Veuillez renseigner votre prénom, votre nom et votre genre.')
+      setTimeout(() => setErrorMsg(''), 4000)
+      return
+    }
     const dnTs = form.date_naissance
       ? new Date(form.date_naissance + 'T00:00:00')
       : null
@@ -164,10 +183,23 @@ export default function ProfilPage() {
       const credential = EmailAuthProvider.credential(currentUser.email, passwordForm.current)
       await reauthenticateWithCredential(currentUser, credential)
       await updatePassword(currentUser, passwordForm.next)
+      // Déconnecte tous les AUTRES appareils (ceux avec l'ancien mot de passe)
+      try {
+        const idToken = await currentUser.getIdToken()
+        await fetch('/api/auth/revoke-sessions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${idToken}` },
+        })
+        // La révocation invalide aussi le token de CET appareil : on le ré-authentifie
+        // avec le NOUVEAU mot de passe pour qu'il obtienne une session valide et reste connecté.
+        const freshCredential = EmailAuthProvider.credential(currentUser.email, passwordForm.next)
+        await reauthenticateWithCredential(currentUser, freshCredential)
+        await currentUser.getIdToken(true)
+      } catch {}
       setShowPasswordModal(false)
       setPasswordForm({ current: '', next: '', confirm: '' })
-      setSuccessMsg('Mot de passe mis à jour')
-      setTimeout(() => setSuccessMsg(''), 3000)
+      setSuccessMsg('Mot de passe mis à jour — les autres appareils ont été déconnectés.')
+      setTimeout(() => setSuccessMsg(''), 4000)
     } catch {
       setErrorMsg('Mot de passe actuel incorrect')
     }
@@ -195,11 +227,10 @@ export default function ProfilPage() {
     try {
       const credential = EmailAuthProvider.credential(currentUser.email, emailForm.currentPassword)
       await reauthenticateWithCredential(currentUser, credential)
-      const actionCodeSettings = {
-        url: `${window.location.origin}/profil`,
-        handleCodeInApp: false,
-      }
-      await verifyBeforeUpdateEmail(currentUser, emailForm.newEmail, actionCodeSettings)
+      // Pas de continue-URL personnalisé : évite l'erreur auth/unauthorized-continue-uri
+      // (le domaine Vercel n'étant pas forcément dans les domaines autorisés Firebase).
+      // Firebase utilise sa page de confirmation par défaut.
+      await verifyBeforeUpdateEmail(currentUser, emailForm.newEmail)
       setShowEmailModal(false)
       setEmailForm({ newEmail: '', confirmEmail: '', currentPassword: '' })
       setShowEmailPwd(false)
@@ -509,12 +540,70 @@ export default function ProfilPage() {
             </div>
           </div>
 
+          {/* Installer l'application */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
+              <ArrowDownTrayIcon className="w-4 h-4 text-blue-500" />
+              Installer l&apos;application
+            </h3>
+            {appInstalled ? (
+              <p className="text-sm text-green-600">✓ L&apos;application est déjà installée sur cet appareil.</p>
+            ) : (
+              <>
+                <p className="text-xs text-gray-400 mb-3">
+                  Ajoutez TC Connect à votre écran d&apos;accueil pour une vraie expérience d&apos;application et recevoir les notifications.
+                </p>
+                <ol className="space-y-2 text-sm text-gray-700">
+                  {installPlatform === 'ios' && (
+                    <>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">1.</span> Ouvrez cette page dans <strong>Safari</strong>, puis appuyez sur l&apos;icône <strong>Partager</strong> (carré avec une flèche, en bas).</li>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">2.</span> Faites défiler et choisissez <strong>« Sur l&apos;écran d&apos;accueil »</strong>.</li>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">3.</span> Appuyez sur <strong>Ajouter</strong> — l&apos;icône apparaît sur votre écran d&apos;accueil.</li>
+                    </>
+                  )}
+                  {installPlatform === 'android' && (
+                    <>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">1.</span> Ouvrez cette page dans <strong>Chrome</strong>, puis le menu <strong>⋮</strong> (en haut à droite).</li>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">2.</span> Choisissez <strong>« Installer l&apos;application »</strong> ou <strong>« Ajouter à l&apos;écran d&apos;accueil »</strong>.</li>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">3.</span> Confirmez avec <strong>Installer</strong>.</li>
+                    </>
+                  )}
+                  {installPlatform === 'desktop' && (
+                    <>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">1.</span> Dans <strong>Chrome</strong> ou <strong>Edge</strong>, regardez à droite de la barre d&apos;adresse.</li>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">2.</span> Cliquez sur l&apos;icône <strong>Installer</strong> (un écran avec une flèche), ou menu <strong>⋮</strong> → <strong>« Installer TC Connect »</strong>.</li>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">3.</span> Confirmez avec <strong>Installer</strong>.</li>
+                    </>
+                  )}
+                </ol>
+              </>
+            )}
+          </div>
+
         </div>
       </div>
 
       {/* Modal édition profil */}
-      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Modifier mes informations" size="sm">
+      <Modal
+        isOpen={showEditModal}
+        onClose={() => {
+          // En mode "setup" (juste après création du compte), on ne peut pas fermer
+          // tant que prénom, nom et genre ne sont pas renseignés.
+          const incomplete = !form.prenom.trim() || !form.nom.trim() || !form.genre
+          if (searchParams.get('setup') === '1' && incomplete) {
+            setErrorMsg('Merci de renseigner votre prénom, votre nom et votre genre pour continuer.')
+            setTimeout(() => setErrorMsg(''), 4000)
+            return
+          }
+          setShowEditModal(false)
+        }}
+        title="Modifier mes informations"
+        size="sm"
+      >
         <form onSubmit={handleEditProfile} className="space-y-4">
+          {errorMsg && (
+            <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{errorMsg}</p>
+          )}
           {/* Photo de profil */}
           <div className="flex flex-col items-center gap-2">
             <input

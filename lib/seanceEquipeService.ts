@@ -34,7 +34,9 @@ export async function updateSeanceEquipe(
   id: string,
   data: Partial<Omit<SeanceEquipe, 'id'>>,
 ): Promise<void> {
-  await updateDoc(doc(db, COL, id), { ...data, updatedAt: Timestamp.now() })
+  // Firestore refuse les valeurs `undefined` → on les retire avant écriture
+  const clean = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined))
+  await updateDoc(doc(db, COL, id), { ...clean, updatedAt: Timestamp.now() })
 }
 
 export async function deleteSeanceEquipe(id: string): Promise<void> {

@@ -34,6 +34,23 @@ export default function DashboardLayout({
     } catch {}
   }, [])
 
+  // Déconnecte cet appareil si sa session a été révoquée (ex. changement de mot de passe
+  // sur un autre appareil → ce token devient invalide à la prochaine actualisation).
+  useEffect(() => {
+    const checkSession = async () => {
+      const u = auth.currentUser
+      if (!u) return
+      try { await u.getIdToken(true) }
+      catch {
+        await signOut(auth).catch(() => {})
+        router.push('/login')
+      }
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') checkSession() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [router])
+
   // Remet la pastille (badge d'icône) à zéro quand l'app est ouverte / revient au premier plan
   useEffect(() => {
     const clearBadge = () => {
@@ -87,7 +104,7 @@ export default function DashboardLayout({
 
       <Navbar />
 
-      <main className={`lg:ml-64 pb-nav-safe lg:pb-0 min-h-screen overflow-x-hidden${impersonation ? ' pt-11' : ''}`}>
+      <main className={`lg:ml-64 pb-nav-safe lg:pb-0 min-h-screen overflow-x-clip${impersonation ? ' pt-11' : ''}`}>
         <div className="px-4 py-6 min-w-0">
           {children}
         </div>

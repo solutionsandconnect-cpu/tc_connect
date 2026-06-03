@@ -38,6 +38,11 @@ interface Session {
   hidden?: boolean
 }
 
+// Formatage des noms : NOM en majuscules, Prénom en nom propre
+const toUpperName = (s: string) => s.toUpperCase()
+const toProperName = (s: string) =>
+  s.split(/([\s-])/).map(p => /[\s-]/.test(p) ? p : p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('')
+
 interface Participant {
   firstName: string
   lastName: string
@@ -181,11 +186,13 @@ export default function ParcoursPublicPage() {
     }).catch(() => {})
   }, [])
   const [selected, setSelected] = useState<Session | null>(null)
+  const [extraSessionIds, setExtraSessionIds] = useState<Set<string>>(new Set())
   const [participants, setParticipants] = useState<Participant[]>([emptyParticipant()])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [successCount, setSuccessCount] = useState(0)
   const [successToken, setSuccessToken] = useState('')
+  const [successWarning, setSuccessWarning] = useState('')
   const [showFullInfo, setShowFullInfo] = useState(false)
   const [showWhat, setShowWhat] = useState(false)
 
@@ -302,7 +309,9 @@ export default function ParcoursPublicPage() {
     const isImpersonating = typeof window !== 'undefined' && !!localStorage.getItem('tc_impersonation')
     const canPrefill = currentUser && userProfile && !isImpersonating
     setSelected(session)
+    setExtraSessionIds(new Set())
     setSuccessCount(0)
+    setSuccessWarning('')
     setError('')
     setParticipants([{
       ...emptyParticipant(),
@@ -320,6 +329,11 @@ export default function ParcoursPublicPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selected) return
+    // Le téléphone du participant principal (qui réserve) est obligatoire
+    if (!participants[0]?.phone.trim()) {
+      setError('Le numéro de téléphone est obligatoire.')
+      return
+    }
     for (const p of participants) {
       if (!p.firstName.trim()) { setError('Le prénom est obligatoire pour chaque participant.'); return }
       if (p.isMinor) {
@@ -335,34 +349,18 @@ export default function ParcoursPublicPage() {
       return
     }
     setError('')
+    setSuccessWarning('')
     setSubmitting(true)
     const n = participants.length
+    // Sessions cibles : celle ouverte + les dates supplémentaires cochées
+    const targetSessions = [selected, ...sessions.filter((s) => extraSessionIds.has(s.id))]
     try {
-      // Anti-doublon : une inscription simple avec un email déjà inscrit à cette séance est bloquée.
-      // (On n'applique pas ce contrôle aux inscriptions multiples — un même email peut alors
-      //  servir de contact pour plusieurs personnes.)
-      if (n === 1) {
-        const email = participants[0].email.trim().toLowerCase()
-        if (email) {
-          const dup = await getDocs(query(
-            collection(db, 'registrations'),
-            where('sessionId', '==', selected.id),
-            where('email', '==', email),
-          ))
-          if (!dup.empty) {
-            setError('Cette adresse email a déjà été utilisée pour une inscription à cette séance.')
-            setSubmitting(false)
-            return
-          }
-        }
-      }
-
-      // Upload des certificats médicaux (hors transaction)
+      // Upload des certificats médicaux UNE fois (réutilisés pour toutes les dates)
       const certUrls: (string | null)[] = await Promise.all(
         participants.map(async (p) => {
           if (p.isMinor && p.medicalCert) {
             try {
-              const path = `medical_certs/${selected.id}/${Date.now()}_${p.medicalCert.name}`
+              const path = `medical_certs/${Date.now()}_${Math.random().toString(36).slice(2)}_${p.medicalCert.name}`
               return await uploadImage(p.medicalCert, path)
             } catch { return null }
           }
@@ -370,105 +368,138 @@ export default function ParcoursPublicPage() {
         })
       )
 
-      const { notify, firstRegId, firstToken } = await runTransaction(db, async (tx) => {
-        const sessionRef = doc(db, 'sessions', selected.id)
-        const snap = await tx.get(sessionRef)
-        if (!snap.exists()) throw new Error('Séance introuvable')
-        const data = snap.data()
-        const available = data.maxSpots - data.registeredCount
-        if (available < n) throw new Error(
-          available <= 0 ? 'Cette séance est complète' : `Il ne reste que ${available} place${available > 1 ? 's' : ''}`
-        )
-        const newCount = data.registeredCount + n
-        const bookingPhone = participants[0]?.phone.trim() ?? ''
-        const bookingEmail = participants[0]?.email.trim().toLowerCase() ?? ''
-        const bookingName = `${participants[0]?.firstName ?? ''} ${participants[0]?.lastName ?? ''}`.trim()
-        const groupId = randomUUID()
-        let firstRegId = ''
-        let firstToken = ''
-        participants.forEach((p, idx) => {
-          const regRef = doc(collection(db, 'registrations'))
-          const token = randomUUID()
-          if (idx === 0) { firstRegId = regRef.id; firstToken = token }
-          tx.set(regRef, {
-            sessionId: selected.id,
-            userId: currentUser?.uid ?? null,
-            firstName: p.firstName.trim(),
-            lastName: p.lastName.trim(),
-            email: p.email.trim().toLowerCase(),
-            phone: p.phone.trim(),
-            suggestions: p.suggestions.trim(),
-            isMinor: p.isMinor,
-            parentalAttestation: p.isMinor && p.parentalConsent,
-            guardianName: p.isMinor ? p.guardianName.trim() : '',
-            guardianRelation: p.isMinor ? p.guardianRelation.trim() : '',
-            guardianPhone: p.isMinor ? p.guardianPhone.trim() : '',
-            birthDate: p.isMinor ? p.birthDate : '',
-            medicalCertUrl: certUrls[idx] ?? null,
-            // Contact de réservation (inscription groupée)
-            groupId: n > 1 ? groupId : null,
-            isPrimaryBooking: idx === 0,
-            bookingPhone,
-            bookingEmail,
-            bookingName,
-            paymentStatus: 'pending',
-            attendance: 'unknown',
-            registeredAt: Timestamp.now(),
-            uniqueToken: token,
+      // Inscrit tous les participants à UNE session (transaction). Lève une erreur si complet / déjà inscrit.
+      const registerToSession = async (sess: Session) => {
+        if (n === 1) {
+          const email = participants[0].email.trim().toLowerCase()
+          if (email) {
+            const dup = await getDocs(query(
+              collection(db, 'registrations'),
+              where('sessionId', '==', sess.id),
+              where('email', '==', email),
+            ))
+            if (!dup.empty) throw new Error('DEJA_INSCRIT')
+          }
+        }
+        return await runTransaction(db, async (tx) => {
+          const sessionRef = doc(db, 'sessions', sess.id)
+          const snap = await tx.get(sessionRef)
+          if (!snap.exists()) throw new Error('Séance introuvable')
+          const data = snap.data()
+          const available = data.maxSpots - data.registeredCount
+          if (available < n) throw new Error(
+            available <= 0 ? 'complète' : `${available} place${available > 1 ? 's' : ''} restante${available > 1 ? 's' : ''}`
+          )
+          const newCount = data.registeredCount + n
+          const bookingPhone = participants[0]?.phone.trim() ?? ''
+          const bookingEmail = participants[0]?.email.trim().toLowerCase() ?? ''
+          const bookingName = `${participants[0]?.firstName ?? ''} ${participants[0]?.lastName ?? ''}`.trim()
+          const groupId = randomUUID()
+          let firstRegId = ''
+          let firstToken = ''
+          participants.forEach((p, idx) => {
+            const regRef = doc(collection(db, 'registrations'))
+            const token = randomUUID()
+            if (idx === 0) { firstRegId = regRef.id; firstToken = token }
+            tx.set(regRef, {
+              sessionId: sess.id,
+              userId: currentUser?.uid ?? null,
+              firstName: p.firstName.trim(),
+              lastName: p.lastName.trim(),
+              email: p.email.trim().toLowerCase(),
+              phone: p.phone.trim(),
+              suggestions: p.suggestions.trim(),
+              isMinor: p.isMinor,
+              parentalAttestation: p.isMinor && p.parentalConsent,
+              guardianName: p.isMinor ? p.guardianName.trim() : '',
+              guardianRelation: p.isMinor ? p.guardianRelation.trim() : '',
+              guardianPhone: p.isMinor ? p.guardianPhone.trim() : '',
+              birthDate: p.isMinor ? p.birthDate : '',
+              medicalCertUrl: certUrls[idx] ?? null,
+              groupId: n > 1 ? groupId : null,
+              isPrimaryBooking: idx === 0,
+              bookingPhone,
+              bookingEmail,
+              bookingName,
+              paymentStatus: 'pending',
+              attendance: 'unknown',
+              registeredAt: Timestamp.now(),
+              uniqueToken: token,
+            })
           })
+          tx.update(sessionRef, {
+            registeredCount: newCount,
+            status: newCount >= data.maxSpots ? 'full' : 'open',
+          })
+          const prevCount = data.registeredCount
+          const notify = data.maxSpots > 10 && prevCount < data.maxSpots - 10 && newCount >= data.maxSpots - 10
+          return { notify, firstRegId, firstToken }
         })
-        tx.update(sessionRef, {
-          registeredCount: newCount,
-          status: newCount >= data.maxSpots ? 'full' : 'open',
-        })
-        const prevCount = data.registeredCount
-        const notify = data.maxSpots > 10 &&
-          prevCount < data.maxSpots - 10 &&
-          newCount >= data.maxSpots - 10
-        return { notify, firstRegId, firstToken }
-      })
-      // Notification admin à chaque inscription (push + section Notifications)
-      const who = `${participants[0]?.firstName ?? ''} ${participants[0]?.lastName ?? ''}`.trim() || 'Un participant'
-      fetch('/api/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toAdmins: true,
-          persist: true,
-          type: 'PARCOURS_INSCRIPTION',
-          title: 'Nouvelle inscription Parcours Sportif',
-          body: n > 1
-            ? `${who} a inscrit ${n} personnes à "${selected.title}"`
-            : `${who} s'est inscrit(e) à "${selected.title}"`,
-          url: `/admin/parcours-sportif/${selected.id}?highlight=${firstRegId}`,
-        }),
-      }).catch(() => {})
+      }
 
-      if (notify) {
-        fetch('/api/push/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            toAdmins: true,
-            persist: true,
-            type: 'PARCOURS_PRESQUE_COMPLET',
-            title: '⚠️ Parcours Sportif presque complet',
-            body: `Il ne reste que 10 places pour "${selected.title}"`,
-            url: '/admin/parcours-sportif',
-          }),
-        }).catch(() => {})
+      const who = `${participants[0]?.firstName ?? ''} ${participants[0]?.lastName ?? ''}`.trim() || 'Un participant'
+      let totalRegistered = 0
+      let firstTokenOverall = ''
+      const failed: { title: string; reason: string }[] = []
+
+      for (const sess of targetSessions) {
+        try {
+          const { notify, firstRegId, firstToken } = await registerToSession(sess)
+          totalRegistered += n
+          if (!firstTokenOverall) firstTokenOverall = firstToken
+          // Notification admin (push + section Notifications)
+          fetch('/api/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              toAdmins: true,
+              persist: true,
+              type: 'PARCOURS_INSCRIPTION',
+              title: 'Nouvelle inscription Parcours Sportif',
+              body: n > 1 ? `${who} a inscrit ${n} personnes à "${sess.title}"` : `${who} s'est inscrit(e) à "${sess.title}"`,
+              url: `/admin/parcours-sportif/${sess.id}?highlight=${firstRegId}`,
+            }),
+          }).catch(() => {})
+          if (notify) {
+            fetch('/api/push/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                toAdmins: true,
+                persist: true,
+                type: 'PARCOURS_PRESQUE_COMPLET',
+                title: '⚠️ Parcours Sportif presque complet',
+                body: `Il ne reste que 10 places pour "${sess.title}"`,
+                url: '/admin/parcours-sportif',
+              }),
+            }).catch(() => {})
+          }
+          // Ajout au planning du compte connecté
+          if (currentUser) {
+            await addParcoursActivite({
+              userId: currentUser.uid,
+              registrationId: firstRegId,
+              sessionId: sess.id,
+              session: sess as any,
+            })
+          }
+        } catch (err: any) {
+          const reason = err?.message === 'DEJA_INSCRIT' ? 'déjà inscrit à cette date' : (err?.message ?? 'erreur')
+          failed.push({ title: `${fmtDate(sess.date)}`, reason })
+        }
       }
-      // Si le participant principal a un compte, ajouter la séance à son planning
-      if (currentUser) {
-        await addParcoursActivite({
-          userId: currentUser.uid,
-          registrationId: firstRegId,
-          sessionId: selected.id,
-          session: selected as any,
-        })
+
+      if (totalRegistered === 0) {
+        setError(failed.length
+          ? `Aucune inscription enregistrée — ${failed.map((f) => `${f.title} : ${f.reason}`).join(' ; ')}`
+          : "Erreur lors de l'inscription")
+      } else {
+        setSuccessToken(firstTokenOverall)
+        setSuccessCount(totalRegistered)
+        if (failed.length) {
+          setSuccessWarning(`Certaines dates n'ont pas pu être réservées : ${failed.map((f) => `${f.title} (${f.reason})`).join(', ')}.`)
+        }
       }
-      setSuccessToken(firstToken)
-      setSuccessCount(n)
     } catch (err: any) {
       setError(err.message ?? 'Erreur lors de l\'inscription')
     }
@@ -829,6 +860,11 @@ export default function ParcoursPublicPage() {
               <PhoneIcon className="w-4 h-4 text-gray-400 shrink-0" />
               <span className="text-sm text-gray-700">06.79.40.82.54</span>
             </a>
+            <a href={`sms:+33679408254?body=${encodeURIComponent('Bonjour Teddy,\n\n')}`}
+              className="flex items-center gap-2.5 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-xl px-3 py-2.5 transition">
+              <ChatBubbleLeftIcon className="w-4 h-4 text-blue-500 shrink-0" />
+              <span className="text-sm text-blue-700">Envoyer un message</span>
+            </a>
             <a href="mailto:teddybcoaching@gmail.com"
               className="flex items-center gap-2.5 border border-gray-200 hover:bg-gray-50 rounded-xl px-3 py-2.5 transition">
               <EnvelopeIcon className="w-4 h-4 text-gray-400 shrink-0" />
@@ -872,6 +908,10 @@ export default function ParcoursPublicPage() {
                 {successCount === 1 ? 'Votre place est réservée.' : `${successCount} places réservées.`}
               </p>
             </div>
+
+            {successWarning && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">{successWarning}</p>
+            )}
 
             {/* Lien de gestion de l'inscription (valide sans compte) */}
             {successToken && (
@@ -922,6 +962,45 @@ export default function ParcoursPublicPage() {
               </div>
             )}
 
+            {/* Inscription à plusieurs dates en même temps */}
+            {(() => {
+              const others = sessions.filter((s) =>
+                s.id !== selected?.id &&
+                s.status !== 'cancelled' &&
+                (s.maxSpots - s.registeredCount) > 0
+              )
+              if (others.length === 0) return null
+              const toggle = (id: string) => setExtraSessionIds((prev) => {
+                const next = new Set(prev)
+                next.has(id) ? next.delete(id) : next.add(id)
+                return next
+              })
+              return (
+                <div className="border border-gray-200 rounded-xl p-3">
+                  <p className="text-sm font-semibold text-gray-700">S'inscrire à d'autres dates en même temps ?</p>
+                  <p className="text-xs text-gray-400 mb-2">Cochez les dates souhaitées (optionnel) — les participants ci-dessous seront inscrits à toutes les dates sélectionnées.</p>
+                  <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                    {others.map((s) => {
+                      const left = s.maxSpots - s.registeredCount
+                      return (
+                        <label key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-gray-100 hover:bg-gray-50 cursor-pointer">
+                          <input type="checkbox" checked={extraSessionIds.has(s.id)} onChange={() => toggle(s.id)}
+                            className="w-4 h-4 accent-blue-600 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-800 capitalize truncate">{fmtDate(s.date)} · {sessionTimeRange(s)}</p>
+                            <p className="text-xs text-gray-400 truncate">{s.title} — {left} place{left > 1 ? 's' : ''}</p>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  {extraSessionIds.size > 0 && (
+                    <p className="text-xs font-medium text-blue-600 mt-2">{extraSessionIds.size + 1} dates sélectionnées au total</p>
+                  )}
+                </div>
+              )
+            })()}
+
             {/* Participants */}
             <div className="space-y-3">
               {participants.map((p, i) => (
@@ -942,13 +1021,13 @@ export default function ParcoursPublicPage() {
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">Prénom *</label>
                       <input type="text" required value={p.firstName}
-                        onChange={(e) => updateParticipant(i, 'firstName', e.target.value)}
+                        onChange={(e) => updateParticipant(i, 'firstName', toProperName(e.target.value))}
                         className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Nom</label>
-                      <input type="text" value={p.lastName}
-                        onChange={(e) => updateParticipant(i, 'lastName', e.target.value)}
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Nom{i === 0 ? ' *' : ''}</label>
+                      <input type="text" required={i === 0} value={p.lastName}
+                        onChange={(e) => updateParticipant(i, 'lastName', toUpperName(e.target.value))}
                         className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
                     </div>
                   </div>

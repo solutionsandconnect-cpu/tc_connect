@@ -11,6 +11,8 @@ import {
   createSeanceEquipe,
   updateSeanceEquipe,
   deleteSeanceEquipe,
+  submitHooper,
+  submitRPE,
 } from '@/lib/seanceEquipeService'
 import Modal from '@/components/ui/Modal'
 import {
@@ -239,6 +241,65 @@ function AlertBadge({ acwr }: { acwr: number | null }) {
   return <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">Sous-charge</span>
 }
 
+// ─── Saisie directe RPE + Hooper par joueur ─────────────────────────────────────
+function NumField({ label, value, set, min, max }: { label: string; value: number; set: (n: number) => void; min: number; max: number }) {
+  return (
+    <label className="flex flex-col items-center">
+      <span className="text-[10px] text-gray-400 leading-none mb-0.5">{label}</span>
+      <input type="number" min={min} max={max} value={value}
+        onChange={(e) => set(Math.max(min, Math.min(max, parseInt(e.target.value) || min)))}
+        className="w-11 border border-gray-200 rounded-md px-1 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
+    </label>
+  )
+}
+
+function PlayerEntryRow({ seance, joueur }: { seance: SeanceEquipe; joueur: any }) {
+  const eH = seance.hoopers?.[joueur.id]
+  const eR = seance.rpes?.[joueur.id]
+  const [sommeil, setSommeil] = useState(eH?.sommeil ?? 4)
+  const [fatigue, setFatigue] = useState(eH?.fatigue ?? 4)
+  const [courbatures, setCourbatures] = useState(eH?.courbatures ?? 4)
+  const [stress, setStress] = useState(eH?.stress ?? 4)
+  const [rpe, setRpe] = useState(eR?.rpe ?? 5)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const indiceHooper = sommeil + fatigue + courbatures + stress
+  const charge = rpe * seance.dureeMin
+  const hasData = !!eH || !!eR
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await submitHooper(seance.id, joueur.id, { sommeil, fatigue, courbatures, stress, indiceHooper })
+      await submitRPE(seance.id, joueur.id, { rpe, dureeMin: seance.dureeMin, charge })
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+    } catch { /* ignore */ } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap py-2 border-t border-gray-50">
+      <span className="text-xs font-medium text-gray-700 w-28 truncate shrink-0">
+        {joueur.prenom_joueur} {joueur.nom_joueur}
+        {hasData && <span className="ml-1 text-green-500" title="Déjà renseigné">●</span>}
+      </span>
+      <div className="flex items-end gap-1.5">
+        <NumField label="Som" value={sommeil} set={setSommeil} min={1} max={7} />
+        <NumField label="Fat" value={fatigue} set={setFatigue} min={1} max={7} />
+        <NumField label="Cou" value={courbatures} set={setCourbatures} min={1} max={7} />
+        <NumField label="Str" value={stress} set={setStress} min={1} max={7} />
+        <span className="text-xs font-semibold text-indigo-600 self-center w-12">H {indiceHooper}</span>
+        <span className="w-px h-6 bg-gray-200 self-center" />
+        <NumField label="RPE" value={rpe} set={setRpe} min={1} max={10} />
+        <span className="text-xs font-semibold text-amber-600 self-center w-16">{charge} UA</span>
+      </div>
+      <button onClick={save} disabled={saving}
+        className={`ml-auto text-xs font-medium px-3 py-1.5 rounded-lg transition shrink-0 ${saved ? 'bg-green-100 text-green-700' : 'bg-blue-600 text-white hover:bg-blue-700'} disabled:opacity-50`}>
+        {saving ? '…' : saved ? '✓ Enregistré' : 'Enregistrer'}
+      </button>
+    </div>
+  )
+}
+
 // ─── Page principale ──────────────────────────────────────────────────────────
 export default function SeancesEquipePage() {
   const { id } = useParams<{ id: string }>()
@@ -253,6 +314,7 @@ export default function SeancesEquipePage() {
   const [editingSeance, setEditingSeance] = useState<SeanceEquipe | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [selectedJoueurChart, setSelectedJoueurChart] = useState<string | null>(null)
+  const [entrySeanceId, setEntrySeanceId] = useState<string | null>(null)
 
   const emptyForm = {
     date: '',
@@ -303,10 +365,10 @@ export default function SeancesEquipePage() {
     const dateObj = new Date(form.date + 'T12:00:00')
     const updates = {
       date: Timestamp.fromDate(dateObj),
-      heureDebut: form.heureDebut || undefined,
+      heureDebut: form.heureDebut || '',
       type: form.type,
       dureeMin: Number(form.dureeMin),
-      notes: form.notes || undefined,
+      notes: form.notes || '',
       joueurIds: form.joueurIds,
     }
     if (editingSeance) {
@@ -356,16 +418,17 @@ export default function SeancesEquipePage() {
         >
           <ArrowLeftIcon className="w-5 h-5 text-gray-600" />
         </button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-800">Charges d'entraînement</h1>
-          <p className="text-sm text-gray-500">{team?.nom_equipe}</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800 truncate">Charges d&apos;entraînement</h1>
+          <p className="text-sm text-gray-500 truncate">{team?.nom_equipe}</p>
         </div>
         <button
           onClick={() => { setForm(emptyForm); setShowModal(true) }}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 sm:px-4 py-2 rounded-lg transition shrink-0"
         >
-          <PlusIcon className="w-4 h-4" />
-          Nouvelle séance
+          <PlusIcon className="w-4 h-4 shrink-0" />
+          <span className="hidden sm:inline">Nouvelle séance</span>
+          <span className="sm:hidden">Séance</span>
         </button>
       </div>
 
@@ -502,7 +565,32 @@ export default function SeancesEquipePage() {
                           Repasser en planifiée
                         </button>
                       )}
+                      {total > 0 && (
+                        <button
+                          onClick={() => setEntrySeanceId((prev) => (prev === s.id ? null : s.id))}
+                          className={`flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg border transition ${entrySeanceId === s.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
+                        >
+                          <PencilIcon className="w-3.5 h-3.5" />
+                          {entrySeanceId === s.id ? 'Fermer la saisie' : 'Saisir RPE / Hooper'}
+                        </button>
+                      )}
                     </div>
+
+                    {/* Saisie directe RPE + Hooper par joueur */}
+                    {entrySeanceId === s.id && (
+                      <div className="border-t border-gray-100 pt-2">
+                        <div className="flex items-center gap-3 text-[10px] text-gray-400 mb-1 px-1">
+                          <span>Som/Fat/Cou/Str = indices Hooper (1-7)</span>
+                          <span>· RPE (1-10) → charge = RPE × {s.dureeMin} min</span>
+                        </div>
+                        {joueurs
+                          .filter((j) => (s.joueurIds ?? []).includes(j.id))
+                          .map((j) => <PlayerEntryRow key={j.id} seance={s} joueur={j} />)}
+                        {(s.joueurIds ?? []).length === 0 && (
+                          <p className="text-xs text-gray-400 py-2">Aucun joueur associé à cette séance.</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })

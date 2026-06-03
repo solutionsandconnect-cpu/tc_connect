@@ -124,7 +124,8 @@ export default function MonInscriptionPage({ params }: { params: Promise<{ token
             status: data.status === 'full' ? 'open' : data.status,
           })
         }
-        tx.delete(regRef)
+        // On garde l'inscription (marquée "désinscrit") pour les stats admin
+        tx.update(regRef, { attendance: 'deregistered', paymentStatus: 'pending' })
       })
       // Retirer l'activité du planning de l'utilisateur (si compte lié)
       if (regId) await removeParcoursActivite(regId)

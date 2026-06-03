@@ -38,7 +38,7 @@ export const navSections = [
     items: [
       { label: 'Accueil',           href: '/accueil',        icon: HomeIcon,                  iconActive: HomeSolid,         adminOnly: false, droit: null },
       { label: 'Planning',          href: '/planning',       icon: CalendarIcon,              iconActive: CalendarSolid,     adminOnly: false, droit: 'planning' as const },
-      { label: 'Mes Parcours',      href: '/mes-parcours',   icon: FireIcon,                  iconActive: FireSolid,         adminOnly: false, nonAdminOnly: true, droit: 'parcoursSportif' as const },
+      { label: 'Parcours Sportif',  href: '/mes-parcours',   icon: FireIcon,                  iconActive: FireSolid,         adminOnly: false, nonAdminOnly: true, droit: 'parcoursSportif' as const },
       { label: 'Notifications',     href: '/notifications',  icon: BellIcon,                  iconActive: BellSolid,         adminOnly: false, droit: 'notifications' as const },
       { label: 'Messagerie',        href: '/messagerie',     icon: ChatBubbleLeftRightIcon,   iconActive: ChatSolid,         adminOnly: false, droit: null },
       { label: 'Documents',         href: '/documents',      icon: FolderOpenIcon,            iconActive: FolderSolid,       adminOnly: false, droit: null },

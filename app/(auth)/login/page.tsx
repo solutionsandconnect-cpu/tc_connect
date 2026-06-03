@@ -77,7 +77,7 @@ export default function LoginPage() {
       router.push(redirectTo === '/accueil' ? '/profil?setup=1' : redirectTo)
     } catch (err: any) {
       if (err?.code === 'auth/email-already-in-use') {
-        setRegError('Cette adresse email est déjà utilisée. Vous avez sûrement déjà un compte — utilisez « Mot de passe oublié » pour le récupérer.')
+        setRegError('Cette adresse email est déjà utilisée. Vous avez sûrement déjà un compte — utilisez « Récupérer mon mot de passe » pour le récupérer.')
         setEmailExists(true)
       } else {
         setRegError("Erreur lors de la création du compte")

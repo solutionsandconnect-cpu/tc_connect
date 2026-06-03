@@ -7,6 +7,7 @@ import { db } from '@/lib/firebase'
 import { useTeams } from '@/hooks/useTeams'
 import { StoreGate } from '@/components/ui/StoreGate'
 import { useJoueurs } from '@/hooks/useJoueurs'
+import { useStoreAccess, readLimit } from '@/hooks/useStoreAccess'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import { ArrowLeftIcon, PlusIcon, UserIcon, PencilIcon, TrashIcon, ChartBarIcon, CameraIcon } from '@heroicons/react/24/outline'
@@ -21,6 +22,12 @@ export default function DetailEquipePage() {
   const router = useRouter()
   const { teams, updateTeam } = useTeams()
   const { joueurs, loading, addJoueur, updateJoueur, deleteJoueur } = useJoueurs(id)
+
+  const { isAdmin, limites } = useStoreAccess('/equipes')
+  // Limite "nombre de joueurs/staff max par équipe" (Joueur ou Staff = 1 dans tous les cas)
+  const maxJoueurs = readLimit(limites, 'maxJoueurs', 'joueurs', 'players', 'max_joueurs', 'joueur', 'effectif')
+  const playerLimitReached = !isAdmin && joueurs.length >= maxJoueurs
+  const [limitError, setLimitError] = useState('')
 
   const team = teams.find((t) => t.id === id)
 
@@ -51,6 +58,11 @@ export default function DetailEquipePage() {
   }
 
   const openAdd = () => {
+    if (playerLimitReached) {
+      setLimitError(`Votre formule permet ${maxJoueurs} membre${maxJoueurs > 1 ? 's' : ''} maximum par équipe (joueurs + staff). Contactez un administrateur pour en ajouter.`)
+      setTimeout(() => setLimitError(''), 5000)
+      return
+    }
     setEditItem(null)
     setForm(emptyForm)
     setPhotoFile(null)
@@ -104,6 +116,7 @@ export default function DetailEquipePage() {
       if (editItem) {
         await updateJoueur(editItem.id, cleanForm)
       } else {
+        if (playerLimitReached) { setShowModal(false); return } // sécurité : limite atteinte
         await addJoueur({
           ...cleanForm,
           equiperef: doc(db, 'team', id),
@@ -137,11 +150,11 @@ export default function DetailEquipePage() {
   return (
     <StoreGate appRoute="/equipes">
     <div>
-      {/* En-tête */}
-      <div className="flex items-center gap-3 mb-6">
+      {/* En-tête — flex-wrap : sur mobile, les boutons passent en pleine largeur sous le titre */}
+      <div className="mb-6 flex items-center gap-3 flex-wrap">
         <button
           onClick={() => router.push('/equipes')}
-          className="p-2 rounded-lg hover:bg-gray-100 transition"
+          className="p-2 rounded-lg hover:bg-gray-100 transition shrink-0"
         >
           <ArrowLeftIcon className="w-5 h-5 text-gray-600" />
         </button>
@@ -162,26 +175,36 @@ export default function DetailEquipePage() {
           </div>
         </label>
 
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-800">{team?.nom_equipe || '...'}</h1>
-          <p className="text-sm text-gray-500">{team?.sport}</p>
+        <div className="flex-1 min-w-0 basis-32">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800 truncate">{team?.nom_equipe || '...'}</h1>
+          <p className="text-sm text-gray-500 truncate">{team?.sport}</p>
         </div>
 
-        <button
-          onClick={() => router.push(`/equipes/${id}/seances`)}
-          className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
-        >
-          <ChartBarIcon className="w-4 h-4" />
-          Charges
-        </button>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
-        >
-          <PlusIcon className="w-4 h-4" />
-          Ajouter
-        </button>
+        {/* Boutons : pleine largeur (wrap) sur mobile, inline à partir de sm */}
+        <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+          <button
+            onClick={() => router.push(`/equipes/${id}/seances`)}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition"
+          >
+            <ChartBarIcon className="w-4 h-4 shrink-0" />
+            Charges
+          </button>
+          <button
+            onClick={openAdd}
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition"
+          >
+            <PlusIcon className="w-4 h-4 shrink-0" />
+            Ajouter
+          </button>
+        </div>
       </div>
+
+      {limitError && (
+        <p className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5">{limitError}</p>
+      )}
+      {!isAdmin && Number.isFinite(maxJoueurs) && (
+        <p className="mb-4 text-xs text-gray-400">{joueurs.length}/{maxJoueurs} membre{maxJoueurs > 1 ? 's' : ''} (joueurs + staff)</p>
+      )}
 
       {loading ? (
         <div className="text-center py-10 text-gray-400">Chargement...</div>

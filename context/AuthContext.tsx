@@ -29,7 +29,7 @@ const WELCOME_MESSAGE = `Bienvenue sur l'app TC Connect 👋
 
 Ravi de vous compter parmi nous ! Vous retrouverez ici votre planning, vos documents, la boutique et la messagerie.
 
-💡 Astuce : pour une vraie expérience d'application (et recevoir les notifications), installez TC Connect sur votre écran d'accueil — un bandeau « Installer l'app » vous y aide en bas de l'écran, ou rendez-vous dans Profil.
+💡 Astuce : pour une vraie expérience d'application (et recevoir les notifications), installez TC Connect sur votre écran d'accueil en vous rendant sur votre Profil.
 
 Bonne découverte, et à très vite ! 🙌`
 

@@ -27,12 +27,16 @@ export function useJoueurs(teamId?: string) {
     return unsubscribe
   }, [teamId])
 
+  // Firestore refuse les valeurs `undefined` → on les retire avant écriture
+  const stripUndefined = (data: Record<string, any>) =>
+    Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined))
+
   const addJoueur = async (data: Omit<Joueur, 'id'>) => {
-    await addDoc(collection(db, 'joueurs'), data)
+    await addDoc(collection(db, 'joueurs'), stripUndefined(data as any))
   }
 
   const updateJoueur = async (id: string, data: Partial<Joueur>) => {
-    await updateDoc(doc(db, 'joueurs', id), data)
+    await updateDoc(doc(db, 'joueurs', id), stripUndefined(data as any))
   }
 
   const deleteJoueur = async (id: string) => {

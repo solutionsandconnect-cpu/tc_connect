@@ -5,6 +5,7 @@ import { Timestamp, doc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useTeams } from '@/hooks/useTeams'
+import { useStoreAccess, readLimit } from '@/hooks/useStoreAccess'
 import Modal from '@/components/ui/Modal'
 import { StoreGate } from '@/components/ui/StoreGate'
 import { PlusIcon, UsersIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
@@ -20,12 +21,22 @@ export default function EquipesPage() {
   const { teams, loading, addTeam, updateTeam, deleteTeam } = useTeams()
   const router = useRouter()
 
+  const { isAdmin, limites } = useStoreAccess('/equipes')
+  const maxEquipes = readLimit(limites, 'maxEquipes', 'equipes', 'team', 'teams', 'nb_equipes', 'equipe')
+  const limitReached = !isAdmin && teams.length >= maxEquipes
+
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState<any>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
   const [form, setForm] = useState({ nom_equipe: '', sport: 'Football' })
+  const [limitError, setLimitError] = useState('')
 
   const openAdd = () => {
+    if (limitReached) {
+      setLimitError(`Votre formule permet ${maxEquipes} équipe${maxEquipes > 1 ? 's' : ''} maximum. Contactez un administrateur pour en ajouter.`)
+      setTimeout(() => setLimitError(''), 5000)
+      return
+    }
     setEditItem(null)
     setForm({ nom_equipe: '', sport: 'Football' })
     setShowModal(true)
@@ -49,6 +60,7 @@ export default function EquipesPage() {
     if (editItem) {
       await updateTeam(editItem.id, { nom_equipe: form.nom_equipe, sport: form.sport })
     } else {
+      if (limitReached) { setShowModal(false); return } // sécurité : limite atteinte
       await addTeam(payload as any)
     }
     setShowModal(false)
@@ -67,6 +79,13 @@ export default function EquipesPage() {
           Nouvelle équipe
         </button>
       </div>
+
+      {limitError && (
+        <p className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5">{limitError}</p>
+      )}
+      {!isAdmin && Number.isFinite(maxEquipes) && (
+        <p className="mb-4 text-xs text-gray-400">{teams.length}/{maxEquipes} équipe{maxEquipes > 1 ? 's' : ''} utilisée{teams.length > 1 ? 's' : ''}</p>
+      )}
 
       {loading ? (
         <div className="text-center py-10 text-gray-400">Chargement...</div>

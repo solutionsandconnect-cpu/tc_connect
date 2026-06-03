@@ -2,6 +2,10 @@
 self.addEventListener('install', function () { self.skipWaiting() })
 self.addEventListener('activate', function (event) { event.waitUntil(self.clients.claim()) })
 
+// Gestionnaire fetch minimal (pass-through, sans cache) : requis par Chrome/Edge pour
+// proposer l'installation de la PWA sur ordinateur (l'icône « Installer » dans la barre d'adresse).
+self.addEventListener('fetch', function () { /* comportement réseau par défaut */ })
+
 self.addEventListener('push', function (event) {
   if (!event.data) return
   let data

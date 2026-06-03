@@ -153,11 +153,6 @@ export default function NotificationsPage() {
                               })
                             : '—'}
                         </span>
-                        {hasLink && (
-                          <span className="text-[10px] text-blue-500 font-medium bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded-full">
-                            → Voir
-                          </span>
-                        )}
                       </div>
                       <p className={`text-sm ${isUnread ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>
                         {notif.notification}

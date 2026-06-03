@@ -45,6 +45,11 @@ function ReviewStars({ value }: { value: number }) {
   )
 }
 
+// Formatage des noms : NOM en majuscules, Prénom en nom propre
+const toUpperName = (s: string) => s.toUpperCase()
+const toProperName = (s: string) =>
+  s.split(/([\s-])/).map(p => /[\s-]/.test(p) ? p : p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('')
+
 interface Registration {
   id: string
   sessionId: string
@@ -158,6 +163,14 @@ export default function MesParcoursPage() {
     return `sms:${contactPhone.replace(/\s/g, '')}?body=${encodeURIComponent(body)}`
   }
 
+  // Lien SMS "libre" : message vide (juste une formule + signature pour t'identifier),
+  // ex. pour signaler une erreur de coordonnées ("mon numéro n'est pas bon", etc.)
+  const contactSmsHref = () => {
+    const signature = `${userProfile?.prenom ?? ''} ${userProfile?.nom ?? ''}`.trim() || '[Votre prénom et nom]'
+    const body = `Bonjour Teddy,\n\n\n\n${signature}`
+    return `sms:${contactPhone.replace(/\s/g, '')}?body=${encodeURIComponent(body)}`
+  }
+
   const copyField = async (value: string, key: string) => {
     await copyText(value)
     setCopiedKey(key)
@@ -245,6 +258,8 @@ export default function MesParcoursPage() {
 
   // Modal inscription
   const [selected, setSelected] = useState<Session | null>(null)
+  const [extraSessionIds, setExtraSessionIds] = useState<Set<string>>(new Set())
+  const [successWarning, setSuccessWarning] = useState('')
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', phone: '', suggestions: '' })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -276,7 +291,11 @@ export default function MesParcoursPage() {
       const regs: Registration[] = []
       for (const snap of [byUid, byEmail]) {
         for (const d of snap.docs) {
-          if (!seen.has(d.id)) { seen.add(d.id); regs.push({ id: d.id, ...d.data() } as Registration) }
+          const data = d.data() as any
+          // On masque les inscriptions dont la personne s'est désinscrite (gardées pour les stats admin)
+          if (!seen.has(d.id) && data.attendance !== 'deregistered') {
+            seen.add(d.id); regs.push({ ...data, id: d.id } as Registration)
+          }
         }
       }
       const sessionIds = [...new Set(regs.map((r) => r.sessionId))]
@@ -304,6 +323,8 @@ export default function MesParcoursPage() {
 
   const openRegister = (session: Session) => {
     setSelected(session)
+    setExtraSessionIds(new Set())
+    setSuccessWarning('')
     setSuccess(false)
     setError('')
     setForm({
@@ -318,21 +339,25 @@ export default function MesParcoursPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selected || !currentUser) return
+    if (!form.phone.trim()) { setError('Le numéro de téléphone est obligatoire.'); return }
     setError('')
+    setSuccessWarning('')
     setSubmitting(true)
-    try {
+    const targetSessions = [selected, ...sessions.filter((s) => extraSessionIds.has(s.id))]
+
+    const registerToSession = async (sess: Session) => {
       let newRegId = ''
       await runTransaction(db, async (tx) => {
-        const sessionRef = doc(db, 'sessions', selected.id)
+        const sessionRef = doc(db, 'sessions', sess.id)
         const snap = await tx.get(sessionRef)
         if (!snap.exists()) throw new Error('Séance introuvable')
         const data = snap.data()
-        if (data.registeredCount >= data.maxSpots) throw new Error('Cette séance est complète')
+        if (data.registeredCount >= data.maxSpots) throw new Error('complète')
         const newCount = data.registeredCount + 1
         const regRef = doc(collection(db, 'registrations'))
         newRegId = regRef.id
         tx.set(regRef, {
-          sessionId: selected.id,
+          sessionId: sess.id,
           userId: currentUser.uid,
           firstName: form.firstName.trim(),
           lastName: form.lastName.trim(),
@@ -354,29 +379,46 @@ export default function MesParcoursPage() {
           status: newCount >= data.maxSpots ? 'full' : 'open',
         })
       })
-      // Notification admin (push + section Notifications) avec URL de highlight
-      const who = `${form.firstName} ${form.lastName}`.trim() || 'Un participant'
-      fetch('/api/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toAdmins: true,
-          persist: true,
-          type: 'PARCOURS_INSCRIPTION',
-          title: 'Nouvelle inscription Parcours Sportif',
-          body: `${who} s'est inscrit(e) à "${selected.title}"`,
-          url: `/admin/parcours-sportif/${selected.id}?highlight=${newRegId}`,
-        }),
-      }).catch(() => {})
-      // Ajouter la séance au planning de l'utilisateur (activité)
-      await addParcoursActivite({
-        userId: currentUser.uid,
-        registrationId: newRegId,
-        sessionId: selected.id,
-        session: selected as any,
-      })
-      setSuccess(true)
-      await loadRegistrations()
+      return newRegId
+    }
+
+    const who = `${form.firstName} ${form.lastName}`.trim() || 'Un participant'
+    let successes = 0
+    const failed: string[] = []
+    try {
+      for (const sess of targetSessions) {
+        try {
+          const newRegId = await registerToSession(sess)
+          successes++
+          fetch('/api/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              toAdmins: true,
+              persist: true,
+              type: 'PARCOURS_INSCRIPTION',
+              title: 'Nouvelle inscription Parcours Sportif',
+              body: `${who} s'est inscrit(e) à "${sess.title}"`,
+              url: `/admin/parcours-sportif/${sess.id}?highlight=${newRegId}`,
+            }),
+          }).catch(() => {})
+          await addParcoursActivite({
+            userId: currentUser.uid,
+            registrationId: newRegId,
+            sessionId: sess.id,
+            session: sess as any,
+          })
+        } catch (err: any) {
+          failed.push(`${fmtDate(sess.date)} (${err?.message === 'complète' ? 'complète' : 'erreur'})`)
+        }
+      }
+      if (successes === 0) {
+        setError(failed.length ? `Aucune inscription : ${failed.join(', ')}` : "Erreur lors de l'inscription")
+      } else {
+        if (failed.length) setSuccessWarning(`Certaines dates n'ont pas pu être réservées : ${failed.join(', ')}.`)
+        setSuccess(true)
+        await loadRegistrations()
+      }
     } catch (err: any) {
       setError(err.message ?? 'Erreur lors de l\'inscription')
     }
@@ -398,7 +440,9 @@ export default function MesParcoursPage() {
             status: data.status === 'full' ? 'open' : data.status,
           })
         }
-        tx.delete(regRef)
+        // On NE supprime PAS l'inscription : on la marque "désinscrit" (garde la trace
+        // pour les stats côté admin, et on n'attend plus de paiement).
+        tx.update(regRef, { attendance: 'deregistered', paymentStatus: 'pending' })
       })
       // Retirer l'activité du planning
       await removeParcoursActivite(reg.id)
@@ -558,6 +602,11 @@ export default function MesParcoursPage() {
                 className="flex items-center gap-1 text-xs font-medium text-orange-600 border border-orange-200 bg-orange-50 hover:bg-orange-100 px-2.5 py-1 rounded-lg transition">
                 <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
                 Prévenir d'un imprévu
+              </a>
+              <a href={contactSmsHref()}
+                className="flex items-center gap-1 text-xs font-medium text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg transition">
+                <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+                Autre message
               </a>
               {cancelConfirm === reg.id ? (
                 <div className="flex items-center gap-2">
@@ -803,7 +852,10 @@ export default function MesParcoursPage() {
               <CheckCircleIcon className="w-7 h-7 text-green-600" />
             </div>
             <h3 className="text-lg font-bold text-gray-800 mb-1">Vous êtes inscrit !</h3>
-            <p className="text-sm text-gray-500 mb-5">Votre place est réservée. Retrouvez-la dans « Mes prochaines séances ».</p>
+            <p className="text-sm text-gray-500 mb-3">Votre place est réservée. Retrouvez-la dans « Mes prochaines séances ».</p>
+            {successWarning && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4 text-left">{successWarning}</p>
+            )}
             <button onClick={() => setSelected(null)}
               className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-6 py-2.5 rounded-xl transition">
               Parfait !
@@ -819,17 +871,55 @@ export default function MesParcoursPage() {
                 {selected.price != null && <p className="font-semibold mt-0.5">{selected.price}€ / personne</p>}
               </div>
             )}
+
+            {/* Inscription à plusieurs dates en même temps */}
+            {(() => {
+              const others = sessions.filter((s) =>
+                s.id !== selected?.id && s.status !== 'cancelled' && (s.maxSpots - s.registeredCount) > 0
+              )
+              if (others.length === 0) return null
+              const toggle = (id: string) => setExtraSessionIds((prev) => {
+                const next = new Set(prev)
+                next.has(id) ? next.delete(id) : next.add(id)
+                return next
+              })
+              return (
+                <div className="border border-gray-200 rounded-xl p-3">
+                  <p className="text-sm font-semibold text-gray-700">S'inscrire à d'autres dates en même temps ?</p>
+                  <p className="text-xs text-gray-400 mb-2">Cochez les dates souhaitées (optionnel).</p>
+                  <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                    {others.map((s) => {
+                      const left = s.maxSpots - s.registeredCount
+                      return (
+                        <label key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-gray-100 hover:bg-gray-50 cursor-pointer">
+                          <input type="checkbox" checked={extraSessionIds.has(s.id)} onChange={() => toggle(s.id)}
+                            className="w-4 h-4 accent-blue-600 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-800 capitalize truncate">{fmtDate(s.date)} · {sessionTimeRange(s)}</p>
+                            <p className="text-xs text-gray-400 truncate">{s.title} — {left} place{left > 1 ? 's' : ''}</p>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  {extraSessionIds.size > 0 && (
+                    <p className="text-xs font-medium text-blue-600 mt-2">{extraSessionIds.size + 1} dates sélectionnées au total</p>
+                  )}
+                </div>
+              )
+            })()}
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Prénom *</label>
                 <input type="text" required value={form.firstName}
-                  onChange={(e) => setForm((f) => ({ ...f, firstName: e.target.value }))}
+                  onChange={(e) => setForm((f) => ({ ...f, firstName: toProperName(e.target.value) }))}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nom *</label>
                 <input type="text" required value={form.lastName}
-                  onChange={(e) => setForm((f) => ({ ...f, lastName: e.target.value }))}
+                  onChange={(e) => setForm((f) => ({ ...f, lastName: toUpperName(e.target.value) }))}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
             </div>

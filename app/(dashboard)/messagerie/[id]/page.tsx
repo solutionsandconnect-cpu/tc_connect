@@ -24,6 +24,7 @@ interface RawMessage {
   ref_user: DocumentReference
   message_text: string
   date_create: Timestamp | null
+  edited?: boolean
   document_image_list?: string[]
   document_pdf_list?: string[]
   document_video_list?: string[]
@@ -69,10 +70,12 @@ function fileEmoji(file: File) {
 
 // ─── Message bubble ───────────────────────────────────────────────────────────
 
-function MessageBubble({ m, isMe, onImageClick }: {
+function MessageBubble({ m, isMe, onImageClick, canEdit, onEdit }: {
   m: ResolvedMessage
   isMe: boolean
   onImageClick: (url: string) => void
+  canEdit?: boolean
+  onEdit?: (m: ResolvedMessage) => void
 }) {
   const images = m.document_image_list?.filter(Boolean) ?? []
   const videos = m.document_video_list?.filter(Boolean) ?? []
@@ -108,16 +111,23 @@ function MessageBubble({ m, isMe, onImageClick }: {
           </a>
         ))}
         {m.message_text ? (
-          <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+          <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
             isMe
               ? 'bg-blue-600 text-white rounded-br-sm'
               : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm shadow-sm'
           }`}>
-            {m.message_text}
+            {m.message_text}{m.edited ? <span className={`ml-1.5 text-[10px] ${isMe ? 'text-blue-100' : 'text-gray-400'}`}>(modifié)</span> : null}
           </div>
         ) : null}
         </div>
-        <span className="text-[10px] text-gray-400 mt-1 mx-1">{formatDateTime(m.date_create)}</span>
+        <div className="flex items-center gap-2 mt-1 mx-1">
+          <span className="text-[10px] text-gray-400">{formatDateTime(m.date_create)}</span>
+          {isMe && canEdit && !m.edited && !!m.message_text && onEdit && (
+            <button onClick={() => onEdit(m)} className="text-[10px] text-gray-400 hover:text-blue-500 transition">
+              Modifier
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -435,6 +445,8 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
   const [messages, setMessages] = useState<ResolvedMessage[]>([])
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [editingMsg, setEditingMsg] = useState<ResolvedMessage | null>(null)
+  const [editText, setEditText] = useState('')
   const [loading, setLoading] = useState(true)
 
   const [participants, setParticipants] = useState<UserInfo[]>([])
@@ -664,6 +676,28 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
   const isAdmin = userProfile?.role_app === 'Admin'
   const isNewFormat = discussion?.participants_ids !== undefined
 
+  // Édition d'un message : possible UNE seule fois, tant qu'aucun destinataire n'a lu
+  // (un admin peut toujours modifier). Lecture = retiré de non_lus_ids.
+  const otherIds = (discussion?.participants_ids ?? []).filter((p) => p !== uid)
+  const noneHaveRead = otherIds.length > 0 && otherIds.every((p) => (discussion?.non_lus_ids ?? []).includes(p))
+  const canEditMessages = isAdmin || noneHaveRead
+
+  const saveEditedMessage = async () => {
+    if (!editingMsg) return
+    const newText = editText.trim()
+    if (!newText) return
+    try {
+      await updateDoc(doc(db, 'messagerie', id, 'messages_messagerie', editingMsg.id), {
+        message_text: newText,
+        edited: true,
+      })
+    } catch (e) {
+      console.error('[edit message]', e)
+    }
+    setEditingMsg(null)
+    setEditText('')
+  }
+
   return (
     <>
       <div className="fixed inset-x-0 top-0 bottom-0 lg:left-64 flex flex-col pb-nav-safe lg:pb-0">
@@ -712,6 +746,8 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
           ) : (
             messages.map((m) => (
               <MessageBubble key={m.id} m={m} isMe={m.ref_user?.id === uid}
+                canEdit={canEditMessages}
+                onEdit={(msg) => { setEditingMsg(msg); setEditText(msg.message_text) }}
                 onImageClick={(url) => {
                   const idx = allImages.indexOf(url)
                   setLightbox({ urls: allImages, index: Math.max(0, idx) })
@@ -787,6 +823,32 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
           isAdmin={isAdmin}
           onClose={() => setShowParticipants(false)}
         />
+      )}
+
+      {/* Modal édition d'un message */}
+      {editingMsg && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/40" onClick={() => setEditingMsg(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Modifier le message</h3>
+            <p className="text-xs text-gray-400 mb-3">Modifiable une seule fois{isAdmin ? '' : " (tant que personne ne l'a lu)"}.</p>
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              rows={4}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-400 resize-none"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setEditingMsg(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition">
+                Annuler
+              </button>
+              <button onClick={saveEditedMessage} disabled={!editText.trim()}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition disabled:opacity-50">
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Media panel */}

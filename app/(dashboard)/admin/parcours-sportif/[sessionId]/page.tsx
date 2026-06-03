@@ -16,7 +16,7 @@ import {
   ArrowLeftIcon, TrashIcon, ClipboardDocumentIcon,
   ExclamationTriangleIcon, UsersIcon, CalendarIcon, MapPinIcon,
   CheckCircleIcon, XCircleIcon, BanknotesIcon, PlusIcon,
-  MagnifyingGlassIcon, ChatBubbleLeftIcon,
+  MagnifyingGlassIcon, ChatBubbleLeftIcon, PencilIcon,
 } from '@heroicons/react/24/outline'
 
 interface Session {
@@ -45,7 +45,7 @@ interface Registration {
   phone: string
   suggestions: string
   paymentStatus: 'pending' | 'cash' | 'transfer'
-  attendance: 'unknown' | 'present' | 'absent'
+  attendance: 'unknown' | 'present' | 'absent' | 'deregistered'
   registeredAt: Timestamp
   userId?: string
   isMinor?: boolean
@@ -67,6 +67,13 @@ const PAYMENT_OPTIONS = [
   { value: 'cash',     label: 'Espèces' },
   { value: 'transfer', label: 'Virement' },
 ]
+
+// Formatage des noms : NOM en majuscules, Prénom en nom propre
+const toUpperName = (s: string) => s.toUpperCase()
+const toProperName = (s: string) =>
+  s.split(/([\s-])/).map(p => /[\s-]/.test(p) ? p : p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('')
+
+type Candidate = { firstName: string; lastName: string; email: string; phone: string }
 
 // Message d'impayé — le numéro et le RIB proviennent des paramètres (settings/parcours_sportif)
 const buildImpayeTemplate = (phone: string, iban: string, bic: string) => `Bonjour,\n\nSi je ne me trompe pas, tu ne m'as pas réglé le dernier Parcours Sportif.\n
@@ -113,6 +120,9 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [editReg, setEditReg] = useState<Registration | null>(null)
+  const [editRegForm, setEditRegForm] = useState({ firstName: '', lastName: '', email: '', phone: '' })
+  const [savingEditReg, setSavingEditReg] = useState(false)
   const [showDeleteSession, setShowDeleteSession] = useState(false)
   const [deletingSession, setDeletingSession] = useState(false)
   const [togglingHidden, setTogglingHidden] = useState(false)
@@ -165,6 +175,10 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const [quickForm, setQuickForm] = useState({ firstName: '', lastName: '', email: '', phone: '' })
   const [addingParticipant, setAddingParticipant] = useState(false)
   const [addError, setAddError] = useState('')
+  const [registrantDirectory, setRegistrantDirectory] = useState<Candidate[]>([])
+  const [showNameSuggestions, setShowNameSuggestions] = useState(false)
+  const [otherSessions, setOtherSessions] = useState<Session[]>([])
+  const [quickExtraSessionIds, setQuickExtraSessionIds] = useState<Set<string>>(new Set())
 
   // Pré-calcul des impayés passés par email (pour enrichir le SMS de rappel sans bloquer le clic).
   // Map: email -> date (JJ/MM/AAAA) du parcours passé non réglé le plus récent.
@@ -224,6 +238,67 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     ).slice(0, 8)
   }, [users, searchUser])
 
+  // Répertoire des personnes déjà inscrites (toutes séances), pour l'autocomplétion
+  useEffect(() => {
+    if (!isAdmin) return
+    getDocs(collection(db, 'registrations')).then((snap) => {
+      const map = new Map<string, Candidate>()
+      snap.docs.forEach((d) => {
+        const r = d.data() as any
+        const c: Candidate = {
+          firstName: r.firstName ?? '', lastName: r.lastName ?? '',
+          email: r.email ?? '', phone: r.phone ?? '',
+        }
+        if (!c.firstName && !c.lastName && !c.email) return
+        const key = (c.email || `${c.firstName}|${c.lastName}`).toLowerCase()
+        // On garde la fiche la plus complète (avec email + téléphone)
+        const prev = map.get(key)
+        if (!prev || ((!prev.phone && c.phone) || (!prev.email && c.email))) map.set(key, c)
+      })
+      setRegistrantDirectory(Array.from(map.values()))
+    }).catch(() => {})
+  }, [isAdmin])
+
+  // Autres séances à venir (pour inscrire un participant à plusieurs dates d'un coup)
+  useEffect(() => {
+    if (!isAdmin) return
+    const nowMs = Date.now()
+    getDocs(collection(db, 'sessions')).then((snap) => {
+      const list = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as Session))
+        .filter((s) => s.id !== sessionId && s.status !== 'cancelled'
+          && (s.date?.toMillis?.() ?? 0) >= nowMs && (s.maxSpots - s.registeredCount) > 0)
+        .sort((a, b) => (a.date?.toMillis?.() ?? 0) - (b.date?.toMillis?.() ?? 0))
+      setOtherSessions(list)
+    }).catch(() => {})
+  }, [isAdmin, sessionId])
+
+  // Candidats = utilisateurs + anciens inscrits (dédoublonnés par email/nom)
+  const candidates = useMemo<Candidate[]>(() => {
+    const map = new Map<string, Candidate>()
+    users.forEach((u) => {
+      const c: Candidate = { firstName: u.prenom ?? '', lastName: u.nom ?? '', email: u.email ?? '', phone: (u as any).phone_number ?? '' }
+      if (!c.firstName && !c.lastName && !c.email) return
+      map.set((c.email || `${c.firstName}|${c.lastName}`).toLowerCase(), c)
+    })
+    registrantDirectory.forEach((c) => {
+      const key = (c.email || `${c.firstName}|${c.lastName}`).toLowerCase()
+      if (!map.has(key)) map.set(key, c)
+    })
+    return Array.from(map.values())
+  }, [users, registrantDirectory])
+
+  // Suggestions basées sur ce qui est tapé dans Prénom / Nom
+  const nameQuery = `${quickForm.firstName} ${quickForm.lastName}`.trim().toLowerCase()
+  const nameSuggestions = useMemo<Candidate[]>(() => {
+    if (nameQuery.length < 2) return []
+    return candidates.filter((c) => {
+      const f = c.firstName.toLowerCase(), l = c.lastName.toLowerCase()
+      return `${f} ${l}`.includes(nameQuery) || `${l} ${f}`.includes(nameQuery)
+        || f.startsWith(nameQuery) || l.startsWith(nameQuery)
+    }).slice(0, 6)
+  }, [candidates, nameQuery])
+
   useEffect(() => {
     if (!isAdmin) return
     getDoc(doc(db, 'sessions', sessionId)).then((snap) => {
@@ -256,20 +331,44 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
 
   const financials = useMemo(() => {
     const price = session?.price ?? 5
-    const byCash = registrations.filter((r) => r.paymentStatus === 'cash').length
-    const byTransfer = registrations.filter((r) => r.paymentStatus === 'transfer').length
+    // Les désinscrits ne comptent ni dans les paiements attendus ni dans la présence
+    const active = registrations.filter((r) => r.attendance !== 'deregistered')
+    const byCash = active.filter((r) => r.paymentStatus === 'cash').length
+    const byTransfer = active.filter((r) => r.paymentStatus === 'transfer').length
     const total = (byCash + byTransfer) * price
-    const pending = registrations.filter((r) => r.paymentStatus === 'pending').length * price
-    const present = registrations.filter((r) => r.attendance === 'present').length
-    const absent = registrations.filter((r) => r.attendance === 'absent').length
-    return { total, pending, byCash, byTransfer, present, absent }
+    const pending = active.filter((r) => r.paymentStatus === 'pending').length * price
+    const present = active.filter((r) => r.attendance === 'present').length
+    const absent = active.filter((r) => r.attendance === 'absent').length
+    const deregistered = registrations.filter((r) => r.attendance === 'deregistered').length
+    return { total, pending, byCash, byTransfer, present, absent, deregistered }
   }, [registrations, session])
 
   const handlePaymentChange = (regId: string, value: string) =>
     updateDoc(doc(db, 'registrations', regId), { paymentStatus: value })
 
-  const handleAttendance = (regId: string, value: 'present' | 'absent' | 'unknown') =>
+  const handleAttendance = (regId: string, value: 'present' | 'absent' | 'unknown' | 'deregistered') =>
     updateDoc(doc(db, 'registrations', regId), { attendance: value })
+
+  // Bascule "Désinscrit" : libère la place (décrémente le compteur) mais garde la fiche
+  const handleToggleDeregister = async (reg: Registration) => {
+    const becomingDereg = reg.attendance !== 'deregistered'
+    await runTransaction(db, async (tx) => {
+      const sessionRef = doc(db, 'sessions', sessionId)
+      const snap = await tx.get(sessionRef)
+      if (snap.exists()) {
+        const data = snap.data()
+        const delta = becomingDereg ? -1 : 1
+        const newCount = Math.max(0, (data.registeredCount ?? 0) + delta)
+        tx.update(sessionRef, { registeredCount: newCount, status: newCount >= data.maxSpots ? 'full' : 'open' })
+      }
+      tx.update(doc(db, 'registrations', reg.id), {
+        attendance: becomingDereg ? 'deregistered' : 'unknown',
+        ...(becomingDereg ? { paymentStatus: 'pending' } : {}),
+      })
+    })
+    // Retire l'activité du planning si désinscrit
+    if (becomingDereg) await removeParcoursActivite(reg.id).catch(() => {})
+  }
 
   const handleDeleteReg = async (reg: Registration) => {
     await runTransaction(db, async (tx) => {
@@ -287,6 +386,34 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     // Retirer l'activité de planning liée
     await removeParcoursActivite(reg.id)
     setDeleteConfirm(null)
+  }
+
+  const openEditReg = (reg: Registration) => {
+    setAddError('')
+    setEditReg(reg)
+    setEditRegForm({
+      firstName: reg.firstName ?? '', lastName: reg.lastName ?? '',
+      email: reg.email ?? '', phone: reg.phone ?? '',
+    })
+  }
+
+  const saveEditReg = async () => {
+    if (!editReg) return
+    if (!editRegForm.firstName.trim()) { setAddError('Le prénom est obligatoire.'); return }
+    setSavingEditReg(true)
+    try {
+      await updateDoc(doc(db, 'registrations', editReg.id), {
+        firstName: editRegForm.firstName.trim(),
+        lastName: editRegForm.lastName.trim(),
+        email: editRegForm.email.trim().toLowerCase(),
+        phone: editRegForm.phone.trim(),
+      })
+      setEditReg(null)
+    } catch (e: any) {
+      setAddError(e.message ?? 'Erreur lors de la modification')
+    } finally {
+      setSavingEditReg(false)
+    }
   }
 
   const handleCancelSession = async () => {
@@ -371,19 +498,22 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     e.preventDefault()
     if (!quickForm.firstName.trim()) { setAddError('Le prénom est obligatoire.'); return }
     if (!session) return
+    setShowNameSuggestions(false)
     setAddError('')
     setAddingParticipant(true)
-    try {
+
+    // Une seule personne, inscrite à une ou plusieurs dates (la courante + les cochées)
+    const registerOne = async (sessId: string, sessObj: Session) => {
       const { notify, regId } = await runTransaction(db, async (tx) => {
-        const sessionRef = doc(db, 'sessions', sessionId)
+        const sessionRef = doc(db, 'sessions', sessId)
         const snap = await tx.get(sessionRef)
-        if (!snap.exists()) throw new Error('Séance introuvable')
+        if (!snap.exists()) throw new Error('introuvable')
         const data = snap.data()
-        if (data.registeredCount >= data.maxSpots) throw new Error('Séance complète')
+        if (data.registeredCount >= data.maxSpots) throw new Error('complète')
         const newCount = data.registeredCount + 1
         const regRef = doc(collection(db, 'registrations'))
         tx.set(regRef, {
-          sessionId,
+          sessionId: sessId,
           firstName: quickForm.firstName.trim(),
           lastName: quickForm.lastName.trim(),
           email: quickForm.email.trim().toLowerCase(),
@@ -394,39 +524,49 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
           registeredAt: Timestamp.now(),
           uniqueToken: randomUUID(),
         })
-        tx.update(sessionRef, {
-          registeredCount: newCount,
-          status: newCount >= data.maxSpots ? 'full' : 'open',
-        })
+        tx.update(sessionRef, { registeredCount: newCount, status: newCount >= data.maxSpots ? 'full' : 'open' })
         const notify = data.maxSpots > 10 && newCount === data.maxSpots - 10
         return { notify, regId: regRef.id }
       })
-      // Si le participant ajouté possède un compte (email connu), ajouter à son planning
-      if (regId && session && quickForm.email.trim()) {
+      if (regId && quickForm.email.trim()) {
         try {
           const uSnap = await getDocs(query(collection(db, 'users'), where('email', '==', quickForm.email.trim().toLowerCase())))
-          if (!uSnap.empty) {
-            await addParcoursActivite({ userId: uSnap.docs[0].id, registrationId: regId, sessionId, session: session as any })
-          }
+          if (!uSnap.empty) await addParcoursActivite({ userId: uSnap.docs[0].id, registrationId: regId, sessionId: sessId, session: sessObj as any })
         } catch {}
       }
       if (notify) {
         fetch('/api/push/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            toAdmins: true,
-            title: '⚠️ Parcours Sportif presque complet',
-            body: `Il ne reste que 10 places pour "${session.title}"`,
-            url: `/admin/parcours-sportif/${sessionId}`,
-          }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ toAdmins: true, title: '⚠️ Parcours Sportif presque complet', body: `Il ne reste que 10 places pour "${sessObj.title}"`, url: `/admin/parcours-sportif/${sessId}` }),
         }).catch(() => {})
+      }
+    }
+
+    const targets: { id: string; obj: Session }[] = [
+      { id: sessionId, obj: session },
+      ...otherSessions.filter((s) => quickExtraSessionIds.has(s.id)).map((s) => ({ id: s.id, obj: s })),
+    ]
+    let ok = 0
+    const failed: string[] = []
+    for (const t of targets) {
+      try { await registerOne(t.id, t.obj); ok++ }
+      catch (err: any) {
+        const d = t.obj.date?.toDate?.().toLocaleDateString('fr-FR') ?? ''
+        failed.push(`${d} (${err?.message === 'complète' ? 'complète' : 'erreur'})`)
+      }
+    }
+
+    if (ok === 0) {
+      setAddError(failed.length ? `Aucun ajout — ${failed.join(', ')}` : 'Erreur lors de l\'ajout')
+    } else {
+      if (failed.length) {
+        setAddError(`Ajouté, mais certaines dates ont échoué : ${failed.join(', ')}`)
+      } else {
+        setShowQuickAdd(false)
       }
       setQuickForm({ firstName: '', lastName: '', email: '', phone: '' })
       setSearchUser('')
-      setShowQuickAdd(false)
-    } catch (err: any) {
-      setAddError(err.message ?? 'Erreur lors de l\'ajout')
+      setQuickExtraSessionIds(new Set())
     }
     setAddingParticipant(false)
   }
@@ -791,6 +931,12 @@ Teddy`
                 <span className="flex items-center gap-1 text-red-500"><XCircleIcon className="w-3.5 h-3.5" />Absents</span>
                 <span className="font-semibold">{financials.absent}</span>
               </div>
+              {financials.deregistered > 0 && (
+                <div className="flex justify-between text-xs">
+                  <span className="flex items-center gap-1 text-gray-500"><XCircleIcon className="w-3.5 h-3.5" />Désinscrits</span>
+                  <span className="font-semibold">{financials.deregistered}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -864,15 +1010,39 @@ Teddy`
                 <div>
                   <label className="block text-xs font-medium text-blue-700 mb-1">Prénom *</label>
                   <input type="text" required value={quickForm.firstName}
-                    onChange={(e) => setQuickForm((f) => ({ ...f, firstName: e.target.value }))}
+                    onChange={(e) => { setQuickForm((f) => ({ ...f, firstName: toProperName(e.target.value) })); setShowNameSuggestions(true) }}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-blue-700 mb-1">Nom</label>
                   <input type="text" value={quickForm.lastName}
-                    onChange={(e) => setQuickForm((f) => ({ ...f, lastName: e.target.value }))}
+                    onChange={(e) => { setQuickForm((f) => ({ ...f, lastName: toUpperName(e.target.value) })); setShowNameSuggestions(true) }}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
                 </div>
+
+                {/* Suggestions automatiques (utilisateurs + personnes déjà inscrites) */}
+                {showNameSuggestions && nameSuggestions.length > 0 && (
+                  <div className="col-span-2 -mt-1 bg-white border border-blue-200 rounded-xl shadow-sm overflow-hidden">
+                    <p className="text-[11px] text-gray-400 px-3 pt-2">Suggestions — cliquez pour remplir automatiquement</p>
+                    {nameSuggestions.map((c, idx) => (
+                      <button key={idx} type="button"
+                        onClick={() => {
+                          setQuickForm({ firstName: c.firstName, lastName: c.lastName, email: c.email, phone: c.phone })
+                          setShowNameSuggestions(false)
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-blue-50 transition">
+                        <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">
+                          {c.firstName?.[0]}{c.lastName?.[0]}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{c.firstName} {c.lastName}</p>
+                          {(c.email || c.phone) && <p className="text-xs text-gray-400 truncate">{[c.email, c.phone].filter(Boolean).join(' · ')}</p>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs font-medium text-blue-700 mb-1">Email</label>
                   <input type="email" value={quickForm.email}
@@ -885,9 +1055,34 @@ Teddy`
                     onChange={(e) => setQuickForm((f) => ({ ...f, phone: e.target.value }))}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
                 </div>
+                {/* Inscrire cette personne à d'autres dates en même temps */}
+                {otherSessions.length > 0 && (
+                  <div className="col-span-2 border border-gray-200 rounded-xl p-3 bg-white">
+                    <p className="text-xs font-semibold text-gray-700">Inscrire aussi à d'autres dates ? (optionnel)</p>
+                    <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
+                      {otherSessions.map((s) => {
+                        const left = s.maxSpots - s.registeredCount
+                        const checked = quickExtraSessionIds.has(s.id)
+                        return (
+                          <label key={s.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg border border-gray-100 hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" checked={checked}
+                              onChange={() => setQuickExtraSessionIds((prev) => { const n = new Set(prev); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n })}
+                              className="w-4 h-4 accent-blue-600 shrink-0" />
+                            <span className="flex-1 min-w-0 text-sm text-gray-800 capitalize truncate">
+                              {s.date?.toDate?.().toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })} <span className="text-gray-400">— {left} place{left > 1 ? 's' : ''}</span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    {quickExtraSessionIds.size > 0 && (
+                      <p className="text-xs font-medium text-blue-600 mt-2">{quickExtraSessionIds.size + 1} dates au total</p>
+                    )}
+                  </div>
+                )}
                 {addError && <p className="col-span-2 text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{addError}</p>}
                 <div className="col-span-2 flex gap-2">
-                  <button type="button" onClick={() => { setShowQuickAdd(false); setQuickForm({ firstName: '', lastName: '', email: '', phone: '' }); setSearchUser('') }}
+                  <button type="button" onClick={() => { setShowQuickAdd(false); setQuickForm({ firstName: '', lastName: '', email: '', phone: '' }); setSearchUser(''); setShowNameSuggestions(false); setQuickExtraSessionIds(new Set()) }}
                     className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-xl text-sm hover:bg-gray-50 transition">
                     Annuler
                   </button>
@@ -1039,27 +1234,50 @@ Teddy`
                             <button onClick={() => handleDeleteReg(reg)} className="text-xs text-white bg-red-500 hover:bg-red-600 px-2 py-0.5 rounded-md">Oui</button>
                           </div>
                         ) : (
-                          <button onClick={() => setDeleteConfirm(reg.id)} className="p-1 text-gray-400 hover:text-red-500 transition">
-                            <TrashIcon className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => openEditReg(reg)} title="Modifier les infos" className="p-1 text-gray-400 hover:text-blue-500 transition">
+                              <PencilIcon className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => setDeleteConfirm(reg.id)} title="Supprimer" className="p-1 text-gray-400 hover:text-red-500 transition">
+                              <TrashIcon className="w-4 h-4" />
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <select value={reg.paymentStatus} onChange={(e) => handlePaymentChange(reg.id, e.target.value)}
-                        className={`text-xs font-medium rounded-lg px-2 py-1 border focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                          reg.paymentStatus === 'pending' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-green-50 border-green-200 text-green-700'
-                        }`}>
-                        {PAYMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                      <button onClick={() => handleAttendance(reg.id, reg.attendance === 'present' ? 'unknown' : 'present')}
-                        className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition ${reg.attendance === 'present' ? 'bg-green-500 text-white border-green-500' : 'border-gray-200 text-gray-500 hover:border-green-300 hover:text-green-600'}`}>
-                        <CheckCircleIcon className="w-3.5 h-3.5" />Présent
-                      </button>
-                      <button onClick={() => handleAttendance(reg.id, reg.attendance === 'absent' ? 'unknown' : 'absent')}
-                        className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition ${reg.attendance === 'absent' ? 'bg-red-500 text-white border-red-500' : 'border-gray-200 text-gray-500 hover:border-red-300 hover:text-red-500'}`}>
-                        <XCircleIcon className="w-3.5 h-3.5" />Absent
-                      </button>
+                      {reg.attendance === 'deregistered' ? (
+                        <>
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg bg-gray-200 text-gray-600">
+                            <XCircleIcon className="w-3.5 h-3.5" /> Désinscrit
+                          </span>
+                          <button onClick={() => handleToggleDeregister(reg)}
+                            className="text-xs font-medium px-2 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition">
+                            Réinscrire
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <select value={reg.paymentStatus} onChange={(e) => handlePaymentChange(reg.id, e.target.value)}
+                            className={`text-xs font-medium rounded-lg px-2 py-1 border focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                              reg.paymentStatus === 'pending' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-green-50 border-green-200 text-green-700'
+                            }`}>
+                            {PAYMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                          <button onClick={() => handleAttendance(reg.id, reg.attendance === 'present' ? 'unknown' : 'present')}
+                            className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition ${reg.attendance === 'present' ? 'bg-green-500 text-white border-green-500' : 'border-gray-200 text-gray-500 hover:border-green-300 hover:text-green-600'}`}>
+                            <CheckCircleIcon className="w-3.5 h-3.5" />Présent
+                          </button>
+                          <button onClick={() => handleAttendance(reg.id, reg.attendance === 'absent' ? 'unknown' : 'absent')}
+                            className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition ${reg.attendance === 'absent' ? 'bg-red-500 text-white border-red-500' : 'border-gray-200 text-gray-500 hover:border-red-300 hover:text-red-500'}`}>
+                            <XCircleIcon className="w-3.5 h-3.5" />Absent
+                          </button>
+                          <button onClick={() => handleToggleDeregister(reg)} title="Marquer comme désinscrit (la personne a prévenu par message)"
+                            className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700 transition">
+                            <XCircleIcon className="w-3.5 h-3.5" />Désinscrit
+                          </button>
+                        </>
+                      )}
                       {reg.phone && (
                         <button onClick={() => openDirectSMS(reg.phone)}
                           title="Ouvrir un SMS vide vers ce contact"
@@ -1067,13 +1285,13 @@ Teddy`
                           <ChatBubbleLeftIcon className="w-3.5 h-3.5" />SMS
                         </button>
                       )}
-                      {reg.phone && (
+                      {reg.attendance !== 'deregistered' && reg.phone && (
                         <button onClick={() => handleReminderSMS(reg)}
                           className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition">
                           <ChatBubbleLeftIcon className="w-3.5 h-3.5" />Rappel
                         </button>
                       )}
-                      {reg.paymentStatus === 'pending' && effectiveContactPhone(reg) && (
+                      {reg.attendance !== 'deregistered' && reg.paymentStatus === 'pending' && effectiveContactPhone(reg) && (
                         <button onClick={() => openSMS(reg)}
                           title={usesBookingPhone(reg) ? 'Envoyé au numéro de la réservation (pas forcément celui de la personne)' : undefined}
                           className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-orange-200 text-orange-600 hover:bg-orange-50 transition">
@@ -1130,6 +1348,52 @@ Teddy`
               <button type="button" onClick={sendCancelSmsToAll}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold transition">
                 Envoyer les SMS
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal édition d'un participant */}
+      {editReg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => !savingEditReg && setEditReg(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-4">Modifier le participant</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Prénom *</label>
+                <input type="text" value={editRegForm.firstName}
+                  onChange={(e) => setEditRegForm((f) => ({ ...f, firstName: toProperName(e.target.value) }))}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Nom</label>
+                <input type="text" value={editRegForm.lastName}
+                  onChange={(e) => setEditRegForm((f) => ({ ...f, lastName: toUpperName(e.target.value) }))}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                <input type="email" value={editRegForm.email}
+                  onChange={(e) => setEditRegForm((f) => ({ ...f, email: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Téléphone</label>
+                <input type="tel" value={editRegForm.phone}
+                  onChange={(e) => setEditRegForm((f) => ({ ...f, phone: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
+              </div>
+            </div>
+            {addError && <p className="mt-3 text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{addError}</p>}
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setEditReg(null)} disabled={savingEditReg}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition disabled:opacity-50">
+                Annuler
+              </button>
+              <button onClick={saveEditReg} disabled={savingEditReg}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition disabled:opacity-50">
+                {savingEditReg ? 'Enregistrement…' : 'Enregistrer'}
               </button>
             </div>
           </div>

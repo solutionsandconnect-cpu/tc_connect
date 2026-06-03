@@ -64,6 +64,11 @@ export default function AdminParcoursPage() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [paidBySession, setPaidBySession] = useState<Record<string, number>>({})
+  const [evoYear, setEvoYear] = useState<'all' | number>('all')
+  const [evoMonth, setEvoMonth] = useState<'all' | number>('all')
+  const [sessionView, setSessionView] = useState<'upcoming' | 'past' | 'all'>('upcoming')
+  const [sessionYear, setSessionYear] = useState<'all' | number>('all')
+  const [sessionMonth, setSessionMonth] = useState<'all' | number>('all')
   const [copied, setCopied] = useState(false)
   const [reviews, setReviews] = useState<Review[]>([])
   const [deleteReviewConfirm, setDeleteReviewConfirm] = useState<string | null>(null)
@@ -165,7 +170,9 @@ export default function AdminParcoursPage() {
       )
       const counts: Record<string, number> = {}
       snap.docs.forEach((d) => {
-        const sid = d.data().sessionId
+        const data = d.data()
+        if (data.attendance === 'deregistered') return // désinscrit → ne compte pas
+        const sid = data.sessionId
         counts[sid] = (counts[sid] ?? 0) + 1
       })
       setPaidBySession(counts)
@@ -178,22 +185,63 @@ export default function AdminParcoursPage() {
   const currentMonth = new Date().getMonth()
 
   const financials = useMemo(() => {
-    let yearTotal = 0
-    let monthTotal = 0
+    let yearTotal = 0, monthTotal = 0          // encaissé (inscriptions réglées)
+    let yearProjected = 0, monthProjected = 0  // projeté (si tous les inscrits restent)
     for (const s of sessions) {
+      if (s.status === 'cancelled') continue
       const price = s.price ?? 5
       const paid = paidBySession[s.id] ?? 0
       const earned = paid * price
+      const projected = s.registeredCount * price
       const d = s.date?.toDate?.()
       if (!d) continue
-      if (d.getFullYear() === currentYear) yearTotal += earned
-      if (d.getFullYear() === currentYear && d.getMonth() === currentMonth) monthTotal += earned
+      if (d.getFullYear() === currentYear) { yearTotal += earned; yearProjected += projected }
+      if (d.getFullYear() === currentYear && d.getMonth() === currentMonth) { monthTotal += earned; monthProjected += projected }
     }
-    return { yearTotal, monthTotal }
+    return { yearTotal, monthTotal, yearProjected, monthProjected }
   }, [sessions, paidBySession, currentYear, currentMonth])
+
+  // Historique mensuel (gains projetés + encaissés) pour visualiser l'évolution
+  const monthlyStats = useMemo(() => {
+    const map = new Map<string, { year: number; month: number; projete: number; encaisse: number; inscrits: number; seances: number }>()
+    for (const s of sessions) {
+      if (s.status === 'cancelled') continue
+      const d = s.date?.toDate?.()
+      if (!d) continue
+      const price = s.price ?? 5
+      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`
+      const cur = map.get(key) ?? { year: d.getFullYear(), month: d.getMonth(), projete: 0, encaisse: 0, inscrits: 0, seances: 0 }
+      cur.projete += s.registeredCount * price
+      cur.encaisse += (paidBySession[s.id] ?? 0) * price
+      cur.inscrits += s.registeredCount
+      cur.seances += 1
+      map.set(key, cur)
+    }
+    return Array.from(map.entries())
+      .map(([key, v]) => ({ key, ...v }))
+      .sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month)
+  }, [sessions, paidBySession])
 
   const upcoming = sessions.filter((s) => s.status !== 'cancelled' && s.date.toMillis() >= now)
   const past = sessions.filter((s) => s.status === 'cancelled' || s.date.toMillis() < now)
+
+  // À venir : du plus proche d'aujourd'hui au plus lointain. Passés : du plus récent au plus ancien.
+  const upcomingSorted = [...upcoming].sort((a, b) => a.date.toMillis() - b.date.toMillis())
+  const pastSorted = [...past].sort((a, b) => b.date.toMillis() - a.date.toMillis())
+  const sessionYearsAvailable = Array.from(
+    new Set(sessions.map((s) => s.date?.toDate?.().getFullYear()).filter((y): y is number => !!y))
+  ).sort((a, b) => b - a)
+  const displayedSessions = (() => {
+    const base = sessionView === 'upcoming' ? upcomingSorted
+      : sessionView === 'past' ? pastSorted
+      : [...sessions].sort((a, b) => a.date.toMillis() - b.date.toMillis())
+    return base.filter((s) => {
+      const d = s.date?.toDate?.()
+      if (!d) return false
+      return (sessionYear === 'all' || d.getFullYear() === sessionYear)
+        && (sessionMonth === 'all' || d.getMonth() === sessionMonth)
+    })
+  })()
 
   if (!isAdmin) {
     return <div className="flex items-center justify-center py-20"><p className="text-gray-500">Accès réservé aux administrateurs.</p></div>
@@ -282,10 +330,12 @@ export default function AdminParcoursPage() {
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
           <p className="text-xs text-gray-500 mb-1">Cette année ({currentYear})</p>
           <p className="text-2xl font-bold text-gray-900">{financials.yearTotal.toFixed(2)}€</p>
+          <p className="text-[11px] text-blue-600 mt-0.5">Projeté : {financials.yearProjected.toFixed(2)}€</p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
           <p className="text-xs text-gray-500 mb-1">Ce mois</p>
           <p className="text-2xl font-bold text-gray-900">{financials.monthTotal.toFixed(2)}€</p>
+          <p className="text-[11px] text-blue-600 mt-0.5">Projeté : {financials.monthProjected.toFixed(2)}€ <span className="text-gray-400">(si tous restent)</span></p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
           <p className="text-xs text-gray-500 mb-1">Séances à venir</p>
@@ -298,6 +348,80 @@ export default function AdminParcoursPage() {
           </p>
         </div>
       </div>
+
+      {/* Évolution mensuelle des gains */}
+      {monthlyStats.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h2 className="text-sm font-semibold text-gray-700">Évolution mensuelle des gains</h2>
+            <div className="flex items-center gap-3 text-[11px] text-gray-400">
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-blue-200 inline-block" />Projeté (si tous restent)</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-green-500 inline-block" />Encaissé</span>
+            </div>
+          </div>
+
+          {/* Filtres année / mois */}
+          {(() => {
+            const MONTHS_FULL = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
+            const allYears = Array.from(new Set(monthlyStats.map((m) => m.year))).sort((a, b) => b - a)
+            return (
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <select value={String(evoYear)} onChange={(e) => setEvoYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="text-xs font-medium border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  <option value="all">Toutes les années</option>
+                  {allYears.map((y) => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <select value={String(evoMonth)} onChange={(e) => setEvoMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                  className="text-xs font-medium border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  <option value="all">Tous les mois</option>
+                  {MONTHS_FULL.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                </select>
+                {(evoYear !== 'all' || evoMonth !== 'all') && (
+                  <button onClick={() => { setEvoYear('all'); setEvoMonth('all') }}
+                    className="text-xs text-gray-400 hover:text-gray-600 underline">Réinitialiser</button>
+                )}
+              </div>
+            )
+          })()}
+
+          {(() => {
+            const MONTHS = ['Janv.', 'Févr.', 'Mars', 'Avril', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.']
+            const filtered = monthlyStats.filter((m) =>
+              (evoYear === 'all' || m.year === evoYear) && (evoMonth === 'all' || m.month === evoMonth)
+            )
+            if (filtered.length === 0) return <p className="text-sm text-gray-400 text-center py-4">Aucune donnée pour cette période.</p>
+            const maxProj = Math.max(...filtered.map((m) => m.projete), 1)
+            const years = Array.from(new Set(filtered.map((m) => m.year))).sort((a, b) => b - a)
+            return years.map((year) => {
+              const rows = filtered.filter((m) => m.year === year).sort((a, b) => b.month - a.month)
+              const yearProj = rows.reduce((s, m) => s + m.projete, 0)
+              const yearEnc = rows.reduce((s, m) => s + m.encaisse, 0)
+              return (
+                <div key={year} className="mb-4 last:mb-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-gray-800">{year}</p>
+                    <p className="text-xs text-gray-500">Projeté <span className="text-blue-600 font-medium">{yearProj.toFixed(0)}€</span> · Encaissé <span className="text-green-600 font-medium">{yearEnc.toFixed(0)}€</span></p>
+                  </div>
+                  <div className="space-y-1.5">
+                    {rows.map((m) => (
+                      <div key={m.key} className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 w-12 shrink-0">{MONTHS[m.month]}</span>
+                        <div className="flex-1 h-5 bg-gray-100 rounded-md overflow-hidden relative min-w-0">
+                          <div className="h-full bg-blue-200" style={{ width: `${(m.projete / maxProj) * 100}%` }} />
+                          <div className="h-full bg-green-500 absolute top-0 left-0" style={{ width: `${(m.encaisse / maxProj) * 100}%` }} />
+                        </div>
+                        <span className="text-xs text-gray-700 w-24 text-right shrink-0">
+                          <span className="font-medium">{m.projete.toFixed(0)}€</span> <span className="text-green-600">({m.encaisse.toFixed(0)}€)</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })
+          })()}
+        </div>
+      )}
 
       {/* Lien public + partage */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
@@ -342,27 +466,43 @@ export default function AdminParcoursPage() {
           {[1, 2, 3].map((i) => <div key={i} className="h-20 bg-gray-100 rounded-2xl animate-pulse" />)}
         </div>
       ) : (
-        <>
-          <div className="space-y-3">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-              À venir ({upcoming.length})
-            </h2>
-            {upcoming.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
-                <CalendarIcon className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                <p className="text-sm text-gray-400">Aucune séance à venir</p>
-              </div>
-            ) : upcoming.map((s) => <SessionCard key={s.id} s={s} />)}
-          </div>
-          {past.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-                Historique ({past.length})
-              </h2>
-              {past.map((s) => <SessionCard key={s.id} s={s} />)}
+        <div className="space-y-3">
+          {/* Filtres séances */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex bg-gray-100 rounded-lg p-0.5">
+              {([['upcoming', 'À venir'], ['past', 'Passés'], ['all', 'Tous']] as const).map(([val, label]) => (
+                <button key={val} onClick={() => setSessionView(val)}
+                  className={`text-xs font-medium px-3 py-1.5 rounded-md transition ${sessionView === val ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+                  {label}
+                </button>
+              ))}
             </div>
-          )}
-        </>
+            <select value={String(sessionYear)} onChange={(e) => setSessionYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              className="text-xs font-medium border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="all">Toutes les années</option>
+              {sessionYearsAvailable.map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <select value={String(sessionMonth)} onChange={(e) => setSessionMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              className="text-xs font-medium border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="all">Tous les mois</option>
+              {['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'].map((m, i) => (
+                <option key={i} value={i}>{m}</option>
+              ))}
+            </select>
+            {(sessionYear !== 'all' || sessionMonth !== 'all') && (
+              <button onClick={() => { setSessionYear('all'); setSessionMonth('all') }}
+                className="text-xs text-gray-400 hover:text-gray-600 underline">Réinitialiser</button>
+            )}
+            <span className="text-xs text-gray-400 ml-auto">{displayedSessions.length} séance{displayedSessions.length > 1 ? 's' : ''}</span>
+          </div>
+
+          {displayedSessions.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
+              <CalendarIcon className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-400">Aucune séance pour cette sélection</p>
+            </div>
+          ) : displayedSessions.map((s) => <SessionCard key={s.id} s={s} />)}
+        </div>
       )}
 
       {/* ── Avis ── */}
