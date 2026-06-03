@@ -33,6 +33,7 @@ export default function LoginPage() {
   const [showRegPwd, setShowRegPwd] = useState(false)
   const [showRegConfirm, setShowRegConfirm] = useState(false)
   const [regError, setRegError] = useState('')
+  const [emailExists, setEmailExists] = useState(false)
   const [regLoading, setRegLoading] = useState(false)
 
   // Dialog mot de passe oublié
@@ -60,6 +61,7 @@ export default function LoginPage() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setRegError('')
+    setEmailExists(false)
     if (regPassword !== regConfirm) {
       setRegError('Les mots de passe ne correspondent pas')
       return
@@ -75,7 +77,8 @@ export default function LoginPage() {
       router.push(redirectTo === '/accueil' ? '/profil?setup=1' : redirectTo)
     } catch (err: any) {
       if (err?.code === 'auth/email-already-in-use') {
-        setRegError('Cette adresse email est déjà utilisée')
+        setRegError('Cette adresse email est déjà utilisée. Vous avez sûrement déjà un compte — utilisez « Mot de passe oublié » pour le récupérer.')
+        setEmailExists(true)
       } else {
         setRegError("Erreur lors de la création du compte")
       }
@@ -200,7 +203,20 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {regError && <p className="text-red-500 text-sm text-center">{regError}</p>}
+              {regError && (
+                <div className="text-center space-y-2">
+                  <p className="text-red-500 text-sm">{regError}</p>
+                  {emailExists && (
+                    <button
+                      type="button"
+                      onClick={openResetDialog}
+                      className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-700 underline"
+                    >
+                      Récupérer mon mot de passe
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="flex justify-center mt-2">
                 <button

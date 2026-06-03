@@ -1,7 +1,7 @@
 'use client'
 
 import { use, useState, useEffect, useMemo, useRef } from 'react'
-import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore'
+import { doc, getDoc, setDoc, deleteDoc, Timestamp } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useExercices } from '@/hooks/useExercices'
@@ -172,6 +172,14 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
 
   const handleSave = async () => {
     setSaving(true)
+    // Plus aucun contenu → on supprime carrément le document (pas de doc "vide" qui traîne)
+    if (circuits.length === 0) {
+      await deleteDoc(doc(db, 'session_content', sessionId)).catch(() => {})
+      setSaving(false)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      return
+    }
     // Nettoyer les undefined (Firestore les refuse) — exerciceRefId devient null si absent
     const cleanCircuits = circuits.map((c) => ({
       ...c,
@@ -307,12 +315,10 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
                   <ClockIcon className="w-3.5 h-3.5" />{formatSeconds(circuitSec)}
                 </span>
                 {/* Supprimer circuit */}
-                {circuits.length > 1 && (
-                  <button onClick={() => removeCircuit(circuit.id)}
-                    className="p-1.5 text-gray-400 hover:text-red-500 transition shrink-0">
-                    <TrashIcon className="w-4 h-4" />
-                  </button>
-                )}
+                <button onClick={() => removeCircuit(circuit.id)}
+                  className="p-1.5 text-gray-400 hover:text-red-500 transition shrink-0">
+                  <TrashIcon className="w-4 h-4" />
+                </button>
               </div>
 
               {/* Paramètres circuit */}
@@ -394,8 +400,7 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
                   </span>
                   {/* Supprimer exo */}
                   <button onClick={() => removeExercise(circuit.id, ex.id)}
-                    disabled={circuit.exercises.length === 1}
-                    className="p-1 text-gray-300 hover:text-red-400 disabled:opacity-20 transition shrink-0">
+                    className="p-1 text-gray-300 hover:text-red-400 transition shrink-0">
                     <TrashIcon className="w-4 h-4" />
                   </button>
                 </div>

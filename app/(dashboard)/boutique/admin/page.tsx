@@ -382,6 +382,24 @@ export default function BoutiqueAdminPage() {
     } else {
       const extra = statut === "cancelled" ? { archivedAt: Timestamp.now() } : {};
       await updateSubWithEvent(sub.id, { statut, ...extra }, statut === "cancelled" ? "cancelled" : "suspended");
+      // Prévenir le client que son accès a été suspendu / arrêté (push + section Notifications)
+      if (sub.userUid) {
+        const arret = statut === "cancelled";
+        fetch("/api/push/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: sub.userUid,
+            persist: true,
+            type: "BOUTIQUE_STATUT",
+            title: arret ? "Abonnement arrêté" : "Accès suspendu",
+            body: arret
+              ? `Votre accès à "${sub.appNom}" a été arrêté.`
+              : `Votre accès à "${sub.appNom}" a été suspendu. Contactez votre coach pour le réactiver.`,
+            url: "/boutique",
+          }),
+        }).catch(() => {});
+      }
       showToast(`Statut → ${STATUT_LABEL[statut]}`);
     }
   };

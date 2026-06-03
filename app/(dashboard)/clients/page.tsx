@@ -1484,7 +1484,7 @@ export default function ClientsPage() {
             overdue.length ? `${overdue.length} abonnement${overdue.length > 1 ? "s" : ""} expiré${overdue.length > 1 ? "s" : ""}` : "",
             soon.length ? `${soon.length} abonnement${soon.length > 1 ? "s" : ""} expire${soon.length > 1 ? "nt" : ""} sous 30 j` : "",
           ].filter(Boolean).join(" · ");
-          fetch("/api/push/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: currentUser.uid, title: "Abonnements à renouveler", body: msg, url: "/clients" }) }).catch(() => {});
+          fetch("/api/push/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: currentUser.uid, persist: true, type: "ABONNEMENT", title: "Abonnements à renouveler", body: msg, url: "/clients" }) }).catch(() => {});
           localStorage.setItem(key, String(Date.now()));
         }
       }
@@ -1555,6 +1555,8 @@ export default function ClientsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: currentUser.uid,
+          persist: true,
+          type: "SEANCES",
           title: "Toutes les séances effectuées",
           body: `${clientName} — ${abo.categorie} : ${abo.nbSeancesTotal} séances réalisées. Renouvellement à prévoir.`,
           url: "/clients",

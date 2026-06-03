@@ -737,6 +737,7 @@ function AppCard({
   const isSuspended = sub === "suspended";
   const reviewCount = reviews.length;
   const [showDetails, setShowDetails] = useState(false);
+  const [collapsed, setCollapsed] = useState(true); // card réduite par défaut
 
   // Mises à jour propres à CETTE app
   const upcoming = (app.changelogs ?? [])
@@ -746,6 +747,9 @@ function AppCard({
     .filter(c => c.type === "update")
     .sort((a, b) => (b.date?.seconds ?? 0) - (a.date?.seconds ?? 0));
   const hasDetails = reviewCount > 0 || updates.length > 0;
+  const hasLongDesc = !!app.description && app.description !== app.shortDesc;
+  // Y a-t-il du contenu à révéler en développant la card ?
+  const hasMore = hasLongDesc || (app.tags?.length ?? 0) > 0 || upcoming.length > 0 || hasDetails;
 
   return (
     <div className={`bg-white border rounded-2xl p-5 flex flex-col gap-4 shadow-sm hover:shadow-md transition ${!app.actif ? "opacity-60" : ""}`}>
@@ -782,29 +786,40 @@ function AppCard({
       <div className="flex-1">
         <h3 className="font-semibold text-gray-900 text-base">{app.nom}</h3>
         {app.shortDesc && <p className="text-sm text-gray-500 mt-1 leading-relaxed">{app.shortDesc}</p>}
-        {app.description && app.description !== app.shortDesc && (
+        {!collapsed && hasLongDesc && (
           // Toujours rendu en HTML : si la description contient des balises (gras, listes…)
           // elles sont interprétées ; sinon le texte brut est affiché (avec sauts de ligne).
           <div
             className="rich-content text-sm text-gray-600 mt-2 leading-relaxed"
             dangerouslySetInnerHTML={{
-              __html: /<[a-z][\s\S]*>/i.test(app.description)
-                ? app.description
-                : app.description.replace(/\n/g, '<br>'),
+              __html: /<[a-z][\s\S]*>/i.test(app.description!)
+                ? app.description!
+                : app.description!.replace(/\n/g, '<br>'),
             }}
           />
         )}
-        {app.tags && app.tags.length > 0 && (
+        {!collapsed && app.tags && app.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2">
             {app.tags.map((t) => (
               <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{t}</span>
             ))}
           </div>
         )}
+        {hasMore && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setCollapsed(v => !v); }}
+            className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 transition"
+          >
+            <svg className={`w-3.5 h-3.5 transition-transform ${collapsed ? "" : "rotate-180"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+            {collapsed ? "En savoir plus" : "Réduire"}
+          </button>
+        )}
       </div>
 
       {/* Prochainement (mises à jour à venir, propres à l'app) */}
-      {upcoming.length > 0 && (
+      {!collapsed && upcoming.length > 0 && (
         <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
           <p className="text-xs font-semibold text-blue-700 mb-1">🔜 Prochainement</p>
           <div className="space-y-1">
@@ -849,7 +864,7 @@ function AppCard({
       )}
 
       {/* Détails : avis déposés + nouveautés passées */}
-      {hasDetails && (
+      {!collapsed && hasDetails && (
         <div>
           <button onClick={() => setShowDetails(v => !v)}
             className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition">

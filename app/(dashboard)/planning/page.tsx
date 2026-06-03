@@ -500,6 +500,8 @@ export default function PlanningPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           toAdmins: true,
+          persist: true,
+          type: 'ACTIVITE',
           title: 'Nouvelle activité enregistrée',
           body: `${clientName ? [clientName.nom, clientName.prenom].filter(Boolean).join(" ") : 'Un client'} · ${activiteForm.type_activite}${activiteForm.distance_km ? ` · ${activiteForm.distance_km} km` : ''}`,
           url: '/planning',

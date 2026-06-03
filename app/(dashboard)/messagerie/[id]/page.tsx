@@ -531,6 +531,15 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
     if (discussion) markAsRead()
   }, [discussion?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-redimensionnement du champ de saisie (grandit en hauteur, sans scrollbar quand c'est court)
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+    el.style.overflowY = el.scrollHeight > 120 ? 'auto' : 'hidden'
+  }, [text])
+
   // Charger messages
   useEffect(() => {
     const q = query(
@@ -622,6 +631,8 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             userId: recipientId,
+            persist: true,
+            type: 'MESSAGERIE',
             title: `${senderName} — Messagerie`,
             body: msgPreview,
             url: `/messagerie/${id}`,
@@ -753,13 +764,8 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
             onKeyDown={handleKeyDown}
             placeholder="Écrire… (Ctrl+Entrée pour envoyer)"
             rows={1}
-            className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-400 resize-none leading-relaxed"
-            style={{ maxHeight: '120px', overflowY: 'auto' }}
-            onInput={(e) => {
-              const el = e.currentTarget
-              el.style.height = 'auto'
-              el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-            }}
+            className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-400 resize-none leading-relaxed overflow-y-hidden"
+            style={{ maxHeight: '120px' }}
           />
           <button
             onClick={handleSend}

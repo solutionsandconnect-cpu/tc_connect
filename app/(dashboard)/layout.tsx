@@ -6,6 +6,8 @@ import { signOut } from 'firebase/auth'
 import { useAuth } from '@/context/AuthContext'
 import { auth } from '@/lib/firebase'
 import Navbar from '@/components/layout/Navbar'
+import PwaInstallPrompt from '@/components/PwaInstallPrompt'
+import PushNotificationPrompt from '@/components/PushNotificationPrompt'
 import { UserIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 
 type ImpersonationInfo = { adminName: string; targetName: string }
@@ -30,6 +32,18 @@ export default function DashboardLayout({
       const stored = localStorage.getItem('tc_impersonation')
       if (stored) setImpersonation(JSON.parse(stored))
     } catch {}
+  }, [])
+
+  // Remet la pastille (badge d'icône) à zéro quand l'app est ouverte / revient au premier plan
+  useEffect(() => {
+    const clearBadge = () => {
+      try { (navigator as any).clearAppBadge?.() } catch {}
+      try { navigator.serviceWorker?.controller?.postMessage('clear-badge') } catch {}
+    }
+    clearBadge()
+    const onVisible = () => { if (document.visibilityState === 'visible') clearBadge() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
   const quitImpersonation = async () => {
@@ -78,6 +92,9 @@ export default function DashboardLayout({
           {children}
         </div>
       </main>
+
+      <PwaInstallPrompt />
+      <PushNotificationPrompt />
     </div>
   )
 }

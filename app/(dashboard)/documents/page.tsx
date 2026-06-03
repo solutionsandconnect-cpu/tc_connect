@@ -371,6 +371,19 @@ function AdminPanel({ adminUid }: { adminUid: string }) {
       setSharedDocs((prev) => [{
         id: docRef.id, targetUserId, targetUserName, nom: nom.trim(), fileUrl, createdAt: Timestamp.now(),
       }, ...prev])
+      // Notifier le client qu'un document lui a été partagé (push + section Notifications)
+      fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: targetUserId,
+          persist: true,
+          type: 'DOCUMENT',
+          title: 'Nouveau document partagé',
+          body: `Votre coach a partagé un document : « ${nom.trim()} »`,
+          url: '/documents',
+        }),
+      }).catch(() => {})
       setNom('')
       setTargetUserId('')
       setFile(null)

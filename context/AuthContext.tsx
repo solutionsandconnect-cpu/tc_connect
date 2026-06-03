@@ -25,6 +25,14 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType)
 
+const WELCOME_MESSAGE = `Bienvenue sur l'app TC Connect 👋
+
+Ravi de vous compter parmi nous ! Vous retrouverez ici votre planning, vos documents, la boutique et la messagerie.
+
+💡 Astuce : pour une vraie expérience d'application (et recevoir les notifications), installez TC Connect sur votre écran d'accueil — un bandeau « Installer l'app » vous y aide en bas de l'écran, ou rendez-vous dans Profil.
+
+Bonne découverte, et à très vite ! 🙌`
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null)
   const [userProfile, setUserProfile] = useState<User | null>(null)
@@ -109,6 +117,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           date_create: serverTimestamp(),
         })
       ))
+
+      // Notification push aux admins (l'entrée in-app est déjà créée ci-dessus)
+      fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toAdmins: true,
+          title: 'Nouveau compte créé',
+          body: `${displayName} (${email}) vient de créer un compte.`,
+          url: '/clients',
+        }),
+      }).catch(() => {})
+
+      // Message de bienvenue automatique dans la messagerie (apparaît comme envoyé par le coach)
+      const adminIds = adminSnap.docs.map((d) => d.id)
+      if (adminIds.length > 0) {
+        const discRef = await addDoc(collection(db, 'messagerie'), {
+          objet_message: 'Bienvenue 👋',
+          service: 'Bienvenue',
+          date_create: serverTimestamp(),
+          date_last_message: serverTimestamp(),
+          participants_ids: [user.uid, ...adminIds],
+          non_lus_ids: [user.uid],
+          archives_par: [],
+        })
+        await addDoc(collection(db, 'messagerie', discRef.id, 'messages_messagerie'), {
+          ref_user: doc(db, 'usersapp', adminIds[0]),
+          message_text: WELCOME_MESSAGE,
+          date_create: serverTimestamp(),
+          document_image_list: [],
+          document_pdf_list: [],
+          document_video_list: [],
+        })
+      }
     } catch {}
   }, [])
 

@@ -71,11 +71,20 @@ export default function EquipesPage() {
       {loading ? (
         <div className="text-center py-10 text-gray-400">Chargement...</div>
       ) : teams.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
-          <UsersIcon className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-400 text-sm">Aucune équipe pour le moment</p>
-          <button onClick={openAdd} className="mt-3 text-blue-600 text-sm font-medium hover:underline">
-            + Créer une équipe
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 flex flex-col items-center text-center gap-4">
+          <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center">
+            <UsersIcon className="w-8 h-8 text-blue-400" />
+          </div>
+          <div>
+            <p className="text-base font-semibold text-gray-800">Aucune équipe pour le moment</p>
+            <p className="text-sm text-gray-400 mt-1 max-w-xs">Créez votre première équipe pour gérer vos joueurs, vos séances et vos suivis.</p>
+          </div>
+          <button
+            onClick={openAdd}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2.5 rounded-xl transition shadow-sm"
+          >
+            <PlusIcon className="w-4 h-4" />
+            Créer une équipe
           </button>
         </div>
       ) : (

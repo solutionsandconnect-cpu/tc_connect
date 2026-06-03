@@ -811,22 +811,30 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
     const type = (planning as any).type_planning || 'Séance'
 
-    // Numéro cumulatif : nb de RDV du même type pour ce client jusqu'à ce RDV inclus
-    // On compare heure_planning_debut (date + heure) pour gérer correctement plusieurs RDVs le même jour
-    const currentHeureSec = (planning as any).heure_planning_debut?.seconds ?? (planning as any).date_planning?.seconds ?? 0
-    const cumulativeNum = plannings.filter((p) => {
-      const uid = (p as any).ref_users?.id ?? (p as any).ref_users?.path?.split('/').pop() ?? (p as any).ref_client?.id
-      const pSec = (p as any).heure_planning_debut?.seconds ?? (p as any).date_planning?.seconds ?? 0
-      return uid === clientId &&
-             ((p as any).type_planning || 'Séance') === type &&
-             pSec <= currentHeureSec
-    }).length
-    const seq = rdvSequence ? `(${rdvSequence.index}/${rdvSequence.total})` : ''
+    // Un SEUL compteur fiable : position de ce RDV parmi tous les RDV du même type pour ce client.
+    // Dédoublonné par id (évite tout sur-comptage) et trié chronologiquement → "N/Total".
+    const timeSec = (p: any) => p.heure_planning_debut?.seconds ?? p.date_planning?.seconds ?? 0
+    const clientRdvs = clientId
+      ? Array.from(
+          new Map(
+            plannings
+              .filter((p: any) => {
+                const uid = p.ref_users?.id || p.ref_users?.path?.split('/').pop()
+                  || p.ref_client?.id || p.ref_client?.path?.split('/').pop()
+                return uid === clientId && ((p.type_planning as string) || 'Séance') === type
+              })
+              .map((p: any) => [p.id, p] as const),
+          ).values(),
+        ).sort((a: any, b: any) => timeSec(a) - timeSec(b))
+      : []
+    const total = clientRdvs.length
+    const index = clientRdvs.findIndex((p: any) => p.id === id) + 1
+    const seq = total > 1 && index > 0 ? `${index}/${total}` : ''
     const clientName = client
       ? `${(client.nom ?? '').toUpperCase()} ${client.prenom ?? ''}`.trim()
       : ''
 
-    const parts = [type, cumulativeNum > 0 ? String(cumulativeNum) : '', seq, clientName]
+    const parts = [type, seq, clientName]
     const title = parts.filter(Boolean).join(' ')
 
     const params = new URLSearchParams({

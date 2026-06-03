@@ -13,7 +13,7 @@ import { usePendingSubscriptions } from '@/hooks/usePendingSubscriptions'
 import { useUnseenDocuments } from '@/hooks/useUnseenDocuments'
 import {
   CalendarIcon, BellIcon, ChevronRightIcon,
-  MapPinIcon, GlobeAltIcon,
+  MapPinIcon, GlobeAltIcon, BoltIcon,
 } from '@heroicons/react/24/outline'
 import Badge from '@/components/ui/Badge'
 import { formatHeure, getEtatBadge } from '@/lib/planningUtils'
@@ -40,6 +40,7 @@ export default function AccueilPage() {
   const droits = userProfile?.droits as any
 
   const [rdvAujourdhui, setRdvAujourdhui] = useState<any[]>([])
+  const [activitesAujourdhui, setActivitesAujourdhui] = useState<any[]>([])
   const [prochainsRdv, setProchainsRdv] = useState<any[]>([])
 
   const { apps: storeApps } = useStoreApps()
@@ -284,6 +285,22 @@ export default function AccueilPage() {
       )
       const rdvSnap = await getDocs(rdvQuery)
       setRdvAujourdhui(rdvSnap.docs.map((d) => ({ id: d.id, ...d.data() })))
+
+      // Activités d'aujourd'hui (filtrage de la date côté client → pas d'index composite requis)
+      const actSnap = await getDocs(query(
+        collection(db, 'activites_clients'),
+        where('userId', '==', currentUser.uid),
+      ))
+      const todayMs = today.getTime()
+      const tomorrowMs = tomorrow.getTime()
+      setActivitesAujourdhui(
+        actSnap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as any) }))
+          .filter((a: any) => {
+            const t = a.date_activite?.toDate?.()?.getTime?.() ?? 0
+            return t >= todayMs && t < tomorrowMs
+          })
+      )
 
       // Prochains RDV (7 jours)
       const prochainsQuery = query(
@@ -629,7 +646,7 @@ export default function AccueilPage() {
           </button>
         </div>
 
-        {rdvAujourdhui.length === 0 ? (
+        {rdvAujourdhui.length === 0 && activitesAujourdhui.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center space-y-3">
             <p className="text-gray-400 text-sm">Aucun RDV aujourd'hui</p>
             {isAdmin ? (
@@ -681,6 +698,33 @@ export default function AccueilPage() {
                 </div>
               )
             })}
+
+            {/* Activités du jour */}
+            {activitesAujourdhui.map((act) => (
+              <div
+                key={act.id}
+                onClick={() => router.push('/planning')}
+                className="bg-green-50 rounded-2xl border border-green-200 shadow-sm p-4 flex items-center justify-between cursor-pointer hover:shadow-md transition"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <BoltIcon className="w-4 h-4 text-green-600 shrink-0" />
+                    <span className="text-sm font-semibold text-green-800 truncate">{act.type_activite}</span>
+                    {act.heure_debut && (
+                      <span className="text-xs text-green-600 shrink-0">{act.heure_debut}{act.heure_fin ? ` → ${act.heure_fin}` : ''}</span>
+                    )}
+                  </div>
+                  {(act.distance_km || act.calories) && (
+                    <p className="text-xs text-green-600">
+                      {act.distance_km ? `📍 ${act.distance_km} km` : ''}
+                      {act.distance_km && act.calories ? ' · ' : ''}
+                      {act.calories ? `🔥 ${act.calories} kcal` : ''}
+                    </p>
+                  )}
+                </div>
+                <ChevronRightIcon className="w-4 h-4 text-green-400 shrink-0" />
+              </div>
+            ))}
           </div>
         )}
       </section>
