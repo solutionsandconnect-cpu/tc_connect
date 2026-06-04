@@ -123,6 +123,30 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
     setEditingIdentity(false)
   }
 
+  // Rafraîchissement automatique (les anonymes n'ont pas le temps réel Firestore) :
+  // on re-synchronise les sections toutes les 5 s + au retour sur l'onglet, pour
+  // voir en quasi-direct les modifications faites par les autres participants.
+  useEffect(() => {
+    if (authLoading || currentUser || !trip || identityStep) return
+    let active = true
+    const refresh = async () => {
+      if (document.hidden) return
+      // On ne touche à rien pendant une édition de nom ou une coche en cours
+      if (editingName || pendingItems.size > 0) return
+      try {
+        const r = await fetch(`/api/invite/${token}`)
+        const data = await r.json()
+        if (active && data?.trip?.sections) {
+          setTrip(prev => prev ? { ...prev, sections: data.trip.sections } : prev)
+        }
+      } catch { /* silencieux */ }
+    }
+    const id = setInterval(refresh, 5000)
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { active = false; clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
+  }, [token, authLoading, currentUser, trip, identityStep, editingName, pendingItems])
+
   // Applique une opération d'édition via l'API et rafraîchit l'état local
   const mutate = useCallback(async (op: Record<string, unknown>) => {
     try {

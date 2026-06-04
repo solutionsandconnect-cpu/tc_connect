@@ -27,6 +27,24 @@ export default function DashboardLayout({
     }
   }, [currentUser, loading, router])
 
+  // Rattache les listes CheckConnect invitées par email à ce compte (une fois par session).
+  useEffect(() => {
+    if (!currentUser) return
+    const KEY = `cc_claim_${currentUser.uid}`
+    try { if (sessionStorage.getItem(KEY)) return } catch {}
+    ;(async () => {
+      try {
+        const idToken = await currentUser.getIdToken()
+        await fetch('/api/invite/claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken }),
+        })
+        try { sessionStorage.setItem(KEY, '1') } catch {}
+      } catch { /* silencieux */ }
+    })()
+  }, [currentUser])
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem('tc_impersonation')

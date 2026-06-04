@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Modal from '@/components/ui/Modal'
 import { useUsers } from '@/hooks/useUsers'
 import { useAuth } from '@/context/AuthContext'
-import { shareTrip, removeMember, createInviteLink, revokeInviteLink, listenInviteLinks, updateMemberPermission } from '@/lib/tripsService'
+import { shareTrip, removeMember, createInviteLink, revokeInviteLink, updateInviteLink, listenInviteLinks, updateMemberPermission, addGuestParticipant } from '@/lib/tripsService'
 import { useUserPhotoMap } from '@/hooks/useUserPhotoMap'
 import type { Trip, InviteLink, TripPermission, TripMemberPermission } from '@/types'
 import { MagnifyingGlassIcon, XMarkIcon, LinkIcon, TrashIcon, ClipboardDocumentIcon, EnvelopeIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
@@ -42,6 +42,11 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
   const [creatingLink, setCreatingLink] = useState(false)
   const [copiedToken, setCopiedToken] = useState<string | null>(null)
   const [expandedMember, setExpandedMember] = useState<string | null>(null)
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
+  // Brouillon des droits du membre en cours d'édition (sauvegarde explicite)
+  const [memberDraft, setMemberDraft] = useState<{ permission: TripMemberPermission; checkMode: 'all' | 'assigned' } | null>(null)
+  const [savingMember, setSavingMember] = useState(false)
+  const [savedMember, setSavedMember] = useState(false)
 
   // Formulaire email (non-admin)
   const [emailForm, setEmailForm] = useState({ prenom: '', nom: '', email: '', permission: 'check' as TripPermission })
@@ -97,6 +102,8 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
       // La personne a-t-elle un compte TC Connect ? (lookup par email exact)
       const invited = users.find(u => u.email?.toLowerCase() === emailLower)
       if (invited) {
+        // Compte existant → ajout direct comme membre (apparaît dans Gérer + assignable)
+        try { await shareTrip(trip, { ...invited, uid: invited.uid ?? invited.id }) } catch {}
         // Notification in-app automatique (push + section Notifications)
         fetch('/api/push/send', {
           method: 'POST',
@@ -110,6 +117,10 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
             type: 'CheckConnect_Invitation',
           }),
         }).catch(() => {})
+      } else {
+        // Pas de compte → participant invité (sans compte) ajouté à la liste,
+        // pour qu'il apparaisse dans « Gérer », les participants, et « Qui s'en occupe ».
+        try { await addGuestParticipant(trip, { id: `guest:${token}`, nom: nom.trim().toUpperCase(), prenom: prenom.trim(), email: emailLower, permission }) } catch {}
       }
 
       setEmailSent({ url, hasAccount: !!invited, name: `${prenom.trim()} ${nom.trim()}`.trim(), email: emailLower })
@@ -130,18 +141,6 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
   const handleRemove = async (uid: string) => {
     try { await removeMember(trip, uid) }
     catch { onError?.('Impossible de retirer ce membre.') }
-  }
-
-  const handlePermissionChange = async (uid: string, permission: TripMemberPermission) => {
-    try { await updateMemberPermission(trip, uid, permission) }
-    catch { onError?.('Impossible de modifier les droits.') }
-  }
-
-  const handleCheckModeChange = async (uid: string, checkMode: 'all' | 'assigned') => {
-    const m = trip.members.find(x => x.uid === uid)
-    if (!m) return
-    try { await updateMemberPermission(trip, uid, m.permission ?? 'contributor', checkMode) }
-    catch { onError?.('Impossible de modifier les droits.') }
   }
 
   // ── Liens de partage ──────────────────────────────────────────────────────────
@@ -167,6 +166,11 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
   const handleRevoke = async (token: string) => {
     try { await revokeInviteLink(token) }
     catch { onError?.('Impossible de révoquer ce lien.') }
+  }
+
+  const handleUpdateLinkPerm = async (token: string, permission: TripPermission) => {
+    try { await updateInviteLink(token, permission) }
+    catch { onError?.('Impossible de modifier les droits du lien.') }
   }
 
   return (
@@ -213,14 +217,24 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                           : <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold shrink-0">{initials || '?'}</div>
                         }
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-800 truncate">{name}</p>
+                          <p className="text-sm font-medium text-gray-800 truncate">
+                            {name}
+                            {m.isGuest && <span className="ml-1.5 text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">invité</span>}
+                          </p>
                           {m.email && <p className="text-[11px] text-gray-400 truncate">{m.email}</p>}
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge.color}`}>{badge.label}</span>
                           {canEdit && (
                             <button
-                              onClick={() => setExpandedMember(isExpanded ? null : m.uid)}
+                              onClick={() => {
+                                if (isExpanded) { setExpandedMember(null); setMemberDraft(null) }
+                                else {
+                                  setExpandedMember(m.uid)
+                                  setMemberDraft({ permission: (m.permission ?? 'contributor') as TripMemberPermission, checkMode: m.checkMode ?? 'all' })
+                                  setSavedMember(false)
+                                }
+                              }}
                               title="Gérer les droits"
                               className={`p-1.5 rounded-lg transition ${
                                 isExpanded
@@ -231,23 +245,38 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                             </button>
                           )}
                           {canEdit && (
-                            <button onClick={() => handleRemove(m.uid)} aria-label="Retirer"
-                              className="p-1 text-gray-300 hover:text-red-500 transition">
-                              <XMarkIcon className="w-4 h-4" />
-                            </button>
+                            confirmRemove === m.uid ? (
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => { handleRemove(m.uid); setConfirmRemove(null) }}
+                                  title="Confirmer le retrait"
+                                  className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-red-500 text-white hover:bg-red-600 transition">
+                                  Retirer
+                                </button>
+                                <button onClick={() => setConfirmRemove(null)}
+                                  title="Annuler"
+                                  className="p-1 text-gray-400 hover:text-gray-600 transition">
+                                  <XMarkIcon className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setConfirmRemove(m.uid)} aria-label="Retirer"
+                                className="p-1 text-gray-300 hover:text-red-500 transition">
+                                <XMarkIcon className="w-4 h-4" />
+                              </button>
+                            )
                           )}
                         </div>
                       </div>
 
-                      {isExpanded && canEdit && (
+                      {isExpanded && canEdit && memberDraft && (
                         <div className="px-3 py-3 border-t border-gray-100 bg-white space-y-3">
                           <div>
                             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Rôle</p>
                             <div className="grid grid-cols-2 gap-1.5">
                               {(['admin', 'editor', 'contributor', 'viewer'] as TripMemberPermission[]).map(p => (
-                                <button key={p} onClick={() => handlePermissionChange(m.uid, p)}
+                                <button key={p} onClick={() => { setMemberDraft(d => d && ({ ...d, permission: p })); setSavedMember(false) }}
                                   className={`text-xs px-2.5 py-1.5 rounded-lg border transition text-left font-medium ${
-                                    m.permission === p ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'
+                                    memberDraft.permission === p ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'
                                   }`}>
                                   {permLabels[p].label}
                                   <span className="block text-[10px] font-normal opacity-70 mt-0.5">
@@ -264,15 +293,32 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Peut cocher</p>
                             <div className="flex gap-2">
                               {(['all', 'assigned'] as const).map(mode => (
-                                <button key={mode} onClick={() => handleCheckModeChange(m.uid, mode)}
+                                <button key={mode} onClick={() => { setMemberDraft(d => d && ({ ...d, checkMode: mode })); setSavedMember(false) }}
                                   className={`flex-1 text-xs px-2.5 py-1.5 rounded-lg border transition font-medium ${
-                                    (m.checkMode ?? 'all') === mode ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'
+                                    memberDraft.checkMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'
                                   }`}>
                                   {mode === 'all' ? '✅ Tout le monde' : '👤 Ses propres items'}
                                 </button>
                               ))}
                             </div>
                           </div>
+                          {/* Enregistrer */}
+                          <button
+                            onClick={async () => {
+                              setSavingMember(true)
+                              try {
+                                await updateMemberPermission(trip, m.uid, memberDraft.permission, memberDraft.checkMode)
+                                setSavedMember(true)
+                                setTimeout(() => { setExpandedMember(null); setMemberDraft(null); setSavedMember(false) }, 800)
+                              } catch { onError?.('Impossible d\'enregistrer les droits.') }
+                              finally { setSavingMember(false) }
+                            }}
+                            disabled={savingMember}
+                            className={`w-full text-sm font-medium py-2 rounded-xl transition ${
+                              savedMember ? 'bg-green-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60'
+                            }`}>
+                            {savedMember ? '✓ Enregistré' : savingMember ? 'Enregistrement…' : 'Enregistrer'}
+                          </button>
                         </div>
                       )}
                     </div>
@@ -465,25 +511,41 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                     ? `${link.prenom ?? ''} ${link.nom ?? ''}`.trim()
                     : null
                   return (
-                    <div key={link.id} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5">
-                      <span className="text-lg shrink-0">{link.inviteEmail ? '📧' : (perm?.icon ?? '🔗')}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-gray-800 truncate">
-                          {displayName || link.label || perm?.label || 'Lien partagé'}
-                        </p>
-                        <p className="text-[11px] text-gray-400 truncate">
-                          {link.inviteEmail || url}
-                        </p>
-                      </div>
-                      <button onClick={() => copyLink(link.id)} aria-label="Copier"
-                        className="p-1.5 text-gray-400 hover:text-blue-500 transition shrink-0">
-                        <ClipboardDocumentIcon className={`w-4 h-4 ${isCopied ? 'text-green-500' : ''}`} />
-                      </button>
-                      {isOwner && (
-                        <button onClick={() => handleRevoke(link.id)} aria-label="Révoquer"
-                          className="p-1.5 text-gray-300 hover:text-red-500 transition shrink-0">
-                          <TrashIcon className="w-4 h-4" />
+                    <div key={link.id} className="bg-gray-50 rounded-xl px-3 py-2.5 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg shrink-0">{link.inviteEmail ? '📧' : (perm?.icon ?? '🔗')}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-gray-800 truncate">
+                            {displayName || link.label || perm?.label || 'Lien partagé'}
+                          </p>
+                          <p className="text-[11px] text-gray-400 truncate">
+                            {link.inviteEmail || url}
+                          </p>
+                        </div>
+                        <button onClick={() => copyLink(link.id)} aria-label="Copier"
+                          className="p-1.5 text-gray-400 hover:text-blue-500 transition shrink-0">
+                          <ClipboardDocumentIcon className={`w-4 h-4 ${isCopied ? 'text-green-500' : ''}`} />
                         </button>
+                        {isOwner && (
+                          <button onClick={() => handleRevoke(link.id)} aria-label="Révoquer"
+                            className="p-1.5 text-gray-300 hover:text-red-500 transition shrink-0">
+                            <TrashIcon className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                      {/* Modifier les droits du lien (même après partage) */}
+                      {isOwner && (
+                        <div className="flex items-center gap-1.5 pl-7">
+                          <span className="text-[11px] text-gray-400">Droits :</span>
+                          <select
+                            value={link.permission}
+                            onChange={e => handleUpdateLinkPerm(link.id, e.target.value as TripPermission)}
+                            className="flex-1 text-[11px] border border-gray-200 rounded-lg px-2 py-1 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                            {(['view', 'check', 'edit'] as TripPermission[]).map(k => (
+                              <option key={k} value={k}>{PERMISSION_LABELS[k].icon} {PERMISSION_LABELS[k].label}</option>
+                            ))}
+                          </select>
+                        </div>
                       )}
                     </div>
                   )

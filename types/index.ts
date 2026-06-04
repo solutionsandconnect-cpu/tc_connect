@@ -738,10 +738,11 @@ export interface InviteLink {
 
 /** Membre d'une liste CheckConnect */
 export interface TripMember {
-  uid: string
+  uid: string         // uid du compte, ou "guest:<token>" pour un invité sans compte
   role: TripRole
   permission?: TripMemberPermission
   checkMode?: 'all' | 'assigned'
+  isGuest?: boolean   // invité par email, sans compte TC Connect (encore)
   nom?: string
   prenom?: string
   email?: string

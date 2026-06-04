@@ -7,11 +7,18 @@ import TripDetail from './TripDetail'
 import TripModal from './modals/TripModal'
 import { PinAppButton } from '@/components/ui/StoreGate'
 
-export default function TripPackingLayout() {
+export default function TripPackingLayout({ canCreate = true }: { canCreate?: boolean }) {
   const { voyages, archived, templates, loading } = useTrips()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null)
+
+  // Ouverture directe d'une liste via ?list=<id> (depuis l'accueil)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const id = new URLSearchParams(window.location.search).get('list')
+    if (id) setSelectedId(id)
+  }, [])
 
   const notify = (msg: string, ok = true) => {
     setToast({ msg, ok })
@@ -47,6 +54,7 @@ export default function TripPackingLayout() {
             onCreate={() => setShowCreate(true)}
             loading={loading}
             showBrand={!!selectedId}
+            canCreate={canCreate}
           />
         </aside>
 
@@ -65,20 +73,22 @@ export default function TripPackingLayout() {
               <div className="hidden lg:flex flex-col items-center justify-center py-24 text-center">
                 <p className="text-5xl mb-3">✅</p>
                 <p className="text-gray-500 font-medium">Sélectionnez une liste</p>
-                <p className="text-sm text-gray-400 mt-1">ou créez-en une nouvelle pour commencer</p>
+                <p className="text-sm text-gray-400 mt-1">{canCreate ? 'ou créez-en une nouvelle pour commencer' : 'partagée avec vous'}</p>
               </div>
             )
           )}
         </main>
       </div>
 
-      {/* Création */}
-      <TripModal
-        isOpen={showCreate}
-        onClose={() => setShowCreate(false)}
-        templates={templates}
-        onCreated={(id) => { setSelectedId(id); notify('Liste créée ✓') }}
-      />
+      {/* Création (réservée aux abonnés) */}
+      {canCreate && (
+        <TripModal
+          isOpen={showCreate}
+          onClose={() => setShowCreate(false)}
+          templates={templates}
+          onCreated={(id) => { setSelectedId(id); notify('Liste créée ✓') }}
+        />
+      )}
 
       {/* Bouton épingler flottant :
           - Desktop (sm+) : toujours visible

@@ -18,6 +18,7 @@ interface Props {
   onCreate: () => void
   loading: boolean
   showBrand?: boolean
+  canCreate?: boolean
 }
 
 type SortKey = 'recent' | 'oldest' | 'alpha' | 'progress'
@@ -96,7 +97,7 @@ function TripRow({ trip, active, onClick, currentUid, onFavorite, photoMap }: {
   )
 }
 
-export default function TripSidebar({ voyages, archived, templates, selectedId, onSelect, onCreate, loading, showBrand }: Props) {
+export default function TripSidebar({ voyages, archived, templates, selectedId, onSelect, onCreate, loading, showBrand, canCreate = true }: Props) {
   const { currentUser } = useAuth()
   const uid = currentUser?.uid ?? ''
   const photoMap = useUserPhotoMap()
@@ -160,10 +161,17 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
         </div>
       )}
 
-      <button onClick={onCreate}
-        className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5 rounded-xl transition">
-        <PlusIcon className="w-4 h-4" /> Nouvelle liste
-      </button>
+      {canCreate ? (
+        <button onClick={onCreate}
+          className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5 rounded-xl transition">
+          <PlusIcon className="w-4 h-4" /> Nouvelle liste
+        </button>
+      ) : (
+        <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 leading-relaxed">
+          🔗 Listes partagées avec vous. Pour créer vos propres listes,{' '}
+          <a href="/boutique" className="font-semibold text-blue-600 hover:underline">activez CheckConnect</a>.
+        </div>
+      )}
 
       {loading ? (
         <div className="space-y-2">

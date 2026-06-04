@@ -238,6 +238,32 @@ export const shareTrip = (trip: Trip, user: User) => {
   // TODO: envoyer un email/notification d'invitation au membre ajouté
 }
 
+/** Mappe un droit de lien (anonyme) vers un rôle de membre */
+export function linkPermToMemberPerm(p: TripPermission): TripMemberPermission {
+  return p === 'view' ? 'viewer' : p === 'edit' ? 'editor' : 'contributor'
+}
+
+/** Ajoute un participant invité par email mais SANS compte (affiché dans les
+ *  membres, assignable dans « Qui s'en occupe »). Stocké dans members seulement
+ *  (pas dans memberIds : l'accès se fait via le lien, pas via une requête). */
+export const addGuestParticipant = (
+  trip: Trip,
+  guest: { id: string; nom?: string; prenom?: string; email?: string; permission: TripPermission }
+) => {
+  if (trip.members.some(m => m.uid === guest.id)) return Promise.resolve()
+  const member: TripMember = {
+    uid: guest.id,
+    role: 'member',
+    permission: linkPermToMemberPerm(guest.permission),
+    checkMode: 'all',
+    isGuest: true,
+    nom: guest.nom ?? '',
+    prenom: guest.prenom ?? '',
+    email: guest.email ?? '',
+  }
+  return updateTrip(trip.id, { members: [...trip.members, member] })
+}
+
 /** Retire un membre (owner uniquement, jamais l'owner lui-même) */
 export const removeMember = (trip: Trip, uid: string) => {
   if (uid === trip.ownerId) return Promise.resolve()
@@ -281,6 +307,10 @@ export const createInviteLink = async (
   })
   return token
 }
+
+/** Modifie les droits d'un lien existant */
+export const updateInviteLink = (token: string, permission: TripPermission) =>
+  updateDoc(doc(db, 'inviteLinks', token), { permission })
 
 /** Révoque (supprime) un lien de partage */
 export const revokeInviteLink = (token: string) => deleteDoc(doc(db, 'inviteLinks', token))

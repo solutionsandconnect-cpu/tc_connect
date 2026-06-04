@@ -43,7 +43,7 @@ export default function NouvelleSeancePage() {
     price: '5',
     durationMinutes: '60',
     contactPhone: '+33679408254',
-    hidden: true,
+    hidden: false,
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')

@@ -67,6 +67,8 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
 
   const isOwner = trip.ownerId === currentUser?.uid
   const currentMember = trip.members.find(m => m.uid === currentUser?.uid) ?? null
+  // Un administrateur de la liste a les mêmes droits que le créateur.
+  const isManager = isOwner || currentMember?.permission === 'admin'
   const canAddSections = memberCan(currentMember, isOwner, 'addSections')
   const canAddItems = memberCan(currentMember, isOwner, 'addItems')
   const canShare = memberCan(currentMember, isOwner, 'share')
@@ -185,7 +187,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
               <ShareIcon className="w-3.5 h-3.5" /> Partager{trip.members.length > 1 ? ` (${trip.members.length})` : ''}
             </button>
           )}
-          {isOwner && !trip.isTemplate && (
+          {isManager && !trip.isTemplate && (
             <button onClick={handleSaveTemplate} disabled={busy}
               className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
               <BookmarkIcon className="w-3.5 h-3.5" /> Sauver comme modèle
@@ -203,7 +205,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
               <ArrowPathIcon className="w-3.5 h-3.5" /> Reset
             </button>
           )}
-          {isOwner && !trip.isTemplate && (
+          {isManager && !trip.isTemplate && (
             <button onClick={() => wrap(archiveTrip(trip.id, !trip.archived))}
               className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition ${
                 trip.archived
@@ -216,6 +218,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
               }
             </button>
           )}
+          {/* Suppression de la liste entière : réservée au créateur (contrainte règles Firestore) */}
           {isOwner && (
             <button onClick={() => setConfirmDelete(true)}
               className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition">
@@ -380,7 +383,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
 
       {/* Modales */}
       <TripModal isOpen={showEdit} onClose={() => setShowEdit(false)} trip={trip} />
-      <ShareModal isOpen={showShare} onClose={() => setShowShare(false)} trip={trip} isOwner={isOwner} onError={(m) => notify(m, false)} />
+      <ShareModal isOpen={showShare} onClose={() => setShowShare(false)} trip={trip} isOwner={isManager} onError={(m) => notify(m, false)} />
 
       <Modal isOpen={confirmCheckAll} onClose={() => setConfirmCheckAll(false)} title="Tout cocher" size="sm">
         <div className="space-y-4">

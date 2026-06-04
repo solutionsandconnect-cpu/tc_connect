@@ -19,6 +19,8 @@ import Badge from '@/components/ui/Badge'
 import { formatHeure, getEtatBadge } from '@/lib/planningUtils'
 import { navItems } from '@/components/layout/Navbar'
 import { useStoreApps } from '@/hooks/useStoreApps'
+import { useTrips } from '@/hooks/useTrips'
+import { tripProgress } from '@/lib/tripsService'
 import { listenStoreSubscriptions, updateStoreSubscription, updateSubWithEvent, appendSubEvent, computeDateFin, suspendExpiredSubscriptions } from '@/lib/storeService'
 import { cleanupArchivedSubscriptions } from '@/lib/storeCleanup'
 
@@ -44,6 +46,7 @@ export default function AccueilPage() {
   const [prochainsRdv, setProchainsRdv] = useState<any[]>([])
 
   const { apps: storeApps } = useStoreApps()
+  const { voyages: ccLists } = useTrips()
   const shortcutAppIds = userProfile?.accueilShortcuts ?? []
   const shortcutApps = storeApps.filter(app => shortcutAppIds.includes(app.id) && !!app.route)
   const [allStoreSubs, setAllStoreSubs] = useState<any[]>([])
@@ -475,6 +478,40 @@ export default function AccueilPage() {
                 <span className="text-xs font-medium text-gray-700 text-center leading-tight">{app.nom}</span>
               </button>
             ))}
+          </div>
+        </section>
+      )}
+
+      {/* Mes listes CheckConnect */}
+      {ccLists.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-700">✅ Mes listes CheckConnect</h2>
+            <button onClick={() => router.push('/trips')}
+              className="text-xs font-medium text-blue-600 hover:underline">Tout voir</button>
+          </div>
+          <div className="space-y-2">
+            {ccLists.slice(0, 5).map(list => {
+              const { pct, total } = tripProgress(list)
+              return (
+                <button key={list.id}
+                  onClick={() => router.push(`/trips?list=${list.id}`)}
+                  className="w-full flex items-center gap-3 bg-white rounded-2xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition text-left">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0"
+                    style={{ backgroundColor: list.color + '20' }}>
+                    {list.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 truncate">{list.name}</p>
+                    <p className="text-xs text-gray-400">
+                      {total > 0 ? `${pct}% fait` : 'Liste vide'}
+                      {list.members.length > 1 && ` · ${list.members.length} participants`}
+                    </p>
+                  </div>
+                  <ChevronRightIcon className="w-4 h-4 text-gray-300 shrink-0" />
+                </button>
+              )
+            })}
           </div>
         </section>
       )}

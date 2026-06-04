@@ -66,9 +66,33 @@ export default function AdminParcoursPage() {
   const [paidBySession, setPaidBySession] = useState<Record<string, number>>({})
   const [evoYear, setEvoYear] = useState<'all' | number>('all')
   const [evoMonth, setEvoMonth] = useState<'all' | number>('all')
+  // Filtres séances — restaurés depuis sessionStorage pour survivre à un aller-retour
+  // vers une fiche séance (on revient sur le même filtre, ex. « Passés »).
   const [sessionView, setSessionView] = useState<'upcoming' | 'past' | 'all'>('upcoming')
   const [sessionYear, setSessionYear] = useState<'all' | number>('all')
   const [sessionMonth, setSessionMonth] = useState<'all' | number>('all')
+  const [filtersReady, setFiltersReady] = useState(false)
+  const [confirmHide, setConfirmHide] = useState<string | null>(null)
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('ps_admin_filters')
+      if (raw) {
+        const f = JSON.parse(raw)
+        if (f.view) setSessionView(f.view)
+        if (f.year !== undefined) setSessionYear(f.year)
+        if (f.month !== undefined) setSessionMonth(f.month)
+      }
+    } catch {}
+    setFiltersReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (!filtersReady) return
+    try {
+      sessionStorage.setItem('ps_admin_filters', JSON.stringify({ view: sessionView, year: sessionYear, month: sessionMonth }))
+    } catch {}
+  }, [filtersReady, sessionView, sessionYear, sessionMonth])
   const [copied, setCopied] = useState(false)
   const [reviews, setReviews] = useState<Review[]>([])
   const [deleteReviewConfirm, setDeleteReviewConfirm] = useState<string | null>(null)
@@ -281,13 +305,29 @@ export default function AdminParcoursPage() {
             )}
           </div>
         </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'sessions', s.id), { hidden: !s.hidden }) }}
-          title={s.hidden ? 'Rendre visible' : 'Masquer'}
-          className={`shrink-0 p-2 rounded-lg border transition ${s.hidden ? 'border-green-200 text-green-600 hover:bg-green-50' : 'border-gray-200 text-gray-400 hover:bg-gray-50'}`}
-        >
-          {s.hidden ? <EyeIcon className="w-4 h-4" /> : <EyeSlashIcon className="w-4 h-4" />}
-        </button>
+        {confirmHide === s.id ? (
+          <div className="shrink-0 flex items-center gap-1.5">
+            <span className="text-[11px] text-gray-500 hidden sm:inline">{s.hidden ? 'Rendre visible ?' : 'Masquer ?'}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'sessions', s.id), { hidden: !s.hidden }); setConfirmHide(null) }}
+              className={`text-[11px] font-semibold px-2 py-1 rounded-lg text-white transition ${s.hidden ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-700 hover:bg-gray-800'}`}>
+              Oui
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirmHide(null) }}
+              className="text-[11px] font-medium px-2 py-1 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
+              Non
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirmHide(s.id) }}
+            title={s.hidden ? 'Rendre visible' : 'Masquer'}
+            className={`shrink-0 p-2 rounded-lg border transition ${s.hidden ? 'border-green-200 text-green-600 hover:bg-green-50' : 'border-gray-200 text-gray-400 hover:bg-gray-50'}`}
+          >
+            {s.hidden ? <EyeIcon className="w-4 h-4" /> : <EyeSlashIcon className="w-4 h-4" />}
+          </button>
+        )}
         <ChevronRightIcon className="w-4 h-4 text-gray-400 shrink-0" />
       </div>
     )

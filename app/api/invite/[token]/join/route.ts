@@ -44,6 +44,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   // Profil de l'utilisateur (pour dénormaliser nom/prénom/email/photo)
   const userSnap = await db.collection('users').doc(uid).get()
   const u = userSnap.exists ? userSnap.data()! : {}
+  const myEmail = (u.email ?? '').toLowerCase()
 
   const member: Record<string, unknown> = {
     uid,
@@ -56,9 +57,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   }
   if (u.photo_url) member.photoUrl = u.photo_url
 
+  // Remplace un éventuel participant « invité sans compte » de même email
+  const existingMembers = (trip.members ?? []).filter(
+    (m: any) => !(m.isGuest && (m.email ?? '').toLowerCase() === myEmail)
+  )
+
   await tripRef.update({
     memberIds: [...memberIds, uid],
-    members: [...(trip.members ?? []), member],
+    members: [...existingMembers, member],
     updatedAt: new Date(),
   })
 
