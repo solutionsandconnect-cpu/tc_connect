@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { use } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon, PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon, PencilIcon, PlusIcon, TrashIcon, CalendarIcon, MinusIcon } from '@heroicons/react/24/outline'
 
 interface Item {
   id: string
@@ -12,6 +12,7 @@ interface Item {
   qtyNeeded: number
   qtyReady: number
   note?: string
+  dueDate?: string | null
   position: number
 }
 interface Section {
@@ -56,6 +57,8 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
   const [newSectionDraft, setNewSectionDraft] = useState('')
   const [editingName, setEditingName] = useState<string | null>(null) // `section:<id>` ou `item:<sid>:<iid>`
   const [nameDraft, setNameDraft] = useState('')
+  const [expandedItem, setExpandedItem] = useState<string | null>(null) // `<sid>:<iid>`
+  const [showFeatureInfo, setShowFeatureInfo] = useState(false)
 
   const canCheck = permission === 'check' || permission === 'edit'
   const canEdit = permission === 'edit'
@@ -91,7 +94,7 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
           setIdentityStep(true)  // demander confirmation
         }
       })
-      .catch(() => setError('Impossible de charger la liste.'))
+      .catch(() => setError('Impossible de charger la CheckConnect.'))
       .finally(() => setLoading(false))
   }, [token, currentUser, authLoading])
 
@@ -110,7 +113,7 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
       if (!res.ok) throw new Error(data.error || 'Erreur')
       router.replace('/trips')
     } catch (e: any) {
-      setJoinError(e?.message || "Impossible de rejoindre la liste.")
+      setJoinError(e?.message || "Impossible de rejoindre la CheckConnect.")
       setJoining(false)
     }
   }
@@ -138,6 +141,8 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
         const data = await r.json()
         if (active && data?.trip?.sections) {
           setTrip(prev => prev ? { ...prev, sections: data.trip.sections } : prev)
+          // La permission du lien a pu changer (ex. passage en Éditeur côté admin)
+          if (data.permission) setPermission(data.permission)
         }
       } catch { /* silencieux */ }
     }
@@ -228,12 +233,12 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
           <div>
             <h1 className="text-lg font-bold text-gray-900">{trip.name}</h1>
             <p className="text-sm text-gray-500 mt-1">
-              Vous avez été invité(e) à rejoindre cette liste{myName ? ` en tant que ${myName}` : ''}.
+              Vous avez été invité(e) à rejoindre cette CheckConnect{myName ? ` en tant que ${myName}` : ''}.
             </p>
           </div>
 
           <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 text-xs text-blue-700">
-            La liste sera ajoutée à votre application <strong>CheckConnect</strong>.
+            La CheckConnect sera ajoutée à votre application.
           </div>
 
           {joinError && <p className="text-xs text-red-600">{joinError}</p>}
@@ -243,13 +248,13 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
             disabled={joining}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl text-sm transition"
           >
-            {joining ? 'Ajout en cours…' : 'Rejoindre la liste'}
+            {joining ? 'Ajout en cours…' : 'Rejoindre la CheckConnect'}
           </button>
           <button
             onClick={() => router.replace('/trips')}
             className="w-full text-xs text-gray-400 hover:text-gray-600 py-1"
           >
-            Aller à mes listes
+            Aller à mes CheckConnect
           </button>
         </div>
       </div>
@@ -269,7 +274,7 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
             </div>
             <h1 className="text-lg font-bold text-gray-900">{trip.name}</h1>
             <p className="text-sm text-gray-500 mt-1">
-              {hasSuggested ? 'Confirmez votre identité pour accéder à cette liste.' : 'Comment vous appelez-vous ?'}
+              {hasSuggested ? 'Confirmez votre identité pour accéder à cette CheckConnect.' : 'Comment vous appelez-vous ?'}
             </p>
           </div>
 
@@ -299,11 +304,11 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
             disabled={!identityDraft.trim() && !preSuggestedName}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition"
           >
-            {hasSuggested ? 'C\'est moi, accéder à la liste' : 'Accéder à la liste'}
+            {hasSuggested ? 'C\'est moi, accéder à la CheckConnect' : 'Accéder à la CheckConnect'}
           </button>
 
           <p className="text-[11px] text-gray-400 text-center">
-            Votre nom est utilisé pour identifier vos actions sur cette liste.
+            Votre nom est utilisé pour identifier vos actions sur cette CheckConnect.
           </p>
         </div>
       </div>
@@ -321,7 +326,7 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-xl mx-auto px-4 py-3 flex items-center gap-3">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl flex items-center justify-center text-2xl shrink-0"
             style={{ backgroundColor: trip.color + '20' }}>
             {trip.icon}
@@ -342,7 +347,7 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
         </div>
       </div>
 
-      <div className="max-w-xl mx-auto px-4 py-4 space-y-3">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 space-y-3">
         {/* Permission badge */}
         <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium ${
           permission === 'edit' ? 'bg-blue-50 text-blue-700 border border-blue-200'
@@ -350,10 +355,35 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
             : 'bg-gray-50 text-gray-500 border border-gray-200'
         }`}>
           <span>{permission === 'edit' ? '✏️' : permission === 'check' ? '✅' : '👁️'}</span>
-          {permission === 'edit' ? 'Vous pouvez cocher et modifier cette liste.'
-            : permission === 'check' ? 'Vous pouvez cocher les éléments de cette liste.'
+          {permission === 'edit' ? 'Vous pouvez cocher et modifier cette CheckConnect.'
+            : permission === 'check' ? 'Vous pouvez cocher les éléments de cette CheckConnect.'
             : 'Accès en lecture seule.'}
         </div>
+
+        {/* Info : plus de fonctionnalités avec un compte (motive la création) */}
+        {!currentUser && (
+          <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2">
+            <button onClick={() => setShowFeatureInfo(v => !v)}
+              className="w-full flex items-center justify-between gap-2 text-xs font-medium text-blue-700">
+              <span className="flex items-center gap-1.5">ℹ️ Débloquez plus de fonctionnalités</span>
+              <span className="text-blue-400">{showFeatureInfo ? '▴' : '▾'}</span>
+            </button>
+            {showFeatureInfo && (
+              <div className="mt-2 pt-2 border-t border-blue-100 text-xs text-blue-700 leading-relaxed space-y-1.5">
+                <p>Avec un compte <strong>TC Connect</strong> gratuit, vous accédez à :</p>
+                <ul className="list-disc list-inside space-y-0.5 text-blue-600">
+                  <li>📅 Quantité « par jour » (×) selon la durée</li>
+                  <li>👤 Assigner « qui s'en occupe »</li>
+                  <li>📎 Pièces jointes : photos & fichiers</li>
+                  <li>🔔 Notifications et accès depuis l'app</li>
+                </ul>
+                <a href="/login" className="inline-flex items-center gap-1.5 mt-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition">
+                  Créer mon compte gratuit
+                </a>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Progression */}
         {totalItems > 0 && (
@@ -374,10 +404,11 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
         {/* Sections */}
         {sortedSections.length === 0 && !canEdit ? (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
-            <p className="text-gray-400 text-sm">Cette liste est vide pour l'instant.</p>
+            <p className="text-gray-400 text-sm">Cette CheckConnect est vide pour l'instant.</p>
           </div>
         ) : (
-          sortedSections.map(section => {
+          <div className="lg:grid lg:grid-cols-2 lg:gap-3 lg:items-start lg:space-y-0 space-y-3">
+          {sortedSections.map(section => {
             const sortedItems = [...section.items].sort((a, b) => a.position - b.position)
             const doneSect = sortedItems.filter(isItemDone).length
             const isCollapsed = collapsedSections.has(section.id)
@@ -425,50 +456,102 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
                       const eff = qtyEff(item)
                       const pending = pendingItems.has(`${section.id}:${item.id}`)
                       const editingItem = editingName === `item:${section.id}:${item.id}`
+                      const itemKey = `${section.id}:${item.id}`
+                      const isItemExpanded = expandedItem === itemKey
                       return (
-                        <div
-                          key={item.id}
-                          className={`flex items-center gap-3 px-4 py-3 transition ${done ? 'bg-green-50/60' : ''} ${canCheck && !editingItem ? 'cursor-pointer active:bg-gray-50' : ''}`}
-                          onClick={() => canCheck && !editingItem && toggleItem(section.id, item.id)}
-                        >
-                          <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center shrink-0 transition ${
-                            done ? 'bg-green-500 border-green-500 text-white' : 'border-gray-300'
-                          } ${pending ? 'opacity-60' : ''}`}>
-                            {done && <CheckIcon className="w-4 h-4" strokeWidth={3} />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            {editingItem ? (
-                              <input
-                                autoFocus
-                                value={nameDraft}
-                                onClick={e => e.stopPropagation()}
-                                onChange={e => setNameDraft(e.target.value)}
-                                onBlur={() => { if (nameDraft.trim()) mutate({ op: 'renameItem', sectionId: section.id, itemId: item.id, name: nameDraft.trim() }); setEditingName(null) }}
-                                onKeyDown={e => { if (e.key === 'Enter') { if (nameDraft.trim()) mutate({ op: 'renameItem', sectionId: section.id, itemId: item.id, name: nameDraft.trim() }); setEditingName(null) } if (e.key === 'Escape') setEditingName(null) }}
-                                className="w-full text-sm border border-blue-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                              />
-                            ) : (
-                              <p className={`text-sm font-medium truncate ${done ? 'line-through text-gray-400' : 'text-gray-800'}`}>
-                                {item.name}
-                              </p>
+                        <div key={item.id}>
+                          <div
+                            className={`flex items-center gap-3 px-4 py-3 transition ${done ? 'bg-green-50/60' : ''} ${canCheck && !editingItem ? 'cursor-pointer active:bg-gray-50' : ''}`}
+                            onClick={() => canCheck && !editingItem && toggleItem(section.id, item.id)}
+                          >
+                            <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center shrink-0 transition ${
+                              done ? 'bg-green-500 border-green-500 text-white' : 'border-gray-300'
+                            } ${pending ? 'opacity-60' : ''}`}>
+                              {done && <CheckIcon className="w-4 h-4" strokeWidth={3} />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              {editingItem ? (
+                                <input
+                                  autoFocus
+                                  value={nameDraft}
+                                  onClick={e => e.stopPropagation()}
+                                  onChange={e => setNameDraft(e.target.value)}
+                                  onBlur={() => { if (nameDraft.trim()) mutate({ op: 'renameItem', sectionId: section.id, itemId: item.id, name: nameDraft.trim() }); setEditingName(null) }}
+                                  onKeyDown={e => { if (e.key === 'Enter') { if (nameDraft.trim()) mutate({ op: 'renameItem', sectionId: section.id, itemId: item.id, name: nameDraft.trim() }); setEditingName(null) } if (e.key === 'Escape') setEditingName(null) }}
+                                  className="w-full text-sm border border-blue-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                />
+                              ) : (
+                                <p className={`text-sm font-medium truncate ${done ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                                  {item.name}
+                                </p>
+                              )}
+                              {(item.note || item.dueDate) && !editingItem && (
+                                <p className="text-xs text-gray-400 truncate">
+                                  {item.dueDate && `📅 ${new Date(item.dueDate + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`}
+                                  {item.dueDate && item.note && ' · '}
+                                  {item.note && `📝 ${item.note}`}
+                                </p>
+                              )}
+                            </div>
+                            {eff > 1 && (
+                              <span className={`text-xs font-semibold tabular-nums shrink-0 ${done ? 'text-green-600' : 'text-gray-500'}`}>
+                                {item.qtyReady}/{eff}
+                              </span>
                             )}
-                            {item.note && !editingItem && <p className="text-xs text-gray-400 truncate">📝 {item.note}</p>}
+                            {canEdit && !editingItem && (
+                              <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
+                                <button onClick={() => { setNameDraft(item.name); setEditingName(`item:${section.id}:${item.id}`) }}
+                                  title="Renommer" className="p-1 text-gray-300 hover:text-blue-500 transition">
+                                  <PencilIcon className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => setExpandedItem(isItemExpanded ? null : itemKey)}
+                                  title="Détails" className={`p-1 transition ${isItemExpanded ? 'text-blue-500' : 'text-gray-300 hover:text-blue-500'}`}>
+                                  <ChevronDownIcon className={`w-4 h-4 transition-transform ${isItemExpanded ? 'rotate-180' : ''}`} />
+                                </button>
+                                <button onClick={() => mutate({ op: 'deleteItem', sectionId: section.id, itemId: item.id })}
+                                  title="Supprimer" className="p-1 text-gray-300 hover:text-red-500 transition">
+                                  <TrashIcon className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          {eff > 1 && (
-                            <span className={`text-xs font-semibold tabular-nums shrink-0 ${done ? 'text-green-600' : 'text-gray-500'}`}>
-                              {item.qtyReady}/{eff}
-                            </span>
-                          )}
-                          {canEdit && !editingItem && (
-                            <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
-                              <button onClick={() => { setNameDraft(item.name); setEditingName(`item:${section.id}:${item.id}`) }}
-                                title="Renommer" className="p-1 text-gray-300 hover:text-blue-500 transition">
-                                <PencilIcon className="w-3.5 h-3.5" />
-                              </button>
-                              <button onClick={() => mutate({ op: 'deleteItem', sectionId: section.id, itemId: item.id })}
-                                title="Supprimer" className="p-1 text-gray-300 hover:text-red-500 transition">
-                                <TrashIcon className="w-3.5 h-3.5" />
-                              </button>
+
+                          {/* Panneau détail (édition) : date, note, quantité */}
+                          {canEdit && isItemExpanded && (
+                            <div className="px-4 pb-3 pt-1 bg-gray-50/60 space-y-2.5">
+                              <div>
+                                <label className="block text-[11px] font-medium text-gray-500 mb-1">Date limite</label>
+                                <input
+                                  type="date"
+                                  value={item.dueDate ?? ''}
+                                  onChange={e => mutate({ op: 'updateItem', sectionId: section.id, itemId: item.id, patch: { dueDate: e.target.value || null } })}
+                                  className="w-full text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-gray-500 mb-1">Note</label>
+                                <input
+                                  type="text"
+                                  defaultValue={item.note ?? ''}
+                                  onBlur={e => { if ((e.target.value ?? '') !== (item.note ?? '')) mutate({ op: 'updateItem', sectionId: section.id, itemId: item.id, patch: { note: e.target.value } }) }}
+                                  placeholder="Précision, remarque…"
+                                  className="w-full text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-gray-500 mb-1">Quantité</label>
+                                <div className="flex items-center gap-1.5">
+                                  <button onClick={() => mutate({ op: 'updateItem', sectionId: section.id, itemId: item.id, patch: { qtyNeeded: Math.max(1, item.qtyNeeded - 1) } })}
+                                    className="w-7 h-7 rounded-md bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center transition">
+                                    <MinusIcon className="w-3.5 h-3.5" />
+                                  </button>
+                                  <span className="text-sm font-semibold tabular-nums w-8 text-center">{item.qtyNeeded}</span>
+                                  <button onClick={() => mutate({ op: 'updateItem', sectionId: section.id, itemId: item.id, patch: { qtyNeeded: item.qtyNeeded + 1 } })}
+                                    className="w-7 h-7 rounded-md bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center transition">
+                                    <PlusIcon className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -506,7 +589,8 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
                 )}
               </div>
             )
-          })
+          })}
+          </div>
         )}
 
         {/* Ajout de section (edit) */}
@@ -531,7 +615,7 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
 
         {/* Footer */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 text-center space-y-2">
-          <p className="text-xs text-gray-500">Liste partagée via <strong>TC Connect</strong></p>
+          <p className="text-xs text-gray-500">CheckConnect partagée via <strong>TC Connect</strong></p>
           <a href="/login" className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition">
             ✅ Créer ou accéder à mon compte
           </a>

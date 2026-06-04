@@ -8,6 +8,7 @@ type Op =
   | { op: 'addSection'; title: string }
   | { op: 'renameItem'; sectionId: string; itemId: string; name: string }
   | { op: 'renameSection'; sectionId: string; title: string }
+  | { op: 'updateItem'; sectionId: string; itemId: string; patch: { dueDate?: string | null; note?: string; qtyNeeded?: number } }
   | { op: 'deleteItem'; sectionId: string; itemId: string }
   | { op: 'deleteSection'; sectionId: string }
 
@@ -60,6 +61,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
     case 'renameSection':
       sections = sections.map(s => s.id === body.sectionId ? { ...s, title: (body.title || '').trim() || s.title } : s)
       break
+    case 'updateItem': {
+      const patch: any = {}
+      if ('dueDate' in body.patch) patch.dueDate = body.patch.dueDate || null
+      if ('note' in body.patch) patch.note = body.patch.note ?? ''
+      if (typeof body.patch.qtyNeeded === 'number') patch.qtyNeeded = Math.max(1, Math.round(body.patch.qtyNeeded))
+      sections = sections.map(s => s.id !== body.sectionId ? s : {
+        ...s,
+        items: (s.items ?? []).map((it: any) => it.id === body.itemId ? { ...it, ...patch } : it),
+      })
+      break
+    }
     case 'deleteItem':
       sections = sections.map(s => s.id !== body.sectionId ? s : {
         ...s,

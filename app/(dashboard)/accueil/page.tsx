@@ -12,7 +12,7 @@ import { useNotifications } from '@/hooks/useNotifications'
 import { usePendingSubscriptions } from '@/hooks/usePendingSubscriptions'
 import { useUnseenDocuments } from '@/hooks/useUnseenDocuments'
 import {
-  CalendarIcon, BellIcon, ChevronRightIcon,
+  CalendarIcon, ChevronRightIcon,
   MapPinIcon, GlobeAltIcon, BoltIcon,
 } from '@heroicons/react/24/outline'
 import Badge from '@/components/ui/Badge'
@@ -47,6 +47,7 @@ export default function AccueilPage() {
 
   const { apps: storeApps } = useStoreApps()
   const { voyages: ccLists } = useTrips()
+  const [showCCLists, setShowCCLists] = useState(false)
   const shortcutAppIds = userProfile?.accueilShortcuts ?? []
   const shortcutApps = storeApps.filter(app => shortcutAppIds.includes(app.id) && !!app.route)
   const [allStoreSubs, setAllStoreSubs] = useState<any[]>([])
@@ -450,13 +451,53 @@ export default function AccueilPage() {
           onClick={() => router.push('/planning')}
         />
         <StatCard
-          label="Notifications"
-          value={unreadCount}
-          icon={<BellIcon className="w-5 h-5" />}
-          color="orange"
-          onClick={() => router.push('/notifications')}
+          label="Mes CheckConnect"
+          value={ccLists.length}
+          icon={<span className="text-lg leading-none">✅</span>}
+          color="green"
+          onClick={() => setShowCCLists((v) => !v)}
         />
       </div>
+
+      {/* Listes CheckConnect — dépliées au clic sur la card */}
+      {showCCLists && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-700">✅ Mes CheckConnect</h2>
+            <button onClick={() => router.push('/trips')}
+              className="text-xs font-medium text-blue-600 hover:underline">Tout voir</button>
+          </div>
+          {ccLists.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center">
+              <p className="text-sm text-gray-400">Aucune liste pour l'instant.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {ccLists.slice(0, 8).map(list => {
+                const { pct, total } = tripProgress(list)
+                return (
+                  <button key={list.id}
+                    onClick={() => router.push(`/trips?list=${list.id}`)}
+                    className="w-full flex items-center gap-3 bg-white rounded-2xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition text-left">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0"
+                      style={{ backgroundColor: list.color + '20' }}>
+                      {list.icon}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{list.name}</p>
+                      <p className="text-xs text-gray-400">
+                        {total > 0 ? `${pct}% fait` : 'Liste vide'}
+                        {list.members.length > 1 && ` · ${list.members.length} participants`}
+                      </p>
+                    </div>
+                    <ChevronRightIcon className="w-4 h-4 text-gray-300 shrink-0" />
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Raccourcis boutique */}
       {shortcutApps.length > 0 && (
@@ -478,40 +519,6 @@ export default function AccueilPage() {
                 <span className="text-xs font-medium text-gray-700 text-center leading-tight">{app.nom}</span>
               </button>
             ))}
-          </div>
-        </section>
-      )}
-
-      {/* Mes listes CheckConnect */}
-      {ccLists.length > 0 && (
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold text-gray-700">✅ Mes listes CheckConnect</h2>
-            <button onClick={() => router.push('/trips')}
-              className="text-xs font-medium text-blue-600 hover:underline">Tout voir</button>
-          </div>
-          <div className="space-y-2">
-            {ccLists.slice(0, 5).map(list => {
-              const { pct, total } = tripProgress(list)
-              return (
-                <button key={list.id}
-                  onClick={() => router.push(`/trips?list=${list.id}`)}
-                  className="w-full flex items-center gap-3 bg-white rounded-2xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition text-left">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0"
-                    style={{ backgroundColor: list.color + '20' }}>
-                    {list.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">{list.name}</p>
-                    <p className="text-xs text-gray-400">
-                      {total > 0 ? `${pct}% fait` : 'Liste vide'}
-                      {list.members.length > 1 && ` · ${list.members.length} participants`}
-                    </p>
-                  </div>
-                  <ChevronRightIcon className="w-4 h-4 text-gray-300 shrink-0" />
-                </button>
-              )
-            })}
           </div>
         </section>
       )}
@@ -822,6 +829,7 @@ export default function AccueilPage() {
         const extraItems = (navItems as any[]).filter((item) => {
           if (mobileBarHrefs.includes(item.href)) return false
           if (item.adminOnly && !isAdmin) return false
+          if (item.nonAdminOnly && isAdmin) return false
           if (!isAdmin && item.droit) {
             if (item.droit === 'exercices') return droits?.exercices === true
             return droits?.[item.droit] !== false

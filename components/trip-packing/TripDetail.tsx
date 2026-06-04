@@ -62,7 +62,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
     )
   }
   if (!trip) {
-    return <div className="text-center py-20 text-gray-400 text-sm">Liste introuvable.</div>
+    return <div className="text-center py-20 text-gray-400 text-sm">CheckConnect introuvable.</div>
   }
 
   const isOwner = trip.ownerId === currentUser?.uid
@@ -95,14 +95,14 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
 
   const handleReset = async () => {
     setBusy(true)
-    try { await resetTripReady(trip); notify('Liste réinitialisée ✓') }
+    try { await resetTripReady(trip); notify('CheckConnect réinitialisée ✓') }
     catch { notify('Erreur lors de la réinitialisation.', false) }
     finally { setBusy(false); setConfirmReset(false) }
   }
 
   const handleDelete = async () => {
     setBusy(true)
-    try { await deleteTrip(trip.id); notify('Liste supprimée'); onDeleted() }
+    try { await deleteTrip(trip.id); notify('CheckConnect supprimée'); onDeleted() }
     catch { notify('Erreur lors de la suppression.', false) }
     finally { setBusy(false); setConfirmDelete(false) }
   }
@@ -153,7 +153,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
               className="flex items-center gap-1.5 text-blue-600 font-medium text-sm py-1.5 px-2 rounded-xl hover:bg-blue-50 transition active:scale-95"
             >
               <ChevronLeftIcon className="w-5 h-5" strokeWidth={2.5} />
-              Mes listes
+              Mes CheckConnect
             </button>
           </div>
         )}
@@ -387,7 +387,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
 
       <Modal isOpen={confirmCheckAll} onClose={() => setConfirmCheckAll(false)} title="Tout cocher" size="sm">
         <div className="space-y-4">
-          <p className="text-sm text-gray-600">Valider <strong>tous les éléments</strong> de la liste comme prêts ?</p>
+          <p className="text-sm text-gray-600">Valider <strong>tous les éléments</strong> de la CheckConnect comme prêts ?</p>
           <div className="flex gap-3">
             <button onClick={() => setConfirmCheckAll(false)} className="flex-1 border border-gray-300 text-gray-600 py-2.5 rounded-xl text-sm hover:bg-gray-50 transition">Annuler</button>
             <button onClick={() => { wrap(checkAllItems()); setConfirmCheckAll(false) }} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl text-sm font-medium transition">Tout cocher</button>
@@ -395,7 +395,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
         </div>
       </Modal>
 
-      <Modal isOpen={confirmReset} onClose={() => setConfirmReset(false)} title="Réinitialiser la liste" size="sm">
+      <Modal isOpen={confirmReset} onClose={() => setConfirmReset(false)} title="Réinitialiser la CheckConnect" size="sm">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">Remettre toutes les quantités prêtes à 0 ? La structure (sections/articles) est conservée.</p>
           <div className="flex gap-3">
@@ -405,7 +405,7 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
         </div>
       </Modal>
 
-      <Modal isOpen={confirmDelete} onClose={() => setConfirmDelete(false)} title="Supprimer la liste" size="sm">
+      <Modal isOpen={confirmDelete} onClose={() => setConfirmDelete(false)} title="Supprimer la CheckConnect" size="sm">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">Supprimer <strong>{trip.name}</strong> et tous ses éléments ? Cette action est irréversible.</p>
           <div className="flex gap-3">

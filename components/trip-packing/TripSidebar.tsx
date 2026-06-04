@@ -66,7 +66,7 @@ function TripRow({ trip, active, onClick, currentUid, onFavorite, photoMap }: {
             {trip.name}
           </p>
           <p className="text-xs text-gray-400">
-            {total > 0 ? `${pct}% fait` : 'Liste vide'}
+            {total > 0 ? `${pct}% fait` : 'Vide'}
             {trip.members.length > 1 && ` · ${trip.members.length}`}
           </p>
         </div>
@@ -164,11 +164,11 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
       {canCreate ? (
         <button onClick={onCreate}
           className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5 rounded-xl transition">
-          <PlusIcon className="w-4 h-4" /> Nouvelle liste
+          <PlusIcon className="w-4 h-4" /> Nouvelle CheckConnect
         </button>
       ) : (
         <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 leading-relaxed">
-          🔗 Listes partagées avec vous. Pour créer vos propres listes,{' '}
+          🔗 CheckConnect partagées avec vous. Pour créer les vôtres,{' '}
           <a href="/boutique" className="font-semibold text-blue-600 hover:underline">activez CheckConnect</a>.
         </div>
       )}
@@ -186,7 +186,7 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Rechercher une liste…"
+              placeholder="Rechercher une CheckConnect…"
               className="w-full text-sm border border-gray-200 rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
             {search && (
@@ -199,7 +199,7 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
 
           {/* Barre filtres */}
           <div className="flex items-center gap-1.5">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex-1">Mes listes</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex-1">Mes CheckConnect</p>
             <button onClick={() => setShowFilters(v => !v)}
               className={`flex items-center gap-1 p-1.5 rounded-lg transition ${showFilters || activeFilterCount > 0 ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
               title="Filtrer / Trier">
@@ -246,10 +246,10 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
             {sortedVoyages.length === 0 ? (
               <p className="text-xs text-gray-400 px-1 py-2">
                 {search.trim()
-                  ? `Aucune liste pour « ${search.trim()} ».`
+                  ? `Aucune CheckConnect pour « ${search.trim()} ».`
                   : (filter !== 'all' || category !== 'all')
-                  ? 'Aucune liste dans ce filtre.'
-                  : 'Aucune liste. Créez la première !'}
+                  ? 'Aucune CheckConnect dans ce filtre.'
+                  : 'Aucune CheckConnect. Créez la première !'}
               </p>
             ) : (
               <div className="space-y-1">

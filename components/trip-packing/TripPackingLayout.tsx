@@ -38,7 +38,7 @@ export default function TripPackingLayout({ canCreate = true }: { canCreate?: bo
       {!selectedId && (
         <div className="mb-5">
           <h1 className="text-2xl font-bold text-gray-800">✅ CheckConnect</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Vos checklists et listes partagées</p>
+          <p className="text-sm text-gray-500 mt-0.5">Vos CheckConnect et listes partagées</p>
         </div>
       )}
 
@@ -72,7 +72,7 @@ export default function TripPackingLayout({ canCreate = true }: { canCreate?: bo
             !loading && (
               <div className="hidden lg:flex flex-col items-center justify-center py-24 text-center">
                 <p className="text-5xl mb-3">✅</p>
-                <p className="text-gray-500 font-medium">Sélectionnez une liste</p>
+                <p className="text-gray-500 font-medium">Sélectionnez une CheckConnect</p>
                 <p className="text-sm text-gray-400 mt-1">{canCreate ? 'ou créez-en une nouvelle pour commencer' : 'partagée avec vous'}</p>
               </div>
             )
@@ -86,7 +86,7 @@ export default function TripPackingLayout({ canCreate = true }: { canCreate?: bo
           isOpen={showCreate}
           onClose={() => setShowCreate(false)}
           templates={templates}
-          onCreated={(id) => { setSelectedId(id); notify('Liste créée ✓') }}
+          onCreated={(id) => { setSelectedId(id); notify('CheckConnect créée ✓') }}
         />
       )}
 

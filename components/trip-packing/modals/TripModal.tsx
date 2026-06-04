@@ -87,7 +87,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Modifier la liste' : 'Nouvelle liste'} size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Modifier la CheckConnect' : 'Nouvelle CheckConnect'} size="lg">
       <div className="space-y-4">
         {/* Aperçu */}
         <div className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: form.color + '15' }}>
@@ -95,7 +95,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
             {form.icon}
           </div>
           <div>
-            <p className="text-sm font-semibold text-gray-900">{form.name || 'Nom de la liste'}</p>
+            <p className="text-sm font-semibold text-gray-900">{form.name || 'Nom de la CheckConnect'}</p>
             <p className="text-xs text-gray-500">{TRIP_TYPES.find(t => t.value === form.type)?.label}{nbJours ? ` · ${nbJours} jour${nbJours > 1 ? 's' : ''}` : ''}</p>
           </div>
         </div>
@@ -106,7 +106,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
             <label className="block text-sm font-medium text-gray-700 mb-1">{"Partir d'un modèle"}</label>
             <select value={form.fromTemplateId} onChange={e => applyTemplate(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">— Liste vierge —</option>
+              <option value="">— Vierge —</option>
               {templates.map(t => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
             </select>
           </div>

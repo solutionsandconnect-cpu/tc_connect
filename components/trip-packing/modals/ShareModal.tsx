@@ -18,7 +18,7 @@ interface Props {
 }
 
 const PERMISSION_LABELS: Record<TripPermission, { label: string; desc: string; icon: string }> = {
-  view:  { label: 'Lecture seule', desc: 'Voir la liste, sans interaction', icon: '👁️' },
+  view:  { label: 'Lecture seule', desc: 'Voir la CheckConnect, sans interaction', icon: '👁️' },
   check: { label: 'Peut cocher', desc: 'Cocher / décocher les éléments', icon: '✅' },
   edit:  { label: 'Peut modifier', desc: 'Ajouter / éditer items & sections', icon: '✏️' },
 }
@@ -131,7 +131,7 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
 
   // Partage natif du lien (Web Share API si dispo, sinon copie)
   const shareInviteLink = async (url: string, name: string) => {
-    const text = `Rejoins la liste « ${trip.name} » sur CheckConnect : ${url}`
+    const text = `Rejoins la CheckConnect « ${trip.name} » : ${url}`
     if (typeof navigator !== 'undefined' && navigator.share) {
       try { await navigator.share({ title: 'Invitation CheckConnect', text, url }); return } catch { /* annulé */ }
     }
@@ -174,7 +174,7 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Partager la liste" size="md">
+    <Modal isOpen={isOpen} onClose={onClose} title="Partager la CheckConnect" size="md">
       <div className="space-y-4">
         {/* Onglets */}
         <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
@@ -308,6 +308,16 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                               setSavingMember(true)
                               try {
                                 await updateMemberPermission(trip, m.uid, memberDraft.permission, memberDraft.checkMode)
+                                // Invité sans compte : son accès passe par le lien → on
+                                // synchronise la permission du lien avec son nouveau rôle.
+                                if (m.isGuest && m.uid.startsWith('guest:')) {
+                                  const token = m.uid.slice('guest:'.length)
+                                  const linkPerm: TripPermission =
+                                    (memberDraft.permission === 'admin' || memberDraft.permission === 'editor') ? 'edit'
+                                    : memberDraft.permission === 'viewer' ? 'view'
+                                    : 'check'
+                                  await updateInviteLink(token, linkPerm)
+                                }
                                 setSavedMember(true)
                                 setTimeout(() => { setExpandedMember(null); setMemberDraft(null); setSavedMember(false) }, 800)
                               } catch { onError?.('Impossible d\'enregistrer les droits.') }
@@ -431,11 +441,11 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                           className="flex items-center justify-center gap-1 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg py-2 transition">
                           📤 Partager
                         </button>
-                        <a href={`mailto:${emailSent.email}?subject=${encodeURIComponent(`Liste « ${trip.name} »`)}&body=${encodeURIComponent(`Bonjour ${emailSent.name},\n\nJe te partage la liste « ${trip.name} » sur CheckConnect :\n${emailSent.url}\n`)}`}
+                        <a href={`mailto:${emailSent.email}?subject=${encodeURIComponent(`CheckConnect « ${trip.name} »`)}&body=${encodeURIComponent(`Bonjour ${emailSent.name},\n\nJe te partage la CheckConnect « ${trip.name} » sur TC Connect :\n${emailSent.url}\n`)}`}
                           className="flex items-center justify-center gap-1 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg py-2 transition">
                           ✉️ Email
                         </a>
-                        <a href={`sms:?&body=${encodeURIComponent(`Liste « ${trip.name} » : ${emailSent.url}`)}`}
+                        <a href={`sms:?&body=${encodeURIComponent(`CheckConnect « ${trip.name} » : ${emailSent.url}`)}`}
                           className="flex items-center justify-center gap-1 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg py-2 transition">
                           💬 SMS
                         </a>

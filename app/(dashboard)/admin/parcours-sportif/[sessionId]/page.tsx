@@ -44,7 +44,7 @@ interface Registration {
   email: string
   phone: string
   suggestions: string
-  paymentStatus: 'pending' | 'cash' | 'transfer'
+  paymentStatus: 'pending' | 'cash' | 'transfer' | 'free' | 'waived'
   attendance: 'unknown' | 'present' | 'absent' | 'deregistered'
   registeredAt: Timestamp
   userId?: string
@@ -66,6 +66,8 @@ const PAYMENT_OPTIONS = [
   { value: 'pending',  label: 'En attente' },
   { value: 'cash',     label: 'Espèces' },
   { value: 'transfer', label: 'Virement' },
+  { value: 'free',     label: 'Offert (sans gain)' },
+  { value: 'waived',   label: 'Non dû (absent)' },
 ]
 
 // Formatage des noms : NOM en majuscules, Prénom en nom propre
@@ -88,6 +90,16 @@ function fmtDate(ts: Timestamp) {
 }
 function fmtHeure(ts: Timestamp) {
   return ts.toDate().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+}
+// Âge (en années) à partir d'une date de naissance ISO (YYYY-MM-DD)
+function ageFromBirthDate(dateStr: string): number | null {
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return null
+  const now = new Date()
+  let age = now.getFullYear() - d.getFullYear()
+  const m = now.getMonth() - d.getMonth()
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--
+  return age >= 0 && age < 130 ? age : null
 }
 function mapsLink(coords: string): string {
   return `https://maps.google.com/maps?q=${coords.replace(/\s/g, '')}`
@@ -340,12 +352,15 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     const active = registrations.filter((r) => r.attendance !== 'deregistered')
     const byCash = active.filter((r) => r.paymentStatus === 'cash').length
     const byTransfer = active.filter((r) => r.paymentStatus === 'transfer').length
-    const total = (byCash + byTransfer) * price
+    const byFree = active.filter((r) => r.paymentStatus === 'free').length
+    const byWaived = active.filter((r) => r.paymentStatus === 'waived').length
+    const total = (byCash + byTransfer) * price          // encaissé (offert/non dû ne rapportent rien)
+    // En attente (impayé) : uniquement les 'pending' → un absent passé en « Non dû » n'y compte plus
     const pending = active.filter((r) => r.paymentStatus === 'pending').length * price
     const present = active.filter((r) => r.attendance === 'present').length
     const absent = active.filter((r) => r.attendance === 'absent').length
     const deregistered = registrations.filter((r) => r.attendance === 'deregistered').length
-    return { total, pending, byCash, byTransfer, present, absent, deregistered }
+    return { total, pending, byCash, byTransfer, byFree, byWaived, present, absent, deregistered }
   }, [registrations, session])
 
   const handlePaymentChange = (regId: string, value: string) =>
@@ -923,6 +938,18 @@ Teddy`
               <span>Virement ({financials.byTransfer})</span>
               <span>{(financials.byTransfer * (session.price ?? 5)).toFixed(2)}€</span>
             </div>
+            {financials.byFree > 0 && (
+              <div className="flex items-center justify-between text-xs text-gray-400">
+                <span>Offert ({financials.byFree})</span>
+                <span className="text-gray-400">0,00€</span>
+              </div>
+            )}
+            {financials.byWaived > 0 && (
+              <div className="flex items-center justify-between text-xs text-gray-400">
+                <span>Non dû ({financials.byWaived})</span>
+                <span className="text-gray-400">0,00€</span>
+              </div>
+            )}
             <div className="flex items-center justify-between border-t border-gray-100 pt-2">
               <span className="text-sm text-gray-500">En attente</span>
               <span className="text-sm font-medium text-orange-600">{financials.pending.toFixed(2)}€</span>
@@ -1211,9 +1238,15 @@ Teddy`
                                 {reg.guardianPhone ? ` · ${reg.guardianPhone}` : ''}
                               </p>
                             )}
-                            {reg.birthDate && (
-                              <p className="text-xs text-amber-700">Né(e) le {new Date(reg.birthDate).toLocaleDateString('fr-FR')}</p>
-                            )}
+                            {reg.birthDate && (() => {
+                              const age = ageFromBirthDate(reg.birthDate)
+                              return (
+                                <p className="text-xs text-amber-700">
+                                  Né(e) le {new Date(reg.birthDate).toLocaleDateString('fr-FR')}
+                                  {age !== null && <strong> · {age} ans</strong>}
+                                </p>
+                              )
+                            })()}
                             {reg.medicalCertUrl ? (
                               <a href={reg.medicalCertUrl} target="_blank" rel="noopener noreferrer"
                                 className="text-xs font-medium text-blue-600 hover:underline">
@@ -1265,7 +1298,10 @@ Teddy`
                         <>
                           <select value={reg.paymentStatus} onChange={(e) => handlePaymentChange(reg.id, e.target.value)}
                             className={`text-xs font-medium rounded-lg px-2 py-1 border focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                              reg.paymentStatus === 'pending' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-green-50 border-green-200 text-green-700'
+                              reg.paymentStatus === 'pending' ? 'bg-yellow-50 border-yellow-200 text-yellow-700'
+                                : reg.paymentStatus === 'free' ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                : reg.paymentStatus === 'waived' ? 'bg-slate-100 border-slate-200 text-slate-600'
+                                : 'bg-green-50 border-green-200 text-green-700'
                             }`}>
                             {PAYMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>

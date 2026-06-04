@@ -1,11 +1,15 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
-import { collection, query, orderBy, onSnapshot, getDocs, where, Timestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { useUsers } from '@/hooks/useUsers'
+import { collection, query, orderBy, onSnapshot, getDocs, where, Timestamp, doc, deleteDoc, updateDoc, runTransaction } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { copyText } from '@/lib/clipboard'
+import { randomUUID } from '@/lib/uuid'
+import { addParcoursActivite } from '@/lib/parcoursPlanning'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import {
   PlusIcon, CalendarIcon, MapPinIcon, UsersIcon,
@@ -46,6 +50,11 @@ function fmtHeure(ts: Timestamp) {
   return ts.toDate().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
 }
 
+// Formatage des noms : NOM en majuscules, Prénom en nom propre
+const toUpperName = (s: string) => s.toUpperCase()
+const toProperName = (s: string) =>
+  s.split(/([\s-])/).map((p) => /[\s-]/.test(p) ? p : p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('')
+
 function sessionBadge(s: Session) {
   const isPast = s.date.toMillis() < Date.now()
   if (s.status === 'cancelled') return { label: 'Annulée', variant: 'danger' as const }
@@ -64,6 +73,7 @@ export default function AdminParcoursPage() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [paidBySession, setPaidBySession] = useState<Record<string, number>>({})
+  const [pendingBySession, setPendingBySession] = useState<Record<string, number>>({})
   const [evoYear, setEvoYear] = useState<'all' | number>('all')
   const [evoMonth, setEvoMonth] = useState<'all' | number>('all')
   // Filtres séances — restaurés depuis sessionStorage pour survivre à un aller-retour
@@ -73,6 +83,61 @@ export default function AdminParcoursPage() {
   const [sessionMonth, setSessionMonth] = useState<'all' | number>('all')
   const [filtersReady, setFiltersReady] = useState(false)
   const [confirmHide, setConfirmHide] = useState<string | null>(null)
+
+  // Ajout manuel d'un participant (depuis la page principale)
+  const [showAddParticipant, setShowAddParticipant] = useState(false)
+  const [addForm, setAddForm] = useState({ firstName: '', lastName: '', email: '', phone: '' })
+  const [addSessionIds, setAddSessionIds] = useState<Set<string>>(new Set())
+  const [addIncludePast, setAddIncludePast] = useState(false)
+  const [addingParticipant, setAddingParticipant] = useState(false)
+  const [addError, setAddError] = useState('')
+  const [addSuccess, setAddSuccess] = useState('')
+  const [showAddSuggestions, setShowAddSuggestions] = useState(false)
+
+  // Annuaire des candidats : utilisateurs de l'app + anciens inscrits (chargé à l'ouverture du modal)
+  const { users } = useUsers()
+  const [registrantDirectory, setRegistrantDirectory] = useState<{ firstName: string; lastName: string; email: string; phone: string }[]>([])
+  const dirLoadedRef = useRef(false)
+  useEffect(() => {
+    if (!showAddParticipant || dirLoadedRef.current) return
+    dirLoadedRef.current = true
+    getDocs(collection(db, 'registrations')).then((snap) => {
+      const map = new Map<string, { firstName: string; lastName: string; email: string; phone: string }>()
+      snap.docs.forEach((d) => {
+        const r = d.data() as any
+        const c = { firstName: r.firstName ?? '', lastName: r.lastName ?? '', email: r.email ?? '', phone: r.phone ?? '' }
+        if (!c.firstName && !c.lastName && !c.email) return
+        const key = (c.email || `${c.firstName}|${c.lastName}`).toLowerCase()
+        const prev = map.get(key)
+        if (!prev || ((!prev.phone && c.phone) || (!prev.email && c.email))) map.set(key, c)
+      })
+      setRegistrantDirectory(Array.from(map.values()))
+    }).catch(() => {})
+  }, [showAddParticipant])
+
+  const addCandidates = useMemo(() => {
+    const map = new Map<string, { firstName: string; lastName: string; email: string; phone: string }>()
+    users.forEach((u: any) => {
+      const c = { firstName: u.prenom ?? '', lastName: u.nom ?? '', email: u.email ?? '', phone: u.phone_number ?? '' }
+      if (!c.firstName && !c.lastName && !c.email) return
+      map.set((c.email || `${c.firstName}|${c.lastName}`).toLowerCase(), c)
+    })
+    registrantDirectory.forEach((c) => {
+      const key = (c.email || `${c.firstName}|${c.lastName}`).toLowerCase()
+      if (!map.has(key)) map.set(key, c)
+    })
+    return Array.from(map.values())
+  }, [users, registrantDirectory])
+
+  const addNameQuery = `${addForm.firstName} ${addForm.lastName} ${addForm.email}`.trim().toLowerCase()
+  const addNameSuggestions = useMemo(() => {
+    if (addNameQuery.length < 2) return []
+    return addCandidates.filter((c) => {
+      const f = c.firstName.toLowerCase(), l = c.lastName.toLowerCase(), em = c.email.toLowerCase()
+      return `${f} ${l}`.includes(addNameQuery) || `${l} ${f}`.includes(addNameQuery)
+        || f.startsWith(addNameQuery) || l.startsWith(addNameQuery) || em.includes(addNameQuery)
+    }).slice(0, 6)
+  }, [addCandidates, addNameQuery])
 
   useEffect(() => {
     try {
@@ -204,6 +269,25 @@ export default function AdminParcoursPage() {
     load()
   }, [isAdmin, sessions.length])
 
+  // Load impayés (inscriptions « en attente », hors désinscrits) par séance
+  useEffect(() => {
+    if (!isAdmin || sessions.length === 0) return
+    const load = async () => {
+      const snap = await getDocs(
+        query(collection(db, 'registrations'), where('paymentStatus', '==', 'pending'))
+      )
+      const counts: Record<string, number> = {}
+      snap.docs.forEach((d) => {
+        const data = d.data()
+        if (data.attendance === 'deregistered') return
+        const sid = data.sessionId
+        counts[sid] = (counts[sid] ?? 0) + 1
+      })
+      setPendingBySession(counts)
+    }
+    load()
+  }, [isAdmin, sessions.length])
+
   const now = Date.now()
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth()
@@ -267,6 +351,82 @@ export default function AdminParcoursPage() {
     })
   })()
 
+  // Séances sélectionnables pour l'ajout manuel (passées incluses si demandé)
+  const addSelectableSessions = sessions
+    .filter((s) => s.status !== 'cancelled')
+    .filter((s) => addIncludePast || s.date.toMillis() >= now)
+    .sort((a, b) => b.date.toMillis() - a.date.toMillis())
+
+  const openAddParticipant = () => {
+    setAddForm({ firstName: '', lastName: '', email: '', phone: '' })
+    setAddSessionIds(new Set())
+    setAddIncludePast(false)
+    setAddError('')
+    setAddSuccess('')
+    setShowAddSuggestions(false)
+    setShowAddParticipant(true)
+  }
+
+  const handleAddParticipant = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!addForm.firstName.trim()) { setAddError('Le prénom est obligatoire.'); return }
+    if (addSessionIds.size === 0) { setAddError('Sélectionnez au moins une date.'); return }
+    setAddError(''); setAddSuccess(''); setAddingParticipant(true)
+
+    const registerOne = async (sess: Session) => {
+      const regId = await runTransaction(db, async (tx) => {
+        const sessionRef = doc(db, 'sessions', sess.id)
+        const snap = await tx.get(sessionRef)
+        if (!snap.exists()) throw new Error('introuvable')
+        const data = snap.data()
+        if ((data.registeredCount ?? 0) >= data.maxSpots) throw new Error('complète')
+        const newCount = (data.registeredCount ?? 0) + 1
+        const regRef = doc(collection(db, 'registrations'))
+        tx.set(regRef, {
+          sessionId: sess.id,
+          firstName: addForm.firstName.trim(),
+          lastName: addForm.lastName.trim(),
+          email: addForm.email.trim().toLowerCase(),
+          phone: addForm.phone.trim(),
+          suggestions: '',
+          paymentStatus: 'pending',
+          attendance: 'unknown',
+          registeredAt: Timestamp.now(),
+          uniqueToken: randomUUID(),
+        })
+        tx.update(sessionRef, { registeredCount: newCount, status: newCount >= data.maxSpots ? 'full' : 'open' })
+        return regRef.id
+      })
+      // Rattache au planning si l'email correspond à un compte
+      if (regId && addForm.email.trim()) {
+        try {
+          const uSnap = await getDocs(query(collection(db, 'users'), where('email', '==', addForm.email.trim().toLowerCase())))
+          if (!uSnap.empty) await addParcoursActivite({ userId: uSnap.docs[0].id, registrationId: regId, sessionId: sess.id, session: sess as any })
+        } catch {}
+      }
+    }
+
+    const targets = sessions.filter((s) => addSessionIds.has(s.id))
+    let ok = 0
+    const failed: string[] = []
+    for (const t of targets) {
+      try { await registerOne(t); ok++ }
+      catch (err: any) {
+        const d = t.date?.toDate?.().toLocaleDateString('fr-FR') ?? ''
+        failed.push(`${d} (${err?.message === 'complète' ? 'complète' : 'erreur'})`)
+      }
+    }
+
+    if (ok === 0) {
+      setAddError(failed.length ? `Aucun ajout — ${failed.join(', ')}` : "Erreur lors de l'ajout")
+    } else {
+      setAddSuccess(`${ok} inscription${ok > 1 ? 's' : ''} ajoutée${ok > 1 ? 's' : ''}${failed.length ? ` (échecs : ${failed.join(', ')})` : ''}`)
+      setAddForm({ firstName: '', lastName: '', email: '', phone: '' })
+      setAddSessionIds(new Set())
+    }
+    setAddingParticipant(false)
+  }
+
   if (!isAdmin) {
     return <div className="flex items-center justify-center py-20"><p className="text-gray-500">Accès réservé aux administrateurs.</p></div>
   }
@@ -275,8 +435,13 @@ export default function AdminParcoursPage() {
     const badge = sessionBadge(s)
     const price = s.price ?? 5
     const earned = (paidBySession[s.id] ?? 0) * price
+    // Impayés : inscriptions « en attente » sur une séance déjà passée
+    const isPast = s.date.toMillis() < now
+    const nbImpayes = isPast ? (pendingBySession[s.id] ?? 0) : 0
     return (
-      <div className={`w-full flex items-center gap-3 bg-white border rounded-2xl p-4 hover:border-blue-200 hover:shadow-sm transition ${s.hidden ? 'border-gray-300 opacity-70' : 'border-gray-100'}`}>
+      <div className={`w-full flex items-center gap-3 bg-white border rounded-2xl p-4 hover:border-blue-200 hover:shadow-sm transition ${
+        nbImpayes > 0 ? 'border-red-200 ring-1 ring-red-100' : s.hidden ? 'border-gray-300 opacity-70' : 'border-gray-100'
+      }`}>
         <button
           onClick={() => router.push(`/admin/parcours-sportif/${s.id}`)}
           className="flex-1 min-w-0 text-left"
@@ -284,6 +449,11 @@ export default function AdminParcoursPage() {
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-sm font-semibold text-gray-900">{s.title}</span>
             <Badge label={badge.label} variant={badge.variant} />
+            {nbImpayes > 0 && (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 px-1.5 py-0.5 rounded-full">
+                ⚠ {nbImpayes} impayé{nbImpayes > 1 ? 's' : ''}
+              </span>
+            )}
             {s.hidden && (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-full">
                 <EyeSlashIcon className="w-3 h-3" /> Masquée
@@ -356,11 +526,19 @@ export default function AdminParcoursPage() {
             <span className="hidden sm:inline">Paramètres</span>
           </button>
           <button
+            onClick={openAddParticipant}
+            className="flex items-center gap-2 border border-blue-200 text-blue-700 hover:bg-blue-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            title="Ajouter un participant manuellement"
+          >
+            <UsersIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">Ajouter un participant</span>
+          </button>
+          <button
             onClick={() => router.push('/admin/parcours-sportif/nouvelle-seance')}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
           >
             <PlusIcon className="w-4 h-4" />
-            Nouvelle séance
+            <span className="hidden sm:inline">Nouvelle séance</span>
           </button>
         </div>
       </div>
@@ -681,6 +859,115 @@ export default function AdminParcoursPage() {
           </div>
         </div>
       )}
+
+      {/* ── Ajout manuel d'un participant ── */}
+      <Modal isOpen={showAddParticipant} onClose={() => setShowAddParticipant(false)} title="Ajouter un participant" size="lg">
+        <form onSubmit={handleAddParticipant} className="space-y-4">
+          {/* Recherche / suggestions (utilisateurs de l'app + anciens inscrits) */}
+          <div className="relative">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Prénom *</label>
+                <input type="text" value={addForm.firstName}
+                  onChange={(e) => { setAddForm((f) => ({ ...f, firstName: toProperName(e.target.value) })); setShowAddSuggestions(true) }}
+                  onFocus={() => setShowAddSuggestions(true)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Nom</label>
+                <input type="text" value={addForm.lastName}
+                  onChange={(e) => { setAddForm((f) => ({ ...f, lastName: toUpperName(e.target.value) })); setShowAddSuggestions(true) }}
+                  onFocus={() => setShowAddSuggestions(true)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                <input type="email" value={addForm.email}
+                  onChange={(e) => { setAddForm((f) => ({ ...f, email: e.target.value })); setShowAddSuggestions(true) }}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Téléphone</label>
+                <input type="tel" value={addForm.phone}
+                  onChange={(e) => setAddForm((f) => ({ ...f, phone: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+            {showAddSuggestions && addNameSuggestions.length > 0 && (
+              <div className="mt-1 border border-gray-200 rounded-xl shadow-lg bg-white divide-y divide-gray-50 overflow-hidden">
+                {addNameSuggestions.map((c, i) => (
+                  <button key={i} type="button"
+                    onClick={() => {
+                      setAddForm({ firstName: c.firstName, lastName: c.lastName, email: c.email, phone: c.phone })
+                      setShowAddSuggestions(false)
+                    }}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-blue-50 transition">
+                    <span className="text-sm text-gray-800 truncate">
+                      {[c.firstName, c.lastName].filter(Boolean).join(' ') || c.email}
+                    </span>
+                    {c.email && <span className="text-xs text-gray-400 truncate shrink-0">{c.email}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sélection des dates */}
+          <div className="border border-gray-200 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-semibold text-gray-700">Inscrire à ces dates</p>
+              <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={addIncludePast}
+                  onChange={(e) => setAddIncludePast(e.target.checked)}
+                  className="w-4 h-4 accent-blue-600" />
+                Inclure les dates passées
+              </label>
+            </div>
+            <div className="space-y-1.5 max-h-60 overflow-y-auto">
+              {addSelectableSessions.length === 0 ? (
+                <p className="text-xs text-gray-400 py-2">Aucune date disponible.</p>
+              ) : addSelectableSessions.map((s) => {
+                const left = s.maxSpots - s.registeredCount
+                const isPast = s.date.toMillis() < now
+                const checked = addSessionIds.has(s.id)
+                return (
+                  <label key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-gray-100 hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={checked}
+                      onChange={() => setAddSessionIds((prev) => {
+                        const next = new Set(prev)
+                        next.has(s.id) ? next.delete(s.id) : next.add(s.id)
+                        return next
+                      })}
+                      className="w-4 h-4 accent-blue-600 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-800 capitalize truncate">
+                        {fmtDate(s.date)} à {fmtHeure(s.date)}
+                        {isPast && <span className="ml-1.5 text-[10px] font-medium text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-full">passée</span>}
+                      </p>
+                      <p className="text-xs text-gray-400 truncate">{s.title} — {left > 0 ? `${left} place${left > 1 ? 's' : ''}` : 'complète'}</p>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+            {addSessionIds.size > 0 && (
+              <p className="text-xs font-medium text-blue-600 mt-2">{addSessionIds.size} date{addSessionIds.size > 1 ? 's' : ''} sélectionnée{addSessionIds.size > 1 ? 's' : ''}</p>
+            )}
+          </div>
+
+          {addError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{addError}</p>}
+          {addSuccess && <p className="text-sm text-green-700 bg-green-50 rounded-xl px-3 py-2">{addSuccess}</p>}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={() => setShowAddParticipant(false)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2.5 rounded-xl text-sm hover:bg-gray-50 transition">Fermer</button>
+            <button type="submit" disabled={addingParticipant}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-semibold transition">
+              {addingParticipant ? 'Ajout…' : 'Ajouter le participant'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   )
 }

@@ -1060,6 +1060,9 @@ export default function ParcoursPublicPage() {
                       <p className="text-xs text-yellow-800 font-semibold">
                         ⚠️ Attestation du représentant légal
                       </p>
+                      <p className="text-xs text-orange-800 font-medium bg-orange-100 border border-orange-200 rounded-lg px-2.5 py-2 leading-relaxed">
+                        L'inscription d'un mineur est <strong>sous réserve de notre acceptation</strong>. Vous serez prévenu(e) par SMS de la validation ou du refus.
+                      </p>
                       <p className="text-xs text-yellow-700 leading-relaxed">
                         Un participant <strong>majeur responsable doit être inscrit dans ce même formulaire</strong> et
                         présent à la séance pour accompagner le mineur.
