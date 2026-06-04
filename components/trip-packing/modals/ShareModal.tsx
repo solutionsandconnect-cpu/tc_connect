@@ -103,11 +103,11 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             userId: invited.uid ?? invited.id,
-            title: '✅ Invitation à une liste',
-            body: `${userProfile?.prenom ?? 'Quelqu\'un'} vous a partagé la liste « ${trip.name} ».`,
+            title: '✅ Invitation à une CheckConnect',
+            body: `${userProfile?.prenom ?? 'Quelqu\'un'} vous a partagé la CheckConnect « ${trip.name} ».`,
             url,
             persist: true,
-            type: 'CHECKLIST_INVITE',
+            type: 'CheckConnect_Invitation',
           }),
         }).catch(() => {})
       }

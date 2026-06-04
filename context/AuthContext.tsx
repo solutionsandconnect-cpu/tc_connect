@@ -155,6 +155,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
+    // Détache l'abonnement push de cet appareil du compte qui se déconnecte,
+    // sinon l'ancien compte continue de recevoir les notifications sur ce téléphone.
+    const uid = auth.currentUser?.uid
+    try {
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration()
+        const sub = await reg?.pushManager.getSubscription()
+        if (sub) await sub.unsubscribe()
+      }
+      if (uid) {
+        await fetch('/api/push/subscribe', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: uid }),
+        })
+      }
+    } catch { /* ne jamais bloquer la déconnexion */ }
     await signOut(auth)
   }, [])
 

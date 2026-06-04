@@ -40,6 +40,54 @@ export default function NotificationsPage() {
     return map[type] || 'gray'
   }
 
+  // Libellés lisibles pour les identifiants techniques (affichage uniquement —
+  // la valeur stockée reste inchangée). Couvre aussi les anciennes notifications.
+  const TYPE_LABELS: Record<string, string> = {
+    // Boutique
+    BOUTIQUE_VALIDATION: 'Boutique',
+    BOUTIQUE_STATUT: 'Boutique',
+    BOUTIQUE_ECHEANCE: 'Boutique',
+    SOUSCRIPTION_BOUTIQUE: 'Boutique',
+    DEMANDE_BOUTIQUE: 'Boutique',
+    DESABO_BOUTIQUE: 'Boutique',
+    AVIS_BOUTIQUE: 'Avis',
+    // Parcours Sportif
+    PARCOURS_INSCRIPTION: 'Parcours Sportif',
+    PARCOURS_DESINSCRIPTION: 'Parcours Sportif',
+    PARCOURS_PRESQUE_COMPLET: 'Parcours Sportif',
+    PARCOURS_RAPPEL: 'Parcours Sportif',
+    AVIS_PARCOURS: 'Avis',
+    // CheckConnect
+    CHECKLIST_DUE: 'CheckConnect',
+    CHECKLIST_DEADLINE: 'CheckConnect',
+    CheckConnect_Invitation: 'CheckConnect',
+    CHECKLIST_INVITE: 'CheckConnect',
+    // Facturation
+    FACTURE_ECHEANCE: 'Facturation',
+    // Questionnaire
+    QUESTIONNAIRE_MODIFICATION: 'Questionnaire',
+    QUESTIONNAIRE_FORME: 'Questionnaire',
+    // Suivi clients / séances
+    CR_RDV_MANQUANT: 'Compte-rendu',
+    CR_CLIENT_MANQUANT: 'Compte-rendu',
+    SEANCE_INCOMPLETE: 'Séance',
+    SEANCES: 'Séances',
+    ACTIVITE: 'Activité',
+    ABONNEMENT: 'Abonnement',
+    // Divers
+    NOUVEAU_COMPTE: 'Nouveau compte',
+    MESSAGERIE: 'Messagerie',
+    DOCUMENT: 'Document',
+  }
+
+  const prettyType = (type?: string): string => {
+    if (!type) return 'Info'
+    if (TYPE_LABELS[type]) return TYPE_LABELS[type]
+    // Repli : enlève les underscores et met en forme propre
+    const cleaned = type.replace(/_/g, ' ').toLowerCase()
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+  }
+
   const readCount = notifications.length - unreadCount
 
   const tabs: { key: FilterTab; label: string; count: number }[] = [
@@ -140,7 +188,7 @@ export default function NotificationsPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <Badge
-                          label={notif.type_notification || 'Info'}
+                          label={prettyType(notif.type_notification)}
                           variant={getTypeVariant(notif.type_notification)}
                         />
                         <span className="text-xs text-gray-400">
