@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { use } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon, PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 
@@ -36,7 +37,8 @@ const IDENTITY_KEY = (token: string) => `cc_identity_${token}`
 
 export default function PublicChecklistPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params)
-  const { currentUser, userProfile } = useAuth()
+  const router = useRouter()
+  const { currentUser, userProfile, loading: authLoading } = useAuth()
 
   const [trip, setTrip] = useState<TripData | null>(null)
   const [permission, setPermission] = useState<Permission>('view')
@@ -44,6 +46,10 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
   const [error, setError] = useState('')
   const [pendingItems, setPendingItems] = useState<Set<string>>(new Set())
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+
+  // Utilisateur connecté → on lui propose de rejoindre la liste dans l'app
+  const [joining, setJoining] = useState(false)
+  const [joinError, setJoinError] = useState('')
 
   // Édition (permission 'edit')
   const [newItemDrafts, setNewItemDrafts] = useState<Record<string, string>>({})
@@ -62,6 +68,8 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
   const [editingIdentity, setEditingIdentity] = useState(false)
 
   useEffect(() => {
+    // On attend la résolution de l'auth pour savoir si l'utilisateur est connecté
+    if (authLoading) return
     fetch(`/api/invite/${token}`)
       .then(r => r.json())
       .then(data => {
@@ -69,30 +77,43 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
         setTrip(data.trip)
         setPermission(data.permission)
 
-        // Déterminer l'identité
-        const tcName = currentUser && userProfile
-          ? `${userProfile.prenom ?? ''} ${userProfile.nom ?? ''}`.trim()
-          : ''
+        // Connecté → on ne montre PAS la vue anonyme : écran « rejoindre dans l'app »
+        if (currentUser) return
 
-        if (tcName) {
-          // Compte TC Connect : utiliser le nom du profil
-          setIdentityName(tcName)
+        // Anonyme : identité (Tricount-style)
+        const saved = localStorage.getItem(IDENTITY_KEY(token))
+        if (saved) {
+          setIdentityName(saved)
         } else {
-          // Pas de compte : vérifier localStorage puis le nom pré-rempli
-          const saved = localStorage.getItem(IDENTITY_KEY(token))
-          if (saved) {
-            setIdentityName(saved)
-          } else {
-            const suggested = [data.prenom, data.nom].filter(Boolean).join(' ').trim()
-            setPreSuggestedName(suggested)
-            setIdentityDraft(suggested)
-            setIdentityStep(true)  // demander confirmation
-          }
+          const suggested = [data.prenom, data.nom].filter(Boolean).join(' ').trim()
+          setPreSuggestedName(suggested)
+          setIdentityDraft(suggested)
+          setIdentityStep(true)  // demander confirmation
         }
       })
       .catch(() => setError('Impossible de charger la liste.'))
       .finally(() => setLoading(false))
-  }, [token, currentUser, userProfile])
+  }, [token, currentUser, authLoading])
+
+  const handleJoin = async () => {
+    if (!currentUser) return
+    setJoining(true)
+    setJoinError('')
+    try {
+      const idToken = await currentUser.getIdToken()
+      const res = await fetch(`/api/invite/${token}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erreur')
+      router.replace('/trips')
+    } catch (e: any) {
+      setJoinError(e?.message || "Impossible de rejoindre la liste.")
+      setJoining(false)
+    }
+  }
 
   const confirmIdentity = () => {
     const name = identityDraft.trim() || preSuggestedName || 'Anonyme'
@@ -170,7 +191,48 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
     )
   }
 
-  // ── Étape identité ───────────────────────────────────────────────────────────
+  // ── Utilisateur connecté → rejoindre la liste dans l'app ─────────────────────
+  if (currentUser) {
+    const myName = userProfile ? `${userProfile.prenom ?? ''} ${userProfile.nom ?? ''}`.trim() : ''
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-5 text-center">
+          <div className="w-14 h-14 rounded-xl flex items-center justify-center text-3xl mx-auto"
+            style={{ backgroundColor: trip.color + '20' }}>
+            {trip.icon}
+          </div>
+          <div>
+            <h1 className="text-lg font-bold text-gray-900">{trip.name}</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              Vous avez été invité(e) à rejoindre cette liste{myName ? ` en tant que ${myName}` : ''}.
+            </p>
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 text-xs text-blue-700">
+            La liste sera ajoutée à votre application <strong>CheckConnect</strong>.
+          </div>
+
+          {joinError && <p className="text-xs text-red-600">{joinError}</p>}
+
+          <button
+            onClick={handleJoin}
+            disabled={joining}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl text-sm transition"
+          >
+            {joining ? 'Ajout en cours…' : 'Rejoindre la liste'}
+          </button>
+          <button
+            onClick={() => router.replace('/trips')}
+            className="w-full text-xs text-gray-400 hover:text-gray-600 py-1"
+          >
+            Aller à mes listes
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Étape identité (anonyme) ─────────────────────────────────────────────────
   if (identityStep || editingIdentity) {
     const hasSuggested = !!preSuggestedName
     return (

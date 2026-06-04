@@ -165,7 +165,9 @@ export default function ParcoursPublicPage() {
 
   const [sessions, setSessions] = useState<Session[]>([])
   const [loadingSessions, setLoadingSessions] = useState(true)
-  const [companyLogoUrl, setCompanyLogoUrl] = useState<string>('/logo.png')
+  // Logo fixe local : une URL Firestore/Storage casse dans les navigateurs intégrés
+  // (Instagram, Messenger…) et affiche un « ? ». L'image locale est toujours dispo.
+  const companyLogoUrl = '/logo-parcours.png'
   const [settingsPhone, setSettingsPhone] = useState(DEFAULT_CONTACT_PHONE)
 
   useEffect(() => {
@@ -174,15 +176,6 @@ export default function ParcoursPublicPage() {
         const phone = snap.data().contactPhone
         if (phone) setSettingsPhone(phone)
       }
-    }).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    getDocs(collection(db, 'companies')).then((snap) => {
-      const teddyDoc = snap.docs.find((d) =>
-        (d.data().nom ?? '').toLowerCase().includes('teddy')
-      )
-      if (teddyDoc?.data().logoUrl) setCompanyLogoUrl(teddyDoc.data().logoUrl)
     }).catch(() => {})
   }, [])
   const [selected, setSelected] = useState<Session | null>(null)
