@@ -18,8 +18,9 @@ interface Props {
 }
 
 const PERMISSION_LABELS: Record<TripPermission, { label: string; desc: string; icon: string }> = {
-  check: { label: 'Peut cocher', desc: 'Cocher/décocher les éléments', icon: '✅' },
   view:  { label: 'Lecture seule', desc: 'Voir la liste, sans interaction', icon: '👁️' },
+  check: { label: 'Peut cocher', desc: 'Cocher / décocher les éléments', icon: '✅' },
+  edit:  { label: 'Peut modifier', desc: 'Ajouter / éditer items & sections', icon: '✏️' },
 }
 
 function getBaseUrl(): string {
@@ -43,10 +44,10 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
   const [expandedMember, setExpandedMember] = useState<string | null>(null)
 
   // Formulaire email (non-admin)
-  const [emailForm, setEmailForm] = useState({ prenom: '', nom: '', email: '' })
+  const [emailForm, setEmailForm] = useState({ prenom: '', nom: '', email: '', permission: 'check' as TripPermission })
   const [emailError, setEmailError] = useState('')
   const [emailSending, setEmailSending] = useState(false)
-  const [emailSent, setEmailSent] = useState<string | null>(null)
+  const [emailSent, setEmailSent] = useState<{ url: string; hasAccount: boolean; name: string; email: string } | null>(null)
 
   useEffect(() => {
     if (!isOpen || !isOwner) return
@@ -76,24 +77,54 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
 
   // ── Non-admin : invite par email ──────────────────────────────────────────────
   const handleEmailInvite = async () => {
-    const { prenom, nom, email } = emailForm
+    const { prenom, nom, email, permission } = emailForm
     if (!prenom.trim()) { setEmailError('Le prénom est obligatoire.'); return }
     if (!email.trim() || !email.includes('@')) { setEmailError('Adresse email invalide.'); return }
     setEmailError('')
     setEmailSending(true)
     try {
       if (!currentUser) throw new Error('Non connecté')
+      const emailLower = email.trim().toLowerCase()
       const token = await createInviteLink(
-        trip.id, 'check', currentUser.uid,
+        trip.id, permission, currentUser.uid,
         `Pour ${prenom.trim()} ${nom.trim()}`.trim(),
-        email.trim().toLowerCase(),
+        emailLower,
         nom.trim().toUpperCase(),
         prenom.trim(),
       )
-      setEmailSent(`${getBaseUrl()}/c/${token}`)
-      setEmailForm({ prenom: '', nom: '', email: '' })
+      const url = `${getBaseUrl()}/c/${token}`
+
+      // La personne a-t-elle un compte TC Connect ? (lookup par email exact)
+      const invited = users.find(u => u.email?.toLowerCase() === emailLower)
+      if (invited) {
+        // Notification in-app automatique (push + section Notifications)
+        fetch('/api/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: invited.uid ?? invited.id,
+            title: '✅ Invitation à une liste',
+            body: `${userProfile?.prenom ?? 'Quelqu\'un'} vous a partagé la liste « ${trip.name} ».`,
+            url,
+            persist: true,
+            type: 'CHECKLIST_INVITE',
+          }),
+        }).catch(() => {})
+      }
+
+      setEmailSent({ url, hasAccount: !!invited, name: `${prenom.trim()} ${nom.trim()}`.trim(), email: emailLower })
+      setEmailForm({ prenom: '', nom: '', email: '', permission: 'check' })
     } catch { onError?.("Impossible de créer l'invitation.") }
     finally { setEmailSending(false) }
+  }
+
+  // Partage natif du lien (Web Share API si dispo, sinon copie)
+  const shareInviteLink = async (url: string, name: string) => {
+    const text = `Rejoins la liste « ${trip.name} » sur CheckConnect : ${url}`
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try { await navigator.share({ title: 'Invitation CheckConnect', text, url }); return } catch { /* annulé */ }
+    }
+    navigator.clipboard.writeText(url).catch(() => {})
   }
 
   const handleRemove = async (uid: string) => {
@@ -252,8 +283,9 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
 
             {/* Inviter */}
             {isOwner && (
-              isAdmin ? (
-                /* Admin → recherche des utilisateurs existants */
+              <>
+              {isAdmin && (
+                /* Admin → recherche des utilisateurs existants (ajout direct) */
                 <div>
                   <p className="text-xs font-medium text-gray-500 mb-2">Ajouter un utilisateur TC Connect</p>
                   <div className="relative">
@@ -276,10 +308,11 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                     </div>
                   )}
                 </div>
-              ) : (
-                /* Non-admin → invitation par adresse email */
+              )}
+
+              {/* Invitation par lien (avec email pré-rempli) — pour tous */}
                 <div className="border border-gray-200 rounded-xl p-3 space-y-3">
-                  <p className="text-xs font-semibold text-gray-700">Inviter par adresse email</p>
+                  <p className="text-xs font-semibold text-gray-700">Inviter une personne (par lien)</p>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-[11px] font-medium text-gray-500 mb-1">Prénom *</label>
@@ -306,32 +339,76 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                         className="w-full border border-gray-200 rounded-lg pl-9 pr-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
                     </div>
                   </div>
+                  {/* Droits accordés */}
+                  <div>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Droits accordés</label>
+                    <div className="space-y-1.5">
+                      {(['view', 'check', 'edit'] as TripPermission[]).map(key => {
+                        const val = PERMISSION_LABELS[key]
+                        return (
+                          <button key={key} type="button" onClick={() => setEmailForm(f => ({ ...f, permission: key }))}
+                            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs text-left transition ${
+                              emailForm.permission === key ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'
+                            }`}>
+                            <span className="text-base">{val.icon}</span>
+                            <div className="flex-1">
+                              <p className="font-semibold">{val.label}</p>
+                              <p className={`leading-tight ${emailForm.permission === key ? 'text-blue-100' : 'text-gray-400'}`}>{val.desc}</p>
+                            </div>
+                            {emailForm.permission === key && <span className="text-sm">✓</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
                   {emailError && <p className="text-xs text-red-600">{emailError}</p>}
+
                   {emailSent ? (
-                    <div className="space-y-2">
-                      <p className="text-xs text-green-700 font-medium bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
-                        ✅ Lien créé — copiez-le et envoyez-le à la personne.
+                    <div className="space-y-2.5">
+                      <p className={`text-xs font-medium rounded-lg px-2.5 py-2 border ${
+                        emailSent.hasAccount
+                          ? 'text-green-700 bg-green-50 border-green-200'
+                          : 'text-amber-700 bg-amber-50 border-amber-200'
+                      }`}>
+                        {emailSent.hasAccount
+                          ? `✅ ${emailSent.name} a un compte TC Connect : une notification lui a été envoyée. Vous pouvez aussi lui transmettre le lien ci-dessous.`
+                          : `ℹ️ ${emailSent.name} n'a pas de compte. Transmettez-lui le lien ci-dessous (SMS, email, Messenger…).`}
                       </p>
                       <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
-                        <span className="text-xs text-gray-600 flex-1 truncate">{emailSent}</span>
-                        <button onClick={() => { navigator.clipboard.writeText(emailSent); setEmailSent(null) }}
-                          className="shrink-0 text-xs font-medium text-blue-600 hover:underline">
-                          Copier
-                        </button>
+                        <span className="text-xs text-gray-600 flex-1 truncate">{emailSent.url}</span>
+                        <button onClick={() => navigator.clipboard.writeText(emailSent.url)}
+                          className="shrink-0 text-xs font-medium text-blue-600 hover:underline">Copier</button>
                       </div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <button onClick={() => shareInviteLink(emailSent.url, emailSent.name)}
+                          className="flex items-center justify-center gap-1 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg py-2 transition">
+                          📤 Partager
+                        </button>
+                        <a href={`mailto:${emailSent.email}?subject=${encodeURIComponent(`Liste « ${trip.name} »`)}&body=${encodeURIComponent(`Bonjour ${emailSent.name},\n\nJe te partage la liste « ${trip.name} » sur CheckConnect :\n${emailSent.url}\n`)}`}
+                          className="flex items-center justify-center gap-1 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg py-2 transition">
+                          ✉️ Email
+                        </a>
+                        <a href={`sms:?&body=${encodeURIComponent(`Liste « ${trip.name} » : ${emailSent.url}`)}`}
+                          className="flex items-center justify-center gap-1 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg py-2 transition">
+                          💬 SMS
+                        </a>
+                      </div>
+                      <button onClick={() => setEmailSent(null)}
+                        className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Inviter une autre personne</button>
                     </div>
                   ) : (
                     <button onClick={handleEmailInvite} disabled={emailSending}
-                      className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium py-2 rounded-xl transition">
+                      className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium py-2.5 rounded-xl transition">
                       <EnvelopeIcon className="w-4 h-4" />
-                      {emailSending ? 'Création…' : 'Créer le lien d\'invitation'}
+                      {emailSending ? 'Création…' : 'Valider et générer l\'invitation'}
                     </button>
                   )}
                   <p className="text-[11px] text-gray-400 leading-relaxed">
-                    Un lien personnel est généré. Copiez-le et envoyez-le à la personne par le moyen de votre choix. Son nom sera pré-rempli à l'ouverture.
+                    Si la personne a déjà un compte TC Connect (même email), elle est notifiée directement dans l'app. Sinon, transmettez-lui le lien — son nom sera pré-rempli à l'ouverture.
                   </p>
                 </div>
-              )
+              </>
             )}
           </>
         )}
@@ -346,19 +423,23 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
             {isOwner && (
               <div className="border border-gray-200 rounded-xl p-3 space-y-3">
                 <p className="text-xs font-semibold text-gray-700">Nouveau lien</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(Object.entries(PERMISSION_LABELS) as [TripPermission, typeof PERMISSION_LABELS[TripPermission]][]).map(([key, val]) => (
-                    <button key={key} type="button" onClick={() => setNewLinkPerm(key)}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left transition ${
-                        newLinkPerm === key ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'
-                      }`}>
-                      <span className="text-base">{val.icon}</span>
-                      <div>
-                        <p className="font-semibold">{val.label}</p>
-                        <p className={`leading-tight ${newLinkPerm === key ? 'text-blue-100' : 'text-gray-400'}`}>{val.desc}</p>
-                      </div>
-                    </button>
-                  ))}
+                <div className="space-y-1.5">
+                  {(['view', 'check', 'edit'] as TripPermission[]).map((key) => {
+                    const val = PERMISSION_LABELS[key]
+                    return (
+                      <button key={key} type="button" onClick={() => setNewLinkPerm(key)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-xs text-left transition ${
+                          newLinkPerm === key ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'
+                        }`}>
+                        <span className="text-base">{val.icon}</span>
+                        <div className="flex-1">
+                          <p className="font-semibold">{val.label}</p>
+                          <p className={`leading-tight ${newLinkPerm === key ? 'text-blue-100' : 'text-gray-400'}`}>{val.desc}</p>
+                        </div>
+                        {newLinkPerm === key && <span className="text-sm">✓</span>}
+                      </button>
+                    )
+                  })}
                 </div>
                 <input type="text" value={newLinkLabel} onChange={e => setNewLinkLabel(e.target.value)}
                   placeholder="Libellé optionnel (ex : Accès partagé)"

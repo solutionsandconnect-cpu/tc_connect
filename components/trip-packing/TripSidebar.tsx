@@ -2,10 +2,11 @@
 
 import { useState, useMemo } from 'react'
 import { tripProgress, toggleFavorite } from '@/lib/tripsService'
+import { tripTypeLabel } from './constants'
 import { useAuth } from '@/context/AuthContext'
 import { useUserPhotoMap } from '@/hooks/useUserPhotoMap'
 import type { Trip } from '@/types'
-import { PlusIcon, StarIcon, FunnelIcon, ArchiveBoxIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, StarIcon, FunnelIcon, ArchiveBoxIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 
 interface Props {
@@ -102,14 +103,28 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
 
   const [sort, setSort] = useState<SortKey>('recent')
   const [filter, setFilter] = useState<FilterKey>('all')
+  const [category, setCategory] = useState<string>('all')
+  const [search, setSearch] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
+
+  // Catégories présentes parmi les listes (valeur brute + libellé affiché)
+  const categories = useMemo(() => {
+    const map = new Map<string, string>()
+    voyages.forEach(t => { if (t.type) map.set(t.type, tripTypeLabel(t.type)) })
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1], 'fr'))
+  }, [voyages])
 
   const sortedVoyages = useMemo(() => {
     let list = [...voyages]
     if (filter === 'favorites') list = list.filter(t => (t.favoritedBy ?? []).includes(uid))
     else if (filter === 'active') list = list.filter(t => { const { pct } = tripProgress(t); return pct < 100 })
     else if (filter === 'done') list = list.filter(t => { const { pct, total } = tripProgress(t); return total > 0 && pct === 100 })
+
+    if (category !== 'all') list = list.filter(t => t.type === category)
+
+    const q = search.trim().toLowerCase()
+    if (q) list = list.filter(t => t.name.toLowerCase().includes(q))
 
     if (sort === 'recent') list.sort((a, b) => (b.updatedAt?.seconds ?? b.createdAt?.seconds ?? 0) - (a.updatedAt?.seconds ?? a.createdAt?.seconds ?? 0))
     else if (sort === 'oldest') list.sort((a, b) => (a.createdAt?.seconds ?? 0) - (b.createdAt?.seconds ?? 0))
@@ -123,7 +138,9 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
       return aFav - bFav
     })
     return list
-  }, [voyages, sort, filter, uid])
+  }, [voyages, sort, filter, category, search, uid])
+
+  const activeFilterCount = (filter !== 'all' ? 1 : 0) + (category !== 'all' ? 1 : 0)
 
   const handleFavorite = async (e: React.MouseEvent, trip: Trip) => {
     e.stopPropagation()
@@ -154,18 +171,38 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
         </div>
       ) : (
         <>
+          {/* Barre de recherche */}
+          <div className="relative">
+            <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Rechercher une liste…"
+              className="w-full text-sm border border-gray-200 rounded-xl pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} aria-label="Effacer"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 transition">
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
           {/* Barre filtres */}
           <div className="flex items-center gap-1.5">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex-1">Mes listes</p>
             <button onClick={() => setShowFilters(v => !v)}
-              className={`p-1.5 rounded-lg transition ${showFilters ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
+              className={`flex items-center gap-1 p-1.5 rounded-lg transition ${showFilters || activeFilterCount > 0 ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
               title="Filtrer / Trier">
               <FunnelIcon className="w-3.5 h-3.5" />
+              {activeFilterCount > 0 && <span className="text-[10px] font-bold">{activeFilterCount}</span>}
             </button>
           </div>
 
           {showFilters && (
             <div className="space-y-2 bg-gray-50 rounded-xl p-2.5">
+              {/* Statut */}
               <div className="flex flex-wrap gap-1">
                 {([['all', 'Tout'], ['favorites', '⭐ Favoris'], ['active', 'En cours'], ['done', 'Terminées']] as [FilterKey, string][]).map(([k, label]) => (
                   <button key={k} onClick={() => setFilter(k)}
@@ -176,6 +213,17 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
                   </button>
                 ))}
               </div>
+              {/* Catégorie */}
+              {categories.length > 0 && (
+                <select value={category} onChange={e => setCategory(e.target.value)}
+                  className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  <option value="all">Toutes les catégories</option>
+                  {categories.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              )}
+              {/* Tri */}
               <select value={sort} onChange={e => setSort(e.target.value as SortKey)}
                 className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400">
                 {Object.entries(SORT_LABELS).map(([k, label]) => (
@@ -189,7 +237,11 @@ export default function TripSidebar({ voyages, archived, templates, selectedId, 
           <div>
             {sortedVoyages.length === 0 ? (
               <p className="text-xs text-gray-400 px-1 py-2">
-                {filter !== 'all' ? 'Aucune liste dans ce filtre.' : 'Aucune liste. Créez la première !'}
+                {search.trim()
+                  ? `Aucune liste pour « ${search.trim()} ».`
+                  : (filter !== 'all' || category !== 'all')
+                  ? 'Aucune liste dans ce filtre.'
+                  : 'Aucune liste. Créez la première !'}
               </p>
             ) : (
               <div className="space-y-1">

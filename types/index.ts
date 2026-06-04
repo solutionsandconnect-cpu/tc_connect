@@ -713,7 +713,7 @@ export type TripType =
   | (string & {})
 
 export type TripRole = 'owner' | 'member'
-export type TripPermission = 'check' | 'view'  // pour les liens de partage publics
+export type TripPermission = 'view' | 'check' | 'edit'  // niveaux d'accès des liens de partage publics
 export type TripMemberPermission = 'admin' | 'editor' | 'contributor' | 'viewer'
 
 export interface TripAttachment {

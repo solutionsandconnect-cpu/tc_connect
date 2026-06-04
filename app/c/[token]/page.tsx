@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { use } from 'react'
 import { useAuth } from '@/context/AuthContext'
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon, PencilIcon } from '@heroicons/react/24/outline'
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon, PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 
 interface Item {
   id: string
@@ -27,7 +27,7 @@ interface TripData {
   sections: Section[]
 }
 
-type Permission = 'check' | 'view'
+type Permission = 'view' | 'check' | 'edit'
 
 function qtyEff(item: Item): number { return item.qtyNeeded }
 function isItemDone(item: Item): boolean { return item.qtyReady >= qtyEff(item) }
@@ -44,6 +44,15 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
   const [error, setError] = useState('')
   const [pendingItems, setPendingItems] = useState<Set<string>>(new Set())
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+
+  // Édition (permission 'edit')
+  const [newItemDrafts, setNewItemDrafts] = useState<Record<string, string>>({})
+  const [newSectionDraft, setNewSectionDraft] = useState('')
+  const [editingName, setEditingName] = useState<string | null>(null) // `section:<id>` ou `item:<sid>:<iid>`
+  const [nameDraft, setNameDraft] = useState('')
+
+  const canCheck = permission === 'check' || permission === 'edit'
+  const canEdit = permission === 'edit'
 
   // Identité (Tricount-style)
   const [identityStep, setIdentityStep] = useState(false)
@@ -92,6 +101,21 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
     setIdentityStep(false)
     setEditingIdentity(false)
   }
+
+  // Applique une opération d'édition via l'API et rafraîchit l'état local
+  const mutate = useCallback(async (op: Record<string, unknown>) => {
+    try {
+      const r = await fetch(`/api/invite/${token}/mutate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(op),
+      })
+      const data = await r.json()
+      if (data.sections) {
+        setTrip(prev => prev ? { ...prev, sections: data.sections } : prev)
+      }
+    } catch { /* silencieux */ }
+  }, [token])
 
   const toggleItem = useCallback(async (sectionId: string, itemId: string) => {
     if (permission === 'view') return
@@ -235,10 +259,14 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
       <div className="max-w-xl mx-auto px-4 py-4 space-y-3">
         {/* Permission badge */}
         <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium ${
-          permission === 'check' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-gray-50 text-gray-500 border border-gray-200'
+          permission === 'edit' ? 'bg-blue-50 text-blue-700 border border-blue-200'
+            : permission === 'check' ? 'bg-green-50 text-green-700 border border-green-200'
+            : 'bg-gray-50 text-gray-500 border border-gray-200'
         }`}>
-          <span>{permission === 'check' ? '✅' : '👁️'}</span>
-          {permission === 'check' ? 'Vous pouvez cocher les éléments de cette liste.' : 'Accès en lecture seule.'}
+          <span>{permission === 'edit' ? '✏️' : permission === 'check' ? '✅' : '👁️'}</span>
+          {permission === 'edit' ? 'Vous pouvez cocher et modifier cette liste.'
+            : permission === 'check' ? 'Vous pouvez cocher les éléments de cette liste.'
+            : 'Accès en lecture seule.'}
         </div>
 
         {/* Progression */}
@@ -258,7 +286,7 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
         )}
 
         {/* Sections */}
-        {sortedSections.length === 0 ? (
+        {sortedSections.length === 0 && !canEdit ? (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
             <p className="text-gray-400 text-sm">Cette liste est vide pour l'instant.</p>
           </div>
@@ -267,32 +295,55 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
             const sortedItems = [...section.items].sort((a, b) => a.position - b.position)
             const doneSect = sortedItems.filter(isItemDone).length
             const isCollapsed = collapsedSections.has(section.id)
+            const editingSection = editingName === `section:${section.id}`
             return (
               <div key={section.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <button
-                  onClick={() => toggleSection(section.id)}
-                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-gray-800">{section.title}</span>
-                    <span className="text-xs text-gray-400">{doneSect}/{sortedItems.length}</span>
-                  </div>
-                  {isCollapsed
-                    ? <ChevronDownIcon className="w-4 h-4 text-gray-400" />
-                    : <ChevronUpIcon className="w-4 h-4 text-gray-400" />
-                  }
-                </button>
+                {/* En-tête section */}
+                <div className="flex items-center gap-2 px-4 py-3 hover:bg-gray-50 transition">
+                  {editingSection ? (
+                    <input
+                      autoFocus
+                      value={nameDraft}
+                      onChange={e => setNameDraft(e.target.value)}
+                      onBlur={() => { if (nameDraft.trim()) mutate({ op: 'renameSection', sectionId: section.id, title: nameDraft.trim() }); setEditingName(null) }}
+                      onKeyDown={e => { if (e.key === 'Enter') { if (nameDraft.trim()) mutate({ op: 'renameSection', sectionId: section.id, title: nameDraft.trim() }); setEditingName(null) } if (e.key === 'Escape') setEditingName(null) }}
+                      className="flex-1 text-sm font-bold border border-blue-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  ) : (
+                    <button onClick={() => toggleSection(section.id)} className="flex-1 flex items-center gap-2 text-left">
+                      <span className="text-sm font-bold text-gray-800">{section.title}</span>
+                      <span className="text-xs text-gray-400">{doneSect}/{sortedItems.length}</span>
+                    </button>
+                  )}
+                  {canEdit && !editingSection && (
+                    <>
+                      <button onClick={() => { setNameDraft(section.title); setEditingName(`section:${section.id}`) }}
+                        title="Renommer" className="p-1 text-gray-300 hover:text-blue-500 transition shrink-0">
+                        <PencilIcon className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => { if (confirm(`Supprimer la section « ${section.title} » ?`)) mutate({ op: 'deleteSection', sectionId: section.id }) }}
+                        title="Supprimer" className="p-1 text-gray-300 hover:text-red-500 transition shrink-0">
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                  <button onClick={() => toggleSection(section.id)} className="shrink-0 text-gray-400">
+                    {isCollapsed ? <ChevronDownIcon className="w-4 h-4" /> : <ChevronUpIcon className="w-4 h-4" />}
+                  </button>
+                </div>
+
                 {!isCollapsed && (
                   <div className="divide-y divide-gray-50">
                     {sortedItems.map(item => {
                       const done = isItemDone(item)
                       const eff = qtyEff(item)
                       const pending = pendingItems.has(`${section.id}:${item.id}`)
+                      const editingItem = editingName === `item:${section.id}:${item.id}`
                       return (
                         <div
                           key={item.id}
-                          className={`flex items-center gap-3 px-4 py-3 transition ${done ? 'bg-green-50/60' : ''} ${permission === 'check' ? 'cursor-pointer active:bg-gray-50' : ''}`}
-                          onClick={() => permission === 'check' && toggleItem(section.id, item.id)}
+                          className={`flex items-center gap-3 px-4 py-3 transition ${done ? 'bg-green-50/60' : ''} ${canCheck && !editingItem ? 'cursor-pointer active:bg-gray-50' : ''}`}
+                          onClick={() => canCheck && !editingItem && toggleItem(section.id, item.id)}
                         >
                           <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center shrink-0 transition ${
                             done ? 'bg-green-500 border-green-500 text-white' : 'border-gray-300'
@@ -300,24 +351,96 @@ export default function PublicChecklistPage({ params }: { params: Promise<{ toke
                             {done && <CheckIcon className="w-4 h-4" strokeWidth={3} />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-medium truncate ${done ? 'line-through text-gray-400' : 'text-gray-800'}`}>
-                              {item.name}
-                            </p>
-                            {item.note && <p className="text-xs text-gray-400 truncate">📝 {item.note}</p>}
+                            {editingItem ? (
+                              <input
+                                autoFocus
+                                value={nameDraft}
+                                onClick={e => e.stopPropagation()}
+                                onChange={e => setNameDraft(e.target.value)}
+                                onBlur={() => { if (nameDraft.trim()) mutate({ op: 'renameItem', sectionId: section.id, itemId: item.id, name: nameDraft.trim() }); setEditingName(null) }}
+                                onKeyDown={e => { if (e.key === 'Enter') { if (nameDraft.trim()) mutate({ op: 'renameItem', sectionId: section.id, itemId: item.id, name: nameDraft.trim() }); setEditingName(null) } if (e.key === 'Escape') setEditingName(null) }}
+                                className="w-full text-sm border border-blue-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              />
+                            ) : (
+                              <p className={`text-sm font-medium truncate ${done ? 'line-through text-gray-400' : 'text-gray-800'}`}>
+                                {item.name}
+                              </p>
+                            )}
+                            {item.note && !editingItem && <p className="text-xs text-gray-400 truncate">📝 {item.note}</p>}
                           </div>
                           {eff > 1 && (
                             <span className={`text-xs font-semibold tabular-nums shrink-0 ${done ? 'text-green-600' : 'text-gray-500'}`}>
                               {item.qtyReady}/{eff}
                             </span>
                           )}
+                          {canEdit && !editingItem && (
+                            <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
+                              <button onClick={() => { setNameDraft(item.name); setEditingName(`item:${section.id}:${item.id}`) }}
+                                title="Renommer" className="p-1 text-gray-300 hover:text-blue-500 transition">
+                                <PencilIcon className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => mutate({ op: 'deleteItem', sectionId: section.id, itemId: item.id })}
+                                title="Supprimer" className="p-1 text-gray-300 hover:text-red-500 transition">
+                                <TrashIcon className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )
                     })}
+
+                    {/* Ajout d'item (edit) */}
+                    {canEdit && (
+                      <div className="flex items-center gap-2 px-4 py-2.5">
+                        <input
+                          type="text"
+                          value={newItemDrafts[section.id] ?? ''}
+                          onChange={e => setNewItemDrafts(d => ({ ...d, [section.id]: e.target.value }))}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              const v = (newItemDrafts[section.id] ?? '').trim()
+                              if (v) { mutate({ op: 'addItem', sectionId: section.id, name: v }); setNewItemDrafts(d => ({ ...d, [section.id]: '' })) }
+                            }
+                          }}
+                          placeholder="Ajouter un élément…"
+                          className="flex-1 text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        <button
+                          onClick={() => {
+                            const v = (newItemDrafts[section.id] ?? '').trim()
+                            if (v) { mutate({ op: 'addItem', sectionId: section.id, name: v }); setNewItemDrafts(d => ({ ...d, [section.id]: '' })) }
+                          }}
+                          disabled={!(newItemDrafts[section.id] ?? '').trim()}
+                          className="w-8 h-8 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white flex items-center justify-center transition shrink-0">
+                          <PlusIcon className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )
           })
+        )}
+
+        {/* Ajout de section (edit) */}
+        {canEdit && (
+          <div className="flex items-center gap-2 bg-white rounded-2xl border border-dashed border-gray-200 p-3">
+            <input
+              type="text"
+              value={newSectionDraft}
+              onChange={e => setNewSectionDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && newSectionDraft.trim()) { mutate({ op: 'addSection', title: newSectionDraft.trim() }); setNewSectionDraft('') } }}
+              placeholder="Nouvelle section…"
+              className="flex-1 text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <button
+              onClick={() => { if (newSectionDraft.trim()) { mutate({ op: 'addSection', title: newSectionDraft.trim() }); setNewSectionDraft('') } }}
+              disabled={!newSectionDraft.trim()}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition shrink-0">
+              <PlusIcon className="w-4 h-4" /> Section
+            </button>
+          </div>
         )}
 
         {/* Footer */}
