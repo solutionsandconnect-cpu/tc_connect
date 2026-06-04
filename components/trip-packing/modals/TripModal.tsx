@@ -35,7 +35,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
   const owner = currentUser && userProfile ? { ...userProfile, uid: currentUser.uid } : null
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
-    name: '', type: 'other' as TripType, icon: '🧳', color: TRIP_COLORS[0],
+    name: '', type: 'other' as TripType, icon: '📋', color: TRIP_COLORS[0],
     dateFrom: '', dateTo: '', fromTemplateId: '',
   })
 
@@ -47,7 +47,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
         dateFrom: tsToInput(trip.dateFrom), dateTo: tsToInput(trip.dateTo), fromTemplateId: '',
       })
     } else {
-      setForm({ name: '', type: 'other', icon: '🧳', color: TRIP_COLORS[0], dateFrom: '', dateTo: '', fromTemplateId: '' })
+      setForm({ name: '', type: 'other', icon: '📋', color: TRIP_COLORS[0], dateFrom: '', dateTo: '', fromTemplateId: '' })
     }
   }, [isOpen, trip])
 
@@ -87,7 +87,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Modifier le voyage' : 'Nouveau voyage'} size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Modifier la liste' : 'Nouvelle liste'} size="lg">
       <div className="space-y-4">
         {/* Aperçu */}
         <div className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: form.color + '15' }}>
@@ -95,7 +95,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
             {form.icon}
           </div>
           <div>
-            <p className="text-sm font-semibold text-gray-900">{form.name || 'Nom du voyage'}</p>
+            <p className="text-sm font-semibold text-gray-900">{form.name || 'Nom de la liste'}</p>
             <p className="text-xs text-gray-500">{TRIP_TYPES.find(t => t.value === form.type)?.label}{nbJours ? ` · ${nbJours} jour${nbJours > 1 ? 's' : ''}` : ''}</p>
           </div>
         </div>
@@ -116,34 +116,62 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Nom *</label>
           <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            placeholder="Ex : Week-end à la mer"
+            placeholder="Ex : Vacances d'été, Courses hebdo, Déménagement…"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
 
-        {/* Type */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Type</label>
-          <div className="grid grid-cols-3 gap-2">
-            {TRIP_TYPES.map(t => (
-              <button key={t.value} type="button" onClick={() => setForm(f => ({ ...f, type: t.value }))}
-                className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-xs border transition ${
-                  form.type === t.value ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'
-                }`}>
-                <span>{t.icon}</span>{t.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Catégorie */}
+        {(() => {
+          const PRESET_TYPES = ['shopping', 'event', 'home', 'work', 'sport', 'other']
+          const isPreset = TRIP_TYPES.some(t => t.value === form.type && PRESET_TYPES.includes(t.value))
+          const isCustom = !TRIP_TYPES.some(t => t.value === form.type)
+          const btnClass = (active: boolean) =>
+            `flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm border transition ${
+              active ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-100 text-gray-700 hover:border-blue-200 bg-gray-50'
+            }`
+          return (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Catégorie</label>
+              <div className="grid grid-cols-2 gap-2">
+                {TRIP_TYPES.filter(t => PRESET_TYPES.includes(t.value)).map(t => (
+                  <button key={t.value} type="button"
+                    onClick={() => setForm(f => ({ ...f, type: t.value }))}
+                    className={btnClass(form.type === t.value)}>
+                    <span className="text-base">{t.icon}</span>
+                    <span className="font-medium">{t.label}</span>
+                  </button>
+                ))}
+                <button type="button"
+                  onClick={() => setForm(f => ({ ...f, type: isCustom ? form.type : '' }))}
+                  className={btnClass(isCustom)}>
+                  <span className="text-base">✏️</span>
+                  <span className="font-medium">Personnalisé</span>
+                </button>
+              </div>
+              {isCustom && (
+                <input
+                  autoFocus
+                  type="text"
+                  value={form.type}
+                  onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+                  placeholder="Nom de la catégorie…"
+                  maxLength={30}
+                  className="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm mt-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
+            </div>
+          )
+        })()}
 
         {/* Dates */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Départ</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date de début</label>
             <input type="date" value={form.dateFrom} onChange={e => setForm(f => ({ ...f, dateFrom: e.target.value }))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Retour</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date de fin</label>
             <input type="date" value={form.dateTo} min={form.dateFrom || undefined} onChange={e => setForm(f => ({ ...f, dateTo: e.target.value }))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
@@ -152,7 +180,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
         {/* Icône */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">Icône</label>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5 mb-2">
             {TRIP_EMOJIS.map(e => (
               <button key={e} type="button" onClick={() => setForm(f => ({ ...f, icon: e }))}
                 className={`w-9 h-9 rounded-lg text-lg flex items-center justify-center transition ${
@@ -162,18 +190,48 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
               </button>
             ))}
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Ou taper :</span>
+            <input
+              type="text"
+              value={form.icon}
+              onChange={e => {
+                const v = [...e.target.value].slice(0, 2).join('')
+                if (v) setForm(f => ({ ...f, icon: v }))
+              }}
+              placeholder="🎨"
+              className="w-16 text-center text-lg border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <span className="text-2xl">{form.icon}</span>
+          </div>
         </div>
 
         {/* Couleur */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">Couleur</label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
             {TRIP_COLORS.map(c => (
               <button key={c} type="button" onClick={() => setForm(f => ({ ...f, color: c }))}
                 aria-label={`Couleur ${c}`}
                 className={`w-7 h-7 rounded-full transition ${form.color === c ? 'ring-2 ring-offset-1 ring-gray-700' : ''}`}
                 style={{ backgroundColor: c }} />
             ))}
+            <label className="relative cursor-pointer" title="Couleur personnalisée">
+              <span
+                className={`w-7 h-7 rounded-full border-2 border-dashed border-gray-300 flex items-center justify-center text-[10px] text-gray-400 hover:border-gray-500 transition ${
+                  !TRIP_COLORS.includes(form.color) ? 'ring-2 ring-offset-1 ring-gray-700' : ''
+                }`}
+                style={{ backgroundColor: !TRIP_COLORS.includes(form.color) ? form.color : 'transparent' }}
+              >
+                {TRIP_COLORS.includes(form.color) ? '+' : ''}
+              </span>
+              <input
+                type="color"
+                value={form.color}
+                onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
+                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+              />
+            </label>
           </div>
         </div>
 

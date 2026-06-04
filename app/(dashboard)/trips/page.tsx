@@ -5,7 +5,7 @@ import TripPackingLayout from '@/components/trip-packing/TripPackingLayout'
 
 export default function TripsPage() {
   return (
-    <StoreGate appRoute="/trips">
+    <StoreGate appRoute="/trips" showPin={false}>
       <TripPackingLayout />
     </StoreGate>
   )

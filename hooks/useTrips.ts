@@ -20,9 +20,11 @@ export function useTrips() {
     return unsub
   }, [currentUser])
 
+  const nonTemplates = trips.filter(t => !t.isTemplate)
   return {
     trips,
-    voyages: trips.filter(t => !t.isTemplate),
+    voyages: nonTemplates.filter(t => !t.archived),
+    archived: nonTemplates.filter(t => t.archived),
     templates: trips.filter(t => t.isTemplate),
     loading,
   }

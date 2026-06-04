@@ -703,21 +703,49 @@ export interface BebeEvent {
   createdBy: string
 }
 
-// ─── Packing List (voyages) ────────────────────────────────────────────────────
+// ─── CheckConnect (listes / checklists) ────────────────────────────────────────
 
 export type TripType =
   | 'hotel' | 'camping' | 'airbnb' | 'roadtrip' | 'cruise'
-  | 'ski' | 'city' | 'beach' | 'other'
+  | 'ski' | 'city' | 'beach'
+  | 'shopping' | 'event' | 'home' | 'work' | 'sport'
+  | 'other'
+  | (string & {})
 
 export type TripRole = 'owner' | 'member'
+export type TripPermission = 'check' | 'view'  // pour les liens de partage publics
+export type TripMemberPermission = 'admin' | 'editor' | 'contributor' | 'viewer'
 
-/** Membre d'un voyage (dénormalisé pour affichage des assignees sans requête) */
+export interface TripAttachment {
+  id: string
+  type: 'link' | 'photo' | 'file'
+  url: string
+  name?: string
+  mimeType?: string
+}
+
+export interface InviteLink {
+  id: string          // = token (Firestore doc id)
+  tripId: string
+  permission: TripPermission
+  label?: string
+  inviteEmail?: string   // email pré-renseigné (partage par email)
+  nom?: string           // NOM pré-renseigné
+  prenom?: string        // prénom pré-renseigné
+  createdAt: unknown     // Timestamp côté client, { _seconds } côté Admin
+  createdBy: string
+}
+
+/** Membre d'une liste CheckConnect */
 export interface TripMember {
   uid: string
   role: TripRole
+  permission?: TripMemberPermission
+  checkMode?: 'all' | 'assigned'
   nom?: string
   prenom?: string
   email?: string
+  photoUrl?: string   // photo de profil TC Connect (dénormalisée)
 }
 
 export interface TripItem {
@@ -728,6 +756,8 @@ export interface TripItem {
   multiplier: number             // si > 0 : qtyEffective = ceil(multiplier × nbJours)
   note?: string
   assigneeId?: string | null     // uid du membre responsable
+  dueDate?: string | null        // date limite ISO (YYYY-MM-DD)
+  attachments?: TripAttachment[]
   position: number
 }
 
@@ -743,13 +773,15 @@ export interface Trip {
   id: string
   name: string
   type: TripType
-  icon: string                   // emoji
-  color: string                  // hex
+  icon: string
+  color: string
   dateFrom?: Timestamp | null
   dateTo?: Timestamp | null
   isTemplate: boolean
+  archived?: boolean
+  favoritedBy?: string[]         // UIDs des membres qui ont mis en favori
   ownerId: string
-  memberIds: string[]            // tous les membres (owner inclus) → requête array-contains
+  memberIds: string[]
   members: TripMember[]
   sections: TripSection[]
   createdAt: Timestamp

@@ -165,7 +165,7 @@ export default function ParcoursPublicPage() {
 
   const [sessions, setSessions] = useState<Session[]>([])
   const [loadingSessions, setLoadingSessions] = useState(true)
-  const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null)
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string>('/logo.png')
   const [settingsPhone, setSettingsPhone] = useState(DEFAULT_CONTACT_PHONE)
 
   useEffect(() => {
@@ -182,7 +182,7 @@ export default function ParcoursPublicPage() {
       const teddyDoc = snap.docs.find((d) =>
         (d.data().nom ?? '').toLowerCase().includes('teddy')
       )
-      if (teddyDoc) setCompanyLogoUrl(teddyDoc.data().logoUrl ?? null)
+      if (teddyDoc?.data().logoUrl) setCompanyLogoUrl(teddyDoc.data().logoUrl)
     }).catch(() => {})
   }, [])
   const [selected, setSelected] = useState<Session | null>(null)
@@ -528,7 +528,7 @@ export default function ParcoursPublicPage() {
       {/* Header Teddy Coaching */}
       <div className="bg-white border-b border-gray-100">
         <div className="px-4 sm:px-8 py-3 sm:py-4 flex items-center gap-3">
-          <img src={companyLogoUrl || '/logo.png'} alt="Teddy Coaching"
+          <img src={companyLogoUrl} alt="Teddy Coaching"
             className="w-10 h-10 sm:w-11 sm:h-11 object-contain rounded-xl shadow-sm shrink-0" />
           <div className="flex-1 min-w-0">
             <h1 className="text-lg sm:text-xl font-extrabold text-gray-900 leading-tight truncate">Teddy Coaching</h1>
@@ -847,7 +847,7 @@ export default function ParcoursPublicPage() {
         {/* ── Contact & réseaux ── */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 sm:p-5">
           <div className="flex items-center gap-3 mb-3">
-            <img src={companyLogoUrl || '/logo.png'} alt="Teddy Coaching"
+            <img src={companyLogoUrl} alt="Teddy Coaching"
               className="w-10 h-10 object-contain rounded-xl shrink-0" />
             <div>
               <p className="text-sm font-bold text-gray-800">Teddy Coaching</p>
@@ -861,9 +861,9 @@ export default function ParcoursPublicPage() {
               <span className="text-sm text-gray-700">06.79.40.82.54</span>
             </a>
             <a href={`sms:+33679408254?body=${encodeURIComponent('Bonjour Teddy,\n\n')}`}
-              className="flex items-center gap-2.5 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-xl px-3 py-2.5 transition">
-              <ChatBubbleLeftIcon className="w-4 h-4 text-blue-500 shrink-0" />
-              <span className="text-sm text-blue-700">Envoyer un message</span>
+              className="flex items-center gap-2.5 border border-gray-200 hover:bg-gray-50 rounded-xl px-3 py-2.5 transition">
+              <ChatBubbleLeftIcon className="w-4 h-4 text-gray-400 shrink-0" />
+              <span className="text-sm text-gray-700">Envoyer un message</span>
             </a>
             <a href="mailto:teddybcoaching@gmail.com"
               className="flex items-center gap-2.5 border border-gray-200 hover:bg-gray-50 rounded-xl px-3 py-2.5 transition">
@@ -883,7 +883,7 @@ export default function ParcoursPublicPage() {
               <span className="text-sm text-gray-700">@teddy.coaching</span>
             </a>
             <a href="https://www.facebook.com/teddybcoaching" target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-2.5 border border-gray-200 hover:bg-gray-50 rounded-xl px-3 py-2.5 transition sm:col-span-2">
+              className="flex items-center gap-2.5 border border-gray-200 hover:bg-gray-50 rounded-xl px-3 py-2.5 transition">
               <svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07c0 6.02 4.39 11.01 10.13 11.93v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.96.93-1.96 1.89v2.25h3.33l-.53 3.49h-2.8V24C19.61 23.08 24 18.09 24 12.07"/>
               </svg>

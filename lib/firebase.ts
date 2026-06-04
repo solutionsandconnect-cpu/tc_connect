@@ -4,7 +4,7 @@
 
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -20,7 +20,19 @@ const firebaseConfig = {
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// ignoreUndefinedProperties : les champs `undefined` sont ignorés à l'écriture
+// au lieu de lever une erreur (ex. members[].permission pour un propriétaire,
+// ou items clonés sans dueDate/note/attachments lors d'une sauvegarde de modèle).
+// initializeFirestore lève si déjà initialisé (hot-reload Next) → fallback getFirestore.
+let _db;
+try {
+  _db = initializeFirestore(app, { ignoreUndefinedProperties: true });
+} catch {
+  _db = getFirestore(app);
+}
+export const db = _db;
+
 export const storage = getStorage(app);
 
 // Persistance offline désactivée intentionnellement :

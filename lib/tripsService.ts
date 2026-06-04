@@ -1,9 +1,9 @@
 import { db } from '@/lib/firebase'
 import {
-  collection, addDoc, doc, updateDoc, deleteDoc, getDoc,
+  collection, addDoc, doc, updateDoc, deleteDoc, getDoc, setDoc,
   onSnapshot, query, where, Timestamp,
 } from 'firebase/firestore'
-import type { Trip, TripSection, TripItem, TripMember, TripType, User } from '@/types'
+import type { Trip, TripSection, TripItem, TripMember, TripType, TripPermission, TripMemberPermission, InviteLink, User } from '@/types'
 
 const tripsCol = collection(db, 'trips')
 
@@ -46,10 +46,77 @@ export function tripProgress(trip: Trip): { done: number; total: number; pct: nu
   return { done, total, pct: total === 0 ? 0 : Math.round((done / total) * 100) }
 }
 
-/** Construit un membre depuis un profil utilisateur */
-export function memberFromUser(u: Pick<User, 'uid' | 'nom' | 'prenom' | 'email'>, role: TripMember['role']): TripMember {
-  return { uid: u.uid, role, nom: u.nom ?? '', prenom: u.prenom ?? '', email: u.email ?? '' }
+/** Construit un membre depuis un profil utilisateur (sans champ undefined) */
+export function memberFromUser(u: Pick<User, 'uid' | 'nom' | 'prenom' | 'email' | 'photo_url'>, role: TripMember['role']): TripMember {
+  const m: TripMember = {
+    uid: u.uid, role,
+    checkMode: 'all',
+    nom: u.nom ?? '', prenom: u.prenom ?? '', email: u.email ?? '',
+  }
+  if (role !== 'owner') m.permission = 'contributor'
+  if (u.photo_url) m.photoUrl = u.photo_url
+  return m
 }
+
+/** Bascule le favori pour un utilisateur */
+export const toggleFavorite = (trip: Trip, uid: string) => {
+  const favs = trip.favoritedBy ?? []
+  const isFav = favs.includes(uid)
+  return updateTrip(trip.id, {
+    favoritedBy: isFav ? favs.filter(id => id !== uid) : [...favs, uid],
+  })
+}
+
+/** Archive ou désarchive une liste */
+export const archiveTrip = (tripId: string, archived: boolean) =>
+  updateTrip(tripId, { archived })
+
+/** Peut-il faire cette action ? (logique de permissions centralisée) */
+export function memberCan(
+  member: TripMember | null | undefined,
+  isOwner: boolean,
+  action: 'addSections' | 'addItems' | 'share' | 'manageMembers' | 'editSections'
+): boolean {
+  if (isOwner) return true
+  const perm = member?.permission ?? 'contributor'
+  if (perm === 'admin') return true
+  switch (action) {
+    case 'addSections':
+    case 'editSections':  return perm === 'editor'
+    case 'addItems':      return perm === 'editor' || perm === 'contributor'
+    case 'share':         return perm === 'editor'
+    case 'manageMembers': return false
+  }
+}
+
+/** Peut-il cocher cet item ? */
+export function memberCanToggle(
+  member: TripMember | null | undefined,
+  isOwner: boolean,
+  itemAssigneeId: string | null | undefined,
+  currentUid: string
+): boolean {
+  if (isOwner) return true
+  const perm = member?.permission ?? 'contributor'
+  if (perm === 'viewer') return false
+  if (member?.checkMode === 'assigned') return itemAssigneeId === currentUid
+  return true
+}
+
+/** Met à jour les permissions d'un membre */
+export const updateMemberPermission = (
+  trip: Trip,
+  uid: string,
+  permission: TripMemberPermission,
+  checkMode?: 'all' | 'assigned'
+) => updateTrip(trip.id, {
+  members: trip.members.map(m =>
+    m.uid !== uid || m.role === 'owner' ? m : {
+      ...m, permission,
+      checkMode: checkMode ?? m.checkMode ?? 'all',
+    }
+  ),
+})
 
 /** Clone profond des sections en réinitialisant les qtyReady (pour modèle / reset / duplication) */
 function cloneSectionsReset(sections: TripSection[]): TripSection[] {
@@ -179,3 +246,48 @@ export const removeMember = (trip: Trip, uid: string) => {
     members: trip.members.filter(m => m.uid !== uid),
   })
 }
+
+// ─── Liens de partage (inviteLinks) ─────────────────────────────────────────────
+
+const inviteLinksCol = collection(db, 'inviteLinks')
+
+/** Génère un token court (20 caractères hex) */
+function genToken(): string {
+  const arr = new Uint8Array(10)
+  crypto.getRandomValues(arr)
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** Crée un lien de partage pour une liste (owner uniquement) */
+export const createInviteLink = async (
+  tripId: string,
+  permission: TripPermission,
+  ownerUid: string,
+  label?: string,
+  inviteEmail?: string,
+  nom?: string,
+  prenom?: string,
+): Promise<string> => {
+  const token = genToken()
+  await setDoc(doc(db, 'inviteLinks', token), {
+    tripId,
+    permission,
+    label: label ?? '',
+    inviteEmail: inviteEmail ?? '',
+    nom: nom ?? '',
+    prenom: prenom ?? '',
+    createdAt: Timestamp.now(),
+    createdBy: ownerUid,
+  })
+  return token
+}
+
+/** Révoque (supprime) un lien de partage */
+export const revokeInviteLink = (token: string) => deleteDoc(doc(db, 'inviteLinks', token))
+
+/** Écoute les liens de partage d'une liste (owner uniquement) */
+export const listenInviteLinks = (tripId: string, cb: (links: InviteLink[]) => void) =>
+  onSnapshot(
+    query(inviteLinksCol, where('tripId', '==', tripId)),
+    (snap) => cb(snap.docs.map(d => ({ id: d.id, ...d.data() } as InviteLink)))
+  )

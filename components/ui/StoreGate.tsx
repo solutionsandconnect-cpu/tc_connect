@@ -14,8 +14,9 @@ interface Props {
   showPin?: boolean;
 }
 
-/** Bouton flottant pour épingler/retirer l'app de l'accueil, depuis la page de l'app. */
-function PinAppButton({ appRoute }: { appRoute: string }) {
+/** Bouton flottant pour épingler/retirer l'app de l'accueil.
+ *  hiddenOnMobile=true → caché sur mobile (<sm), toujours visible sur desktop */
+export function PinAppButton({ appRoute, hiddenOnMobile = false }: { appRoute: string; hiddenOnMobile?: boolean }) {
   const { currentUser, userProfile } = useAuth();
   const { apps } = useStoreApps();
   const app = apps.find((a) => a.route === appRoute);
@@ -35,7 +36,9 @@ function PinAppButton({ appRoute }: { appRoute: string }) {
     <button
       onClick={toggle}
       title={pinned ? "Retirer de l'accueil" : "Épingler sur l'accueil"}
-      className={`fixed right-4 bottom-20 sm:bottom-6 z-40 flex items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border text-sm font-medium transition ${
+      className={`fixed right-4 bottom-20 sm:bottom-6 z-40 items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border text-sm font-medium transition ${
+        hiddenOnMobile ? "hidden sm:flex" : "flex"
+      } ${
         pinned ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
       }`}
     >
@@ -43,6 +46,30 @@ function PinAppButton({ appRoute }: { appRoute: string }) {
       <span className="hidden sm:inline">{pinned ? "Épinglée" : "Épingler"}</span>
     </button>
   );
+}
+
+/** Bouton épingler inline (pour usage dans une sidebar, sans position fixed) */
+export function PinButtonInline({ appRoute }: { appRoute: string }) {
+  const { currentUser, userProfile } = useAuth()
+  const { apps } = useStoreApps()
+  const app = apps.find((a) => a.route === appRoute)
+  if (!app || !currentUser) return null
+  const shortcuts: string[] = (userProfile as any)?.accueilShortcuts ?? []
+  const pinned = shortcuts.includes(app.id)
+  const toggle = async () => {
+    const next = pinned ? shortcuts.filter((id) => id !== app.id) : [...shortcuts, app.id]
+    try { await updateDoc(doc(db, "users", currentUser.uid), { accueilShortcuts: next }) }
+    catch { /* silencieux */ }
+  }
+  return (
+    <button onClick={toggle}
+      className={`w-full flex items-center justify-center gap-2 text-xs font-medium px-3 py-2 rounded-xl border transition mt-2 ${
+        pinned ? 'bg-blue-50 text-blue-600 border-blue-200' : 'text-gray-500 border-gray-200 hover:bg-gray-50'
+      }`}>
+      <span>📌</span>
+      {pinned ? 'Épinglée sur l\'accueil' : 'Épingler sur l\'accueil'}
+    </button>
+  )
 }
 
 export function StoreGate({ appRoute, children, showPin = true }: Props) {
