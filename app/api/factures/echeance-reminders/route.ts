@@ -6,7 +6,7 @@ const CRON_SECRET = process.env.CRON_SECRET
 /**
  * Rappels « facture à émettre » pour l'admin propriétaire du devis.
  * Pour chaque échéance d'un devis accepté non encore facturée, envoie une
- * notification (push + section Notifications) à J-3 et le jour J (J-0).
+ * notification (push + section Notifications) à J-3, J-1 et le jour J (J-0).
  */
 async function runReminders(req: Request) {
   const auth = req.headers.get('authorization')
@@ -47,10 +47,10 @@ async function runReminders(req: Request) {
 
       const echDate = new Date(ms); echDate.setHours(0, 0, 0, 0)
       const diffDays = Math.round((echDate.getTime() - now.getTime()) / 86400000)
-      if (diffDays !== 3 && diffDays !== 0) continue  // uniquement J-3 et J-0
+      if (diffDays !== 3 && diffDays !== 1 && diffDays !== 0) continue  // J-3, J-1 et J-0
 
       const label = ech.label || `Règlement ${i + 1}/${echeances.length}`
-      const when = diffDays === 0 ? "aujourd'hui" : 'dans 3 jours'
+      const when = diffDays === 0 ? "aujourd'hui" : diffDays === 1 ? 'demain' : 'dans 3 jours'
       const client = devis.clientName || 'un client'
       const montant = typeof ech.montant === 'number' ? ` (${ech.montant.toLocaleString('fr-FR')} €)` : ''
 

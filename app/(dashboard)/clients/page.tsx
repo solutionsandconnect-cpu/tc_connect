@@ -1466,7 +1466,7 @@ export default function ClientsPage() {
       setAllAbosMap(map);
       setAllAbosLoaded(true);
 
-      const in30 = Date.now() + 30 * 86400000;
+      const in30 = Date.now() + 15 * 86400000;
       const expiring = abos.filter((a) =>
         a.etat === "Actif" && a.dateFin && (a.dateFin as any).toMillis() <= in30
       );
@@ -1482,7 +1482,7 @@ export default function ClientsPage() {
           const soon = expiring.filter((a) => (a.dateFin as any).toMillis() >= now);
           const msg = [
             overdue.length ? `${overdue.length} abonnement${overdue.length > 1 ? "s" : ""} expiré${overdue.length > 1 ? "s" : ""}` : "",
-            soon.length ? `${soon.length} abonnement${soon.length > 1 ? "s" : ""} expire${soon.length > 1 ? "nt" : ""} sous 30 j` : "",
+            soon.length ? `${soon.length} abonnement${soon.length > 1 ? "s" : ""} expire${soon.length > 1 ? "nt" : ""} sous 15 j` : "",
           ].filter(Boolean).join(" · ");
           fetch("/api/push/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: currentUser.uid, persist: true, type: "ABONNEMENT", title: "Abonnements à renouveler", body: msg, url: "/clients" }) }).catch(() => {});
           localStorage.setItem(key, String(Date.now()));
@@ -1596,7 +1596,7 @@ export default function ClientsPage() {
     if (allAbosLoaded) {
       const abos = allAbosMap[c.id] ?? [];
       const now = Date.now();
-      const in30 = now + 30 * 86400000;
+      const in30 = now + 15 * 86400000;
       if (filterAbo) {
         if (filterAbo === "incomplet" && !abos.some((a) => !a.categorie || !a.companyId || !a.dateDebut || !a.etat)) return false;
         if (filterAbo === "a-renouveler") {
@@ -1789,7 +1789,7 @@ export default function ClientsPage() {
         const soon = filteredExpiringAbos.filter((a) => (a.dateFin as any).toMillis() >= now);
         const parts = [
           overdue.length ? `${overdue.length} expiré${overdue.length > 1 ? "s" : ""}` : "",
-          soon.length ? `${soon.length} expire${soon.length > 1 ? "nt" : ""} sous 30 j` : "",
+          soon.length ? `${soon.length} expire${soon.length > 1 ? "nt" : ""} sous 15 j` : "",
         ].filter(Boolean);
         const clientMap = Object.fromEntries(clients.map((c) => [c.id, c]));
         return (

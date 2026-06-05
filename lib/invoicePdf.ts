@@ -194,17 +194,15 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     clientInfoY += 4.5;
   }
 
-  // Bloc statut
-  const statusLabels: Record<string, string> = {
-    draft: "Brouillon", sent: "En attente", paid: "Payée",
-    overdue: "En retard", cancelled: "Annulée", accepted: "Accepté",
-  };
-  const statusColors: Record<string, [number, number, number]> = {
-    draft: gray, sent: blue, paid: green,
-    overdue: [220, 38, 38], cancelled: [156, 163, 175], accepted: green,
-  };
+  // Bloc statut — simplifié côté PDF : Payée / En cours d'encaissement / Impayée
+  const pdfStatusLabel = facture.type === 'devis'
+    ? (facture.status === 'accepted' ? 'Accepté' : facture.status === 'sent' ? 'Envoyé' : facture.status === 'rejected' ? 'Non validé' : 'En attente')
+    : (facture.status === 'paid' ? 'Payée' : facture.status === 'encaissement' ? 'En cours d\'encaissement' : 'Impayée')
+  const pdfStatusColor: [number, number, number] =
+    facture.type === 'devis'
+      ? (facture.status === 'accepted' ? green : blue)
+      : (facture.status === 'paid' ? green : facture.status === 'encaissement' ? [109, 40, 217] : [234, 88, 12])
   const rightX = margin + contentW * 0.53;
-  const statusColor = statusColors[facture.status] ?? gray;
 
   doc.setFillColor(...lightGray);
   doc.roundedRect(rightX, y, contentW * 0.47, clientH, 2, 2, "F");
@@ -212,9 +210,9 @@ async function buildPDF(facture: Facture, company?: Company | null) {
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...dark);
   doc.text("STATUT", rightX + 4, y + 6);
-  doc.setFontSize(13);
-  doc.setTextColor(...statusColor);
-  doc.text(statusLabels[facture.status] ?? facture.status, rightX + 4, y + 15);
+  doc.setFontSize(facture.status === 'encaissement' ? 9 : 13);
+  doc.setTextColor(...pdfStatusColor);
+  doc.text(pdfStatusLabel, rightX + 4, y + (facture.status === 'encaissement' ? 14 : 15));
 
   if (facture.devisRef && !isDevis) {
     doc.setFontSize(7);

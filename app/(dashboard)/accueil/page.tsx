@@ -101,6 +101,32 @@ export default function AccueilPage() {
         })
       })
       pending.sort((a, b) => (a.echeance.date?.toMillis() ?? 0) - (b.echeance.date?.toMillis() ?? 0))
+
+      // Notifications push + in-app pour les échéances à J-3, J-1 et J-0
+      const today = new Date().toISOString().split('T')[0]
+      for (const { devis, echeance, index, daysLeft } of pending) {
+        if (daysLeft !== 0 && daysLeft !== 1 && daysLeft !== 3) continue
+        const storageKey = `tc_ech_notif_${devis.id}_${index}_${today}`
+        if (localStorage.getItem(storageKey)) continue
+        const label = echeance.label || `Règlement ${index + 1}/${devis.echeances.length}`
+        const when = daysLeft === 0 ? "aujourd'hui" : daysLeft === 1 ? 'demain' : 'dans 3 jours'
+        const client = devis.clientName || 'un client'
+        const montant = typeof echeance.montant === 'number' ? ` (${echeance.montant.toLocaleString('fr-FR')} €)` : ''
+        fetch('/api/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: currentUser.uid,
+            title: '🧾 Facture à émettre',
+            body: `${client} · ${label}${montant} — échéance ${when}.`,
+            url: '/facturation?tab=devis',
+            persist: true,
+            type: 'FACTURE_ECHEANCE',
+          }),
+        }).catch(() => {})
+        localStorage.setItem(storageKey, '1')
+      }
+
       setPendingEcheances(pending)
     }).catch(() => {})
   }, [currentUser, isAdmin])
@@ -585,14 +611,17 @@ export default function AccueilPage() {
               return (
                 <div key={`${devis.id}-${index}`}
                   onClick={() => router.push('/facturation?tab=devis')}
-                  className="flex items-center justify-between gap-2 text-xs py-1.5 px-2 rounded-lg bg-white/60 border border-orange-100 cursor-pointer hover:bg-white transition">
-                  <span className="text-gray-700 truncate">
-                    <span className="font-medium">{devis.clientName || '—'}</span>
-                    <span className="text-gray-400 mx-1">·</span>{label}
-                    <span className="text-gray-400 mx-1">·</span>{dateStr}
-                    {tag && <span className="text-orange-600">{tag}</span>}
-                  </span>
-                  <span className="text-blue-600 shrink-0 hover:underline">Facturation →</span>
+                  className="flex items-center justify-between gap-2 py-2 px-2.5 rounded-lg bg-white/60 border border-orange-100 cursor-pointer hover:bg-white transition">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-gray-800 truncate">{devis.clientName || '—'}</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      {label}
+                      <span className="text-gray-400 mx-1">·</span>
+                      <span className="whitespace-nowrap">{dateStr}</span>
+                      {tag && <span className={`whitespace-nowrap font-medium ${daysLeft !== null && daysLeft < 0 ? 'text-red-600' : 'text-orange-600'}`}>{tag}</span>}
+                    </p>
+                  </div>
+                  <ChevronRightIcon className="w-4 h-4 text-blue-500 shrink-0" />
                 </div>
               )
             })}

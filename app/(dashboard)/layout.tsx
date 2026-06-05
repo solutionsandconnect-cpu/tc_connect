@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { signOut } from 'firebase/auth'
+import { collection, getDocs, query, where } from 'firebase/firestore'
 import { useAuth } from '@/context/AuthContext'
-import { auth } from '@/lib/firebase'
+import { auth, db } from '@/lib/firebase'
 import Navbar from '@/components/layout/Navbar'
 import PwaInstallPrompt from '@/components/PwaInstallPrompt'
 import PushNotificationPrompt from '@/components/PushNotificationPrompt'
@@ -17,7 +18,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { currentUser, loading } = useAuth()
+  const { currentUser, loading, userProfile } = useAuth()
   const router = useRouter()
   const [impersonation, setImpersonation] = useState<ImpersonationInfo | null>(null)
 
@@ -26,6 +27,47 @@ export default function DashboardLayout({
       router.push('/login')
     }
   }, [currentUser, loading, router])
+
+  // Vérifie les abonnements à renouveler (admin) dès l'ouverture de l'app — une fois par jour.
+  useEffect(() => {
+    if (!currentUser || userProfile?.role_app !== 'Admin') return
+    const KEY = `tc_abo_notif_${currentUser.uid}`
+    const last = localStorage.getItem(KEY)
+    if (last && Date.now() - Number(last) < 86400000) return
+    ;(async () => {
+      try {
+        const snap = await getDocs(query(
+          collection(db, 'abonnements'),
+          where('userId', '==', currentUser.uid),
+        ))
+        const in30 = Date.now() + 15 * 86400000
+        const now = Date.now()
+        const expiring = snap.docs
+          .map(d => d.data() as any)
+          .filter(a => a.etat === 'Actif' && a.dateFin && a.dateFin.toMillis() <= in30)
+        if (expiring.length === 0) return
+        const overdue = expiring.filter(a => a.dateFin.toMillis() < now)
+        const soon = expiring.filter(a => a.dateFin.toMillis() >= now)
+        const msg = [
+          overdue.length ? `${overdue.length} abonnement${overdue.length > 1 ? 's' : ''} expiré${overdue.length > 1 ? 's' : ''}` : '',
+          soon.length ? `${soon.length} abonnement${soon.length > 1 ? 's' : ''} expire${soon.length > 1 ? 'nt' : ''} sous 15 j` : '',
+        ].filter(Boolean).join(' · ')
+        await fetch('/api/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: currentUser.uid,
+            persist: true,
+            type: 'ABONNEMENT',
+            title: 'Abonnements à renouveler',
+            body: msg,
+            url: '/clients',
+          }),
+        })
+        localStorage.setItem(KEY, String(Date.now()))
+      } catch { /* silencieux */ }
+    })()
+  }, [currentUser, userProfile])
 
   // Rattache les listes CheckConnect invitées par email à ce compte (une fois par session).
   useEffect(() => {

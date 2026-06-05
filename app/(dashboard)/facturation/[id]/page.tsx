@@ -7,7 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   getFacture, updateFacture, deleteFacture, convertDevisToFacture, generateNextEcheanceFacture,
 } from "@/lib/facturationService";
-import { getCompany } from "@/lib/companyService";
+import { getCompany, listenCompanies } from "@/lib/companyService";
 import { getClient, updateClient } from "@/lib/clientService";
 import { downloadInvoicePDF, generateInvoicePDFBlob, itemNetTotal } from "@/lib/invoicePdf";
 import { uploadBlob } from "@/lib/uploadImage";
@@ -118,6 +118,7 @@ function SuggestDropdown({ value, onChange, options, placeholder, wrapperClassNa
 
 const STATUS_LABEL: Record<FactureStatus, string> = {
   draft: "Brouillon", pending: "En attente", sent: "Envoyé", paid: "Payée",
+  encaissement: "À encaisser",
   overdue: "En retard", cancelled: "Annulée", accepted: "Accepté", rejected: "Non validé",
 };
 const STATUS_STYLE: Record<FactureStatus, string> = {
@@ -125,12 +126,13 @@ const STATUS_STYLE: Record<FactureStatus, string> = {
   pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
   sent: "bg-blue-50 text-blue-700 border-blue-200",
   paid: "bg-green-50 text-green-700 border-green-200",
+  encaissement: "bg-violet-50 text-violet-700 border-violet-200",
   overdue: "bg-red-50 text-red-700 border-red-200",
   cancelled: "bg-gray-100 text-gray-400 border-gray-200",
   accepted: "bg-emerald-50 text-emerald-700 border-emerald-200",
   rejected: "bg-orange-50 text-orange-700 border-orange-200",
 };
-const STATUSES_FACTURE: FactureStatus[] = ["draft", "pending", "sent", "paid", "overdue", "cancelled"];
+const STATUSES_FACTURE: FactureStatus[] = ["draft", "pending", "sent", "encaissement", "paid", "overdue", "cancelled"];
 const STATUSES_DEVIS: FactureStatus[] = ["draft", "pending", "sent", "accepted", "rejected", "cancelled"];
 
 const STATUS_DOT: Record<FactureStatus, string> = {
@@ -138,6 +140,7 @@ const STATUS_DOT: Record<FactureStatus, string> = {
   pending: "bg-yellow-400",
   sent: "bg-blue-500",
   paid: "bg-green-500",
+  encaissement: "bg-violet-500",
   overdue: "bg-red-500",
   cancelled: "bg-gray-300",
   accepted: "bg-emerald-500",
@@ -250,6 +253,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
 
   const [facture, setFacture] = useState<Facture | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [client, setClient] = useState<Client | null>(null);
   const [linkedFactures, setLinkedFactures] = useState<Facture[]>([]);
   const [siblingIds, setSiblingIds] = useState<string[]>([]);
@@ -327,6 +331,12 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       }
     });
   }, [id]);
+
+  // Charge toutes les sociétés pour le sélecteur inline
+  useEffect(() => {
+    if (!currentUser) return
+    return listenCompanies(currentUser.uid, setCompanies)
+  }, [currentUser])
 
   const showToast = (msg: string, ok = true) => {
     setToast({ msg, ok });
@@ -1537,8 +1547,41 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                   </button>
                 </div>
               )}
-              {facture.abonnementTitre && <InfoRow label="Abonnement" value={facture.abonnementTitre} />}
-              {company && <InfoRow label="Société" value={company.nom} />}
+              {/* Abonnement — éditable inline */}
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-gray-500 shrink-0">Abonnement</span>
+                <input
+                  type="text"
+                  value={facture.abonnementTitre ?? ""}
+                  onChange={(e) => setFacture((p) => p ? { ...p, abonnementTitre: e.target.value } : null)}
+                  onBlur={async (e) => {
+                    const v = e.target.value.trim() || undefined
+                    await updateFacture(id, { abonnementTitre: v ?? null as any })
+                  }}
+                  placeholder="—"
+                  className="text-right text-gray-900 font-medium text-sm bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-400 outline-none transition w-40 min-w-0"
+                />
+              </div>
+              {/* Société — sélecteur inline */}
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-gray-500 shrink-0">Société</span>
+                <select
+                  value={facture.companyId ?? ""}
+                  onChange={async (e) => {
+                    const cid = e.target.value
+                    const picked = companies.find(c => c.id === cid) ?? null
+                    await updateFacture(id, { companyId: cid || null as any })
+                    setFacture((p) => p ? { ...p, companyId: cid || undefined } : null)
+                    setCompany(picked)
+                  }}
+                  className="text-right text-gray-900 font-medium text-sm bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-400 outline-none transition max-w-[160px] cursor-pointer"
+                >
+                  <option value="">— Aucune —</option>
+                  {companies.map(c => (
+                    <option key={c.id} value={c.id}>{c.nom}</option>
+                  ))}
+                </select>
+              </div>
               <InfoRow label="Statut" value={statusLabels[facture.status]} />
               <InfoRow label="Lignes" value={`${items.length} prestation${items.length > 1 ? "s" : ""}`} />
               {echeances.length > 0 && <InfoRow label="Échéances" value={`${echeances.filter((_, i) => echeanceIsPaid(i)).length}/${echeances.length} payées`} />}

@@ -495,7 +495,7 @@ export interface Abonnement {
 }
 
 // Collection : factures
-export type FactureStatus = 'draft' | 'pending' | 'sent' | 'paid' | 'overdue' | 'cancelled' | 'accepted' | 'rejected'
+export type FactureStatus = 'draft' | 'pending' | 'sent' | 'paid' | 'encaissement' | 'overdue' | 'cancelled' | 'accepted' | 'rejected'
 export type FactureType = 'facture' | 'devis'
 
 export interface FactureItem {

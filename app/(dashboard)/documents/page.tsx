@@ -70,6 +70,7 @@ type TabKey = 'tous' | DocCategory
 
 const STATUS_LABEL: Record<FactureStatus, string> = {
   draft: 'Brouillon', pending: 'En attente', sent: 'Envoyé', paid: 'Payée',
+  encaissement: 'À encaisser',
   overdue: 'En retard', cancelled: 'Annulée', accepted: 'Accepté', rejected: 'Non validé',
 }
 const STATUS_COLOR: Record<FactureStatus, string> = {
@@ -77,6 +78,7 @@ const STATUS_COLOR: Record<FactureStatus, string> = {
   pending: 'bg-yellow-100 text-yellow-700',
   sent: 'bg-blue-100 text-blue-700',
   paid: 'bg-green-100 text-green-700',
+  encaissement: 'bg-violet-100 text-violet-700',
   overdue: 'bg-red-100 text-red-700',
   cancelled: 'bg-gray-100 text-gray-400',
   accepted: 'bg-emerald-100 text-emerald-700',
