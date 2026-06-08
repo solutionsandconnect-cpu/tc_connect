@@ -196,7 +196,7 @@ const emptyForm = {
   mode_rdv: 'Présentiel',
   materiel: [] as string[],
   abonnement_id: '',
-  participants_supplementaires: [] as { ref_client: string; ref_database_user: string }[],
+  participants_supplementaires: [] as { ref_planning_id: string }[],
   distance_km: null as number | null,
   temps_route: '',
 }
@@ -336,29 +336,26 @@ export default function PlanningPage() {
   const [deleteActiviteConfirm, setDeleteActiviteConfirm] = useState<string | null>(null)
   const [afficherActivites, setAfficherActivites] = useState(true)
 
-  const [extraDetails, setExtraDetails] = useState<Record<string, any[]>>({})
-  const [newParticipant, setNewParticipant] = useState({ ref_client: '', ref_database_user: '' })
+  const [newParticipant, setNewParticipant] = useState({ ref_planning_id: '' })
   const [searchNewParticipant, setSearchNewParticipant] = useState('')
 
-  const loadExtraDetails = async (clientId: string) => {
-    if (!clientId || extraDetails[clientId]) return
-    try {
-      const snap = await getDocs(query(
-        collection(db, 'database_users_details'),
-        where('refUsers', '==', doc(db, 'users', clientId))
-      ))
-      setExtraDetails((prev) => ({ ...prev, [clientId]: snap.docs.map((d) => ({ id: d.id, ...d.data() })) }))
-    } catch {}
-  }
-
-  const filteredUsersExtra = useMemo(() => {
-    if (!searchNewParticipant) return users
+  const filteredPlanningsForParticipant = useMemo(() => {
+    const usedIds = new Set([editItem?.id, ...form.participants_supplementaires.map((p) => p.ref_planning_id)].filter(Boolean))
+    const candidates = plannings.filter((p) => !usedIds.has(p.id))
+    if (!searchNewParticipant) return candidates.slice(0, 60)
     const s = searchNewParticipant.toLowerCase()
-    return users.filter((u) =>
-      [u.nom, u.prenom].filter(Boolean).join(" ").toLowerCase().includes(s) ||
-      (u.email?.toLowerCase().includes(s) ?? false)
-    )
-  }, [users, searchNewParticipant])
+    return candidates.filter((p) => {
+      const ru = (p as any).ref_users
+      const rc = (p as any).ref_client
+      const uid = ru?.id || ru?.path?.split('/').pop() || (typeof ru === 'string' ? ru.split('/').pop() : '') ||
+                  rc?.id || rc?.path?.split('/').pop() || (typeof rc === 'string' ? rc.split('/').pop() : '') || ''
+      const pu = users.find((u) => u.id === uid)
+      const name = pu ? `${pu.prenom ?? ''} ${pu.nom ?? ''}`.toLowerCase() : ''
+      const date = formatDate((p as any).date_planning).toLowerCase()
+      const type = ((p as any).type_planning ?? '').toLowerCase()
+      return name.includes(s) || date.includes(s) || type.includes(s)
+    }).slice(0, 60)
+  }, [plannings, form.participants_supplementaires, editItem, searchNewParticipant, users])
 
   const filteredUsers = useMemo(() => {
     if (!searchClient) return users
@@ -523,7 +520,7 @@ export default function PlanningPage() {
   const openAdd = () => {
     setEditItem(null)
     setSearchClient('')
-    setNewParticipant({ ref_client: '', ref_database_user: '' })
+    setNewParticipant({ ref_planning_id: '' })
     setSearchNewParticipant('')
     const d = selectedDate
     setForm({ ...emptyForm, date: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`, materiel: [...MATERIEL_DEFAUT] })
@@ -534,16 +531,16 @@ export default function PlanningPage() {
     e.stopPropagation()
     setEditItem(item)
     setSearchClient('')
-    setNewParticipant({ ref_client: '', ref_database_user: '' })
+    setNewParticipant({ ref_planning_id: '' })
     setSearchNewParticipant('')
     const date = item.date_planning?.toDate()
     const debut = item.heure_planning_debut?.toDate()
     const fin = item.heure_planning_fin?.toDate()
-    const existingParts = ((item.participants_supplementaires as any[]) || []).map((p: any) => ({
-      ref_client: p.ref_users?.id || p.ref_users?.path?.split('/').pop() || (typeof p.ref_users === 'string' ? p.ref_users.split('/').pop() : '') || '',
-      ref_database_user: p.ref_database_user?.id || p.ref_database_user?.path?.split('/').pop() || '',
-    }))
-    existingParts.forEach((p) => { if (p.ref_client) loadExtraDetails(p.ref_client) })
+    const existingParts = ((item.participants_supplementaires as any[]) || [])
+      .map((p: any) => ({
+        ref_planning_id: (typeof p.ref_planning_id === 'string' ? p.ref_planning_id : '') || p.ref_planning?.id || p.ref_planning?.path?.split('/').pop() || '',
+      }))
+      .filter((p) => p.ref_planning_id)
     setForm({
       ref_client: item.ref_users?.id || item.ref_users?.path?.split('/').pop() || (typeof item.ref_users === 'string' ? item.ref_users.split('/').pop() : '') || item.ref_client?.id || item.ref_client?.path?.split('/').pop() || '',
       date: date ? `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}` : '',
@@ -601,11 +598,8 @@ export default function PlanningPage() {
     if (form.temps_route) payload.temps_route = form.temps_route
     if (form.abonnement_id) payload.abonnementId = form.abonnement_id
     payload.participants_supplementaires = form.participants_supplementaires
-      .filter((p) => p.ref_client)
-      .map((p) => ({
-        ref_users: doc(db, 'users', p.ref_client),
-        ...(p.ref_database_user ? { ref_database_user: doc(db, 'database_users_details', p.ref_database_user) } : {}),
-      }))
+      .filter((p) => p.ref_planning_id)
+      .map((p) => ({ ref_planning_id: p.ref_planning_id }))
     if (editItem) await updatePlanning(editItem.id, payload)
     else {
       await addPlanning(payload)
@@ -961,20 +955,24 @@ export default function PlanningPage() {
                         <p className="text-xs text-blue-600 font-medium">{client.nom} {client.prenom}</p>
                       </div>
                     )}
-                    {((item as any).participants_supplementaires as any[])?.filter((p: any) => p.ref_users).map((p: any, i: number) => {
-                      const pu = users.find((u) => u.id === (p.ref_users?.id || p.ref_users?.path?.split('/').pop()))
-                      return pu ? (
+                    {((item as any).participants_supplementaires as any[])?.filter((p: any) => p.ref_planning_id).map((p: any, i: number) => {
+                      const linkedPl = plannings.find((pl) => pl.id === p.ref_planning_id)
+                      if (!linkedPl) return null
+                      const ru = (linkedPl as any).ref_users
+                      const rc = (linkedPl as any).ref_client
+                      const uid = ru?.id || ru?.path?.split('/').pop() || (typeof ru === 'string' ? ru.split('/').pop() : '') ||
+                                  rc?.id || rc?.path?.split('/').pop() || (typeof rc === 'string' ? rc.split('/').pop() : '') || ''
+                      const pu = users.find((u) => u.id === uid)
+                      return (
                         <div key={i} className="flex items-center gap-1.5 mt-0.5">
-                          {(pu as any).photo_url ? (
-                            <img src={(pu as any).photo_url} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" />
-                          ) : (
-                            <div className="w-4 h-4 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center shrink-0">
-                              <UserIcon className="w-3 h-3" />
-                            </div>
-                          )}
-                          <p className="text-xs text-gray-400 font-medium">{pu.prenom} {pu.nom}</p>
+                          <div className="w-4 h-4 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center shrink-0">
+                            <UserIcon className="w-3 h-3" />
+                          </div>
+                          <p className="text-xs text-gray-400 font-medium">
+                            {pu ? `${pu.prenom ?? ''} ${pu.nom ?? ''}`.trim() : '—'} · {formatDate((linkedPl as any).date_planning)}
+                          </p>
                         </div>
-                      ) : null
+                      )
                     })}
                     {(item as any).type_planning && (
                       <div className="flex items-center gap-2">
@@ -1079,19 +1077,26 @@ export default function PlanningPage() {
               )}
             </div>
           )}
-          {/* Participants supplémentaires */}
+          {/* RDVs liés */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Participants supplémentaires</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">RDVs liés</label>
             {form.participants_supplementaires.length > 0 && (
               <div className="space-y-1.5 mb-2">
                 {form.participants_supplementaires.map((p, i) => {
-                  const pc = users.find((u) => u.id === p.ref_client)
-                  const pAbo = (extraDetails[p.ref_client] || []).find((d: any) => d.id === p.ref_database_user)
+                  const linkedPl = plannings.find((pl) => pl.id === p.ref_planning_id)
+                  const ru = (linkedPl as any)?.ref_users
+                  const rc = (linkedPl as any)?.ref_client
+                  const uid = ru?.id || ru?.path?.split('/').pop() || (typeof ru === 'string' ? ru.split('/').pop() : '') ||
+                              rc?.id || rc?.path?.split('/').pop() || (typeof rc === 'string' ? rc.split('/').pop() : '') || ''
+                  const pu = users.find((u) => u.id === uid)
+                  const name = pu ? [pu.prenom, pu.nom].filter(Boolean).join(' ') : '—'
                   return (
                     <div key={i} className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
                       <div>
-                        <p className="text-sm font-medium text-gray-700">{pc ? [pc.nom, pc.prenom].filter(Boolean).join(" ") : '—'}</p>
-                        {pAbo && <p className="text-xs text-gray-400">{(pAbo as any).titre_abo || (pAbo as any).categorie_prestation || 'Abonnement'}{(pAbo as any).etat ? ` — ${(pAbo as any).etat}` : ''}</p>}
+                        <p className="text-sm font-medium text-gray-700">{name}</p>
+                        {linkedPl && (
+                          <p className="text-xs text-gray-400">{formatDate((linkedPl as any).date_planning)} · {(linkedPl as any).type_planning ?? 'Séance'}</p>
+                        )}
                       </div>
                       <button type="button"
                         onClick={() => setForm({ ...form, participants_supplementaires: form.participants_supplementaires.filter((_, j) => j !== i) })}
@@ -1104,50 +1109,39 @@ export default function PlanningPage() {
               </div>
             )}
             <div className="border border-dashed border-gray-200 rounded-xl p-3 space-y-2">
-              <p className="text-xs font-medium text-gray-500">Ajouter un participant</p>
+              <p className="text-xs font-medium text-gray-500">Lier un RDV existant</p>
               <div className="relative">
                 <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input type="text" placeholder="Rechercher..." value={searchNewParticipant}
+                <input type="text" placeholder="Rechercher par client, date, type…" value={searchNewParticipant}
                   onChange={(e) => setSearchNewParticipant(e.target.value)}
                   className="w-full border border-gray-200 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
-              <select value={newParticipant.ref_client} size={3}
-                onChange={(e) => { const v = e.target.value; setNewParticipant({ ref_client: v, ref_database_user: '' }); loadExtraDetails(v) }}
+              <select value={newParticipant.ref_planning_id} size={4}
+                onChange={(e) => setNewParticipant({ ref_planning_id: e.target.value })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">— Sélectionner —</option>
-                {filteredUsersExtra
-                  .filter((u) => u.id !== form.ref_client && !form.participants_supplementaires.some((p) => p.ref_client === u.id))
-                  .map((u) => <option key={u.id} value={u.id}>{u.prenom} {u.nom}</option>)}
+                <option value="">— Sélectionner un RDV —</option>
+                {filteredPlanningsForParticipant.map((pl) => {
+                  const ru = (pl as any).ref_users
+                  const rc = (pl as any).ref_client
+                  const uid = ru?.id || ru?.path?.split('/').pop() || (typeof ru === 'string' ? ru.split('/').pop() : '') ||
+                              rc?.id || rc?.path?.split('/').pop() || (typeof rc === 'string' ? rc.split('/').pop() : '') || ''
+                  const pu = users.find((u) => u.id === uid)
+                  const name = pu ? `${pu.prenom ?? ''} ${pu.nom ?? ''}`.trim() : '—'
+                  const date = formatDate((pl as any).date_planning)
+                  const type = (pl as any).type_planning ?? 'Séance'
+                  return <option key={pl.id} value={pl.id}>{name} — {date} ({type})</option>
+                })}
               </select>
-              {newParticipant.ref_client && (
-                <select value={newParticipant.ref_database_user}
-                  onChange={(e) => setNewParticipant({ ...newParticipant, ref_database_user: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">— Abonnement (optionnel) —</option>
-                  {(() => {
-                    const details = extraDetails[newParticipant.ref_client] || []
-                    const sorted = [...details].sort((a: any, b: any) => {
-                      const aA = a.etat === 'Actif' ? 0 : 1; const bA = b.etat === 'Actif' ? 0 : 1
-                      if (aA !== bA) return aA - bA
-                      return (b.date_debut?.seconds ?? 0) - (a.date_debut?.seconds ?? 0)
-                    })
-                    const actifs = sorted.filter((d: any) => d.etat === 'Actif')
-                    const autres = sorted.filter((d: any) => d.etat !== 'Actif')
-                    const opt = (d: any) => <option key={d.id} value={d.id}>{d.titre_abo || d.categorie_prestation || 'Abonnement sans titre'}{d.etat ? ` — ${d.etat}` : ''}</option>
-                    return <>{actifs.length > 0 && <optgroup label="Actifs">{actifs.map(opt)}</optgroup>}{autres.length > 0 && <optgroup label="Inactifs / Terminés">{autres.map(opt)}</optgroup>}</>
-                  })()}
-                </select>
-              )}
-              <button type="button" disabled={!newParticipant.ref_client}
+              <button type="button" disabled={!newParticipant.ref_planning_id}
                 onClick={() => {
-                  if (!newParticipant.ref_client) return
-                  setForm({ ...form, participants_supplementaires: [...form.participants_supplementaires, { ...newParticipant }] })
-                  setNewParticipant({ ref_client: '', ref_database_user: '' })
+                  if (!newParticipant.ref_planning_id) return
+                  setForm({ ...form, participants_supplementaires: [...form.participants_supplementaires, { ref_planning_id: newParticipant.ref_planning_id }] })
+                  setNewParticipant({ ref_planning_id: '' })
                   setSearchNewParticipant('')
                 }}
                 className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition">
                 <PlusIcon className="w-3.5 h-3.5" />
-                Ajouter ce participant
+                Lier ce RDV
               </button>
             </div>
           </div>

@@ -1197,7 +1197,7 @@ function aboExpiryAlert(abo: Abonnement): { label: string; cls: string } | null 
   const diffDays = Math.round((endMs - now) / 86400000)
   if (diffDays < 0) return { label: "Expiré", cls: "bg-red-100 text-red-600" }
   if (diffDays <= 7) return { label: `${diffDays}j restants`, cls: "bg-red-100 text-red-600" }
-  if (diffDays <= 30) return { label: `${diffDays}j restants`, cls: "bg-orange-100 text-orange-600" }
+  if (diffDays <= 15) return { label: `${diffDays}j restants`, cls: "bg-orange-100 text-orange-600" }
   return null
 }
 
@@ -1456,7 +1456,7 @@ export default function ClientsPage() {
   const sessionsDoneNotifRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !isAdmin) return;
     const unsub = listenAbonnements(currentUser.uid, (abos) => {
       const map: Record<string, Abonnement[]> = {};
       for (const a of abos) {

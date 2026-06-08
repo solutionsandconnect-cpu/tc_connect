@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, collection, query, where, getDocs, addDoc, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import { formatDate } from '@/lib/planningUtils'
 import { useSeances } from '@/hooks/useSeances'
 import { useExercices } from '@/hooks/useExercices'
 import { useProgrammeSeance } from '@/hooks/useProgrammeSeance'
@@ -49,6 +50,7 @@ export default function DetailSeancePage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const planningId = searchParams.get('planningId') || ''
+  const sourcePlanningId = searchParams.get('sourcePlanningId') || ''
   const { currentUser, userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
   const { seances, updateSeance, deleteSeance } = useSeances(planningId || undefined)
@@ -111,16 +113,69 @@ export default function DetailSeancePage() {
 
   // Client lié à ce RDV (pour la mémoire intensité/alerte par exercice)
   const [clientId, setClientId] = useState<string | null>(null)
+  const [linkedSeancesInfo, setLinkedSeancesInfo] = useState<{ planningId: string; seanceId: string; label: string; isRoot: boolean }[]>([])
+  const [currentLabel, setCurrentLabel] = useState('')
+
   useEffect(() => {
-    if (!planningId) { setClientId(null); return }
-    getDoc(doc(db, 'planning_pro', planningId))
-      .then((snap) => {
-        if (!snap.exists()) return
-        const d = snap.data() as any
-        setClientId(d.ref_users?.id ?? d.ref_client?.id ?? null)
-      })
-      .catch(() => {})
-  }, [planningId])
+    if (!planningId) { setClientId(null); setLinkedSeancesInfo([]); return }
+    const numCircuit = (seance as any)?.num_circuit
+    if (numCircuit == null) return
+    const rootPlanningId = sourcePlanningId || planningId
+
+    const fetchName = async (d: any): Promise<string> => {
+      const uid = d?.ref_users?.id ?? d?.ref_client?.id ?? null
+      if (!uid) return ''
+      try {
+        const u = (await getDoc(doc(db, 'users', uid))).data() as any
+        return [u?.prenom, u?.nom].filter(Boolean).join(' ')
+      } catch { return '' }
+    }
+    const buildLabel = (d: any, name: string) => {
+      const dateStr = formatDate(d?.date_planning)
+      return [name, dateStr].filter(Boolean).join(' · ')
+    }
+
+    ;(async () => {
+      try {
+        const [currentSnap, rootSnap] = await Promise.all([
+          getDoc(doc(db, 'planning_pro', planningId)),
+          sourcePlanningId ? getDoc(doc(db, 'planning_pro', sourcePlanningId)) : Promise.resolve(null),
+        ])
+        if (currentSnap.exists()) {
+          const d = currentSnap.data() as any
+          setClientId(d.ref_users?.id ?? d.ref_client?.id ?? null)
+          const name = await fetchName(d)
+          setCurrentLabel(buildLabel(d, name))
+        }
+        const rootData = (rootSnap ?? currentSnap).data() as any
+        const parts: string[] = ((rootData?.participants_supplementaires as any[]) || [])
+          .map((p: any) => typeof p.ref_planning_id === 'string' ? p.ref_planning_id : '')
+          .filter(Boolean)
+
+        const allPlanningIds = [rootPlanningId, ...parts]
+        const results = (await Promise.all(allPlanningIds.map(async (lpId) => {
+          if (lpId === planningId) return null
+          try {
+            const [lpSnap, seancesSnap] = await Promise.all([
+              getDoc(doc(db, 'planning_pro', lpId)),
+              getDocs(query(
+                collection(db, 'seance'),
+                where('ref_planning', '==', doc(db, 'planning_pro', lpId)),
+                where('num_circuit', '==', numCircuit),
+              )),
+            ])
+            if (seancesSnap.empty) return null
+            const d = lpSnap.exists() ? lpSnap.data() as any : null
+            const name = d ? await fetchName(d) : ''
+            const label = buildLabel(d, name) || lpId
+            const isRoot = lpId === rootPlanningId
+            return { planningId: lpId, seanceId: seancesSnap.docs[0].id, label, isRoot }
+          } catch { return null }
+        }))).filter(Boolean) as { planningId: string; seanceId: string; label: string; isRoot: boolean }[]
+        setLinkedSeancesInfo(results)
+      } catch {}
+    })()
+  }, [planningId, sourcePlanningId, (seance as any)?.num_circuit])
 
   // Sélectionne un exercice et restaure sa mémoire (intensité/alerte) pour ce client
   const selectExercice = async (exId: string, explication: string) => {
@@ -316,6 +371,22 @@ export default function DetailSeancePage() {
           date_create: new Date(),
         }
         await addExerciceToSeance(payload as any)
+        // Dupliquer l'exercice sur chaque séance des RDVs liés
+        for (const linked of linkedSeancesInfo) {
+          try {
+            const lSnap = await getDoc(doc(db, 'seance', linked.seanceId))
+            const lNb = (lSnap.data()?.nb_exercice ?? 0) + 1
+            await addDoc(collection(db, 'programme_seance'), {
+              ...basePayload,
+              ref_seance: doc(db, 'seance', linked.seanceId),
+              num_exercice: lNb,
+              nb_serie_effectuee: 0,
+              ref_users: currentUser ? doc(db, 'users', currentUser.uid) : undefined,
+              date_create: new Date(),
+            })
+            await updateDoc(doc(db, 'seance', linked.seanceId), { nb_exercice: lNb })
+          } catch (e) { console.error('[linked seance sync]', e) }
+        }
       }
       // Mémoriser l'intensité/alerte de cet exercice pour ce client
       await saveExerciceMemory(clientId, form.exercice_id, {
@@ -392,6 +463,30 @@ export default function DetailSeancePage() {
           {(seance as any)?.satisfaction_circuit && (
             <p className="text-xs text-gray-500 italic">{(seance as any).satisfaction_circuit}</p>
           )}
+        </div>
+      )}
+
+      {/* Switch entre RDVs liés */}
+      {isAdmin && linkedSeancesInfo.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1 mb-2 scrollbar-none">
+          <button className="shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border bg-indigo-600 text-white border-indigo-600 cursor-default">
+            {currentLabel || (sourcePlanningId ? 'Ce RDV' : 'RDV principal')}
+          </button>
+          {linkedSeancesInfo.map((linked) => {
+            const rootId = sourcePlanningId || planningId
+            const url = linked.isRoot
+              ? `/seances/${linked.seanceId}?planningId=${linked.planningId}`
+              : `/seances/${linked.seanceId}?planningId=${linked.planningId}&sourcePlanningId=${rootId}`
+            return (
+              <button
+                key={linked.seanceId}
+                onClick={() => router.push(url)}
+                className="shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600 transition"
+              >
+                {linked.isRoot ? `← ${linked.label}` : linked.label}
+              </button>
+            )
+          })}
         </div>
       )}
 

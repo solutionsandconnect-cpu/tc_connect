@@ -172,7 +172,7 @@ export default function UsersPage() {
       const adminName = `${userProfile?.prenom ?? ''} ${userProfile?.nom ?? ''}`.trim();
       const targetName = `${u.prenom ?? ''} ${u.nom ?? ''}`.trim();
       router.push(
-        `/impersonate?token=${encodeURIComponent(data.customToken)}&adminName=${encodeURIComponent(adminName)}&targetName=${encodeURIComponent(targetName)}`
+        `/impersonate?token=${encodeURIComponent(data.customToken)}&adminToken=${encodeURIComponent(data.adminCustomToken ?? '')}&adminName=${encodeURIComponent(adminName)}&targetName=${encodeURIComponent(targetName)}`
       );
     } catch (err: any) {
       showToast(err.message ?? "Erreur lors de l'impersonation", false);

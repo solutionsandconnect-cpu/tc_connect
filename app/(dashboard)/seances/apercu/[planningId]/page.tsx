@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import {
   collection, doc, getDoc, getDocs, query, where, updateDoc, addDoc, Timestamp,
 } from 'firebase/firestore'
@@ -147,6 +147,8 @@ function scale5Color(val: number) {
 export default function OverviewSeancePage() {
   const { planningId } = useParams<{ planningId: string }>()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const sourcePlanningId = searchParams.get('sourcePlanningId') || ''
   const { userProfile, currentUser } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
   const droits = userProfile?.droits
@@ -186,6 +188,8 @@ export default function OverviewSeancePage() {
   })
   const [planning, setPlanning] = useState<PlanningData | null>(null)
   const [seances, setSeances] = useState<SeanceData[]>([])
+  const [linkedPlanningInfos, setLinkedPlanningInfos] = useState<{ planningId: string; label: string; isRoot: boolean }[]>([])
+  const [currentLabel, setCurrentLabel] = useState('')
 
   // Édition rapide d'un exercice (admin uniquement, en pleine séance)
   const [editExo, setEditExo] = useState<{ seanceId: string; item: ProgItem; exoName: string } | null>(null)
@@ -299,6 +303,49 @@ export default function OverviewSeancePage() {
           setIntensiteSeance(pData.intensite_seance ?? 0)
           setCrCoach(pData.cr_rdv_moi || '')
           setCrClient(pData.cr_rdv_client || '')
+
+          // Helper : prénom + nom du client d'un planning
+          const fetchName = async (d: any): Promise<string> => {
+            const uid = d?.ref_users?.id ?? d?.ref_client?.id ?? null
+            if (!uid) return ''
+            try {
+              const u = (await getDoc(doc(db, 'users', uid))).data() as any
+              return [u?.prenom, u?.nom].filter(Boolean).join(' ')
+            } catch { return '' }
+          }
+          const buildLabel = (d: any, name: string) => {
+            const date = d?.date_planning?.toDate?.()
+            const dateStr = date ? date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : ''
+            return [name, dateStr].filter(Boolean).join(' · ')
+          }
+
+          // Label du RDV courant
+          const curName = await fetchName(pData)
+          setCurrentLabel(buildLabel(pData, curName))
+
+          // Charger les RDVs liés (depuis le planning racine)
+          const rootPlanningId = sourcePlanningId || planningId
+          const rootData = sourcePlanningId
+            ? (await getDoc(doc(db, 'planning_pro', sourcePlanningId))).data() as any
+            : pData
+          const parts: string[] = ((rootData?.participants_supplementaires as any[]) || [])
+            .map((p: any) => typeof p.ref_planning_id === 'string' ? p.ref_planning_id : '')
+            .filter(Boolean)
+          const allIds = [rootPlanningId, ...parts].filter((lpId) => lpId !== planningId)
+          if (allIds.length > 0) {
+            const infos = (await Promise.all(allIds.map(async (lpId) => {
+              try {
+                const lpSnap = await getDoc(doc(db, 'planning_pro', lpId))
+                const d = lpSnap.data() as any
+                const name = await fetchName(d)
+                const label = buildLabel(d, name) || lpId
+                return { planningId: lpId, label, isRoot: lpId === rootPlanningId }
+              } catch { return null }
+            }))).filter(Boolean) as { planningId: string; label: string; isRoot: boolean }[]
+            setLinkedPlanningInfos(infos)
+          } else {
+            setLinkedPlanningInfos([])
+          }
         }
 
         const sq = query(collection(db, 'seance'), where('ref_planning', '==', doc(db, 'planning_pro', planningId)))
@@ -345,7 +392,7 @@ export default function OverviewSeancePage() {
         setLoading(false)
       }
     })()
-  }, [planningId, refreshKey])
+  }, [planningId, sourcePlanningId, refreshKey])
 
   const handleAddCircuit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -512,6 +559,30 @@ export default function OverviewSeancePage() {
           </button>
         )}
       </div>
+
+      {/* Switch entre RDVs liés */}
+      {isAdmin && linkedPlanningInfos.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1 mb-4 scrollbar-none">
+          <button className="shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border bg-indigo-600 text-white border-indigo-600 cursor-default">
+            {currentLabel || (sourcePlanningId ? 'Ce RDV' : 'RDV principal')}
+          </button>
+          {linkedPlanningInfos.map((linked) => {
+            const rootId = sourcePlanningId || planningId
+            const url = linked.isRoot
+              ? `/seances/apercu/${linked.planningId}`
+              : `/seances/apercu/${linked.planningId}?sourcePlanningId=${rootId}`
+            return (
+              <button
+                key={linked.planningId}
+                onClick={() => router.push(url)}
+                className="shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border bg-white text-gray-600 border-gray-200 hover:border-indigo-400 hover:text-indigo-600 transition"
+              >
+                {linked.isRoot ? `← ${linked.label}` : linked.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {seances.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">

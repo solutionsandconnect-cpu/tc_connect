@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { signOut } from 'firebase/auth'
+import { signOut, signInWithCustomToken } from 'firebase/auth'
 import { collection, getDocs, query, where } from 'firebase/firestore'
 import { useAuth } from '@/context/AuthContext'
 import { auth, db } from '@/lib/firebase'
@@ -11,7 +11,7 @@ import PwaInstallPrompt from '@/components/PwaInstallPrompt'
 import PushNotificationPrompt from '@/components/PushNotificationPrompt'
 import { UserIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 
-type ImpersonationInfo = { adminName: string; targetName: string }
+type ImpersonationInfo = { adminName: string; targetName: string; adminToken?: string }
 
 export default function DashboardLayout({
   children,
@@ -128,7 +128,15 @@ export default function DashboardLayout({
   }, [])
 
   const quitImpersonation = async () => {
+    const adminToken = impersonation?.adminToken
     localStorage.removeItem('tc_impersonation')
+    if (adminToken) {
+      try {
+        await signInWithCustomToken(auth, adminToken)
+        router.push('/accueil')
+        return
+      } catch { /* token expiré, retour login */ }
+    }
     await signOut(auth)
     router.push('/login')
   }

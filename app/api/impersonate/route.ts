@@ -28,8 +28,10 @@ export async function POST(req: Request) {
 
     // Generate custom token for the target user
     const customToken = await adminAuth.createCustomToken(targetUid)
+    // Generate custom token to restore the admin's session on quit
+    const adminCustomToken = await adminAuth.createCustomToken(decoded.uid)
 
-    return NextResponse.json({ customToken })
+    return NextResponse.json({ customToken, adminCustomToken })
   } catch (err: any) {
     console.error('[impersonate]', err)
     return NextResponse.json({ error: err.message ?? 'Internal error' }, { status: 500 })

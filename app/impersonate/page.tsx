@@ -9,6 +9,7 @@ function ImpersonateContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const token = searchParams.get('token')
+  const adminToken = searchParams.get('adminToken')
   const targetName = searchParams.get('targetName')
   const adminName = searchParams.get('adminName')
 
@@ -22,6 +23,7 @@ function ImpersonateContent() {
         localStorage.setItem('tc_impersonation', JSON.stringify({
           adminName: adminName ?? 'Admin',
           targetName: targetName ?? 'Utilisateur',
+          adminToken: adminToken ?? '',
         }))
         router.replace('/accueil')
       })
