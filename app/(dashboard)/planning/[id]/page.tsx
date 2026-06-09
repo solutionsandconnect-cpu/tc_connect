@@ -2,7 +2,7 @@
 
 import { use, useState, useEffect, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Timestamp, doc, collection, query, where, getDocs, updateDoc, addDoc } from 'firebase/firestore'
+import { Timestamp, doc, collection, query, where, getDocs, updateDoc, addDoc, deleteDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { usePlanning } from '@/hooks/usePlanning'
 import { useSeances } from '@/hooks/useSeances'
@@ -360,11 +360,15 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   const [deleteSeanceConfirm, setDeleteSeanceConfirm] = useState<string | null>(null)
   const [showQuestionnaireModal, setShowQuestionnaireModal] = useState(false)
   const [showQuestionnaireDirectModal, setShowQuestionnaireDirectModal] = useState(false)
+  const [showResetQuestionnaireConfirm, setShowResetQuestionnaireConfirm] = useState(false)
+  const [resettingQuestionnaire, setResettingQuestionnaire] = useState(false)
   const [showPlanifModal, setShowPlanifModal] = useState(false)
   const [showCrModal, setShowCrModal] = useState(false)
   const [crValue, setCrValue] = useState('')
+  const [crDupliquer, setCrDupliquer] = useState(false)
   const [showCrCoachModal, setShowCrCoachModal] = useState(false)
   const [crCoachValue, setCrCoachValue] = useState('')
+  const [crCoachDupliquer, setCrCoachDupliquer] = useState(false)
   const [showCrClientModal, setShowCrClientModal] = useState(false)
   const [crClientValue, setCrClientValue] = useState('')
   const [showBilanClientModal, setShowBilanClientModal] = useState(false)
@@ -562,6 +566,10 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
     e.preventDefault()
     const [year, month, day] = form.date.split('-').map(Number)
     const dateObj = new Date(year, month - 1, day)
+    // Détecter un décalage de jour avec un questionnaire déjà rempli → proposer une réinitialisation
+    const oldDate = (planning as any)?.date_planning?.toDate?.()
+    const dayChanged = oldDate ? startOfDayMs(oldDate.getTime()) !== startOfDayMs(dateObj.getTime()) : false
+    const questionnaireDejaRempli = !!((planning as any)?.questionnaire_rempli || (planning as any)?.indice_hooper != null)
     const [hDebut, mDebut] = form.heure_debut.split(':').map(Number)
     const [hFin, mFin] = form.heure_fin.split(':').map(Number)
     const dateDebut = new Date(dateObj); dateDebut.setHours(hDebut, mDebut, 0)
@@ -590,6 +598,9 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
       .map((p) => ({ ref_planning_id: p.ref_planning_id }))
     await updatePlanning(id, payload)
     setShowEditModal(false)
+    // RDV décalé à un autre jour alors que le client avait déjà rempli son questionnaire :
+    // proposer de le réinitialiser pour qu'il le remplisse à neuf pour la nouvelle date.
+    if (dayChanged && questionnaireDejaRempli) setShowResetQuestionnaireConfirm(true)
   }
 
   const handleDelete = async () => {
@@ -743,6 +754,44 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
       setShowQuestionnaireDirectModal(false)
     } catch (err: any) {
       alert(`Erreur lors de l'enregistrement : ${err?.message ?? 'inconnue'}`)
+    }
+  }
+
+  // Réinitialise le questionnaire de forme du RDV (ex. après décalage de la date) :
+  // efface les réponses du client et supprime les anciennes notifications de rappel,
+  // pour qu'il reparte de zéro lors du prochain "Rappel rdv".
+  const handleResetQuestionnaire = async () => {
+    setResettingQuestionnaire(true)
+    try {
+      await updatePlanning(id, {
+        qualite_sommeil: null,
+        niveau_fatigue: null,
+        niveau_courbatures: null,
+        quantite_stress: null,
+        motivation_avant_seance: null,
+        activite_derniers_jours: null,
+        alimentation_derniers_jours: null,
+        infos_complementaire_avant_seance_client: '',
+        douleurs: [],
+        questionnaire_rempli: false,
+        indice_hooper: null,
+        questionnaire_editable_until: null,
+      } as any)
+      // Purge les notifications QUESTIONNAIRE_FORME liées à ce RDV (rappel devient renvoyable proprement)
+      try {
+        const planningRef = doc(db, 'planning_pro', id)
+        const snap = await getDocs(query(
+          collection(db, 'Notifications'),
+          where('type_notification', '==', 'QUESTIONNAIRE_FORME'),
+          where('ref_planning', '==', planningRef),
+        ))
+        await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)))
+      } catch { /* silencieux */ }
+      setShowResetQuestionnaireConfirm(false)
+    } catch (err: any) {
+      alert(`Erreur lors de la réinitialisation : ${err?.message ?? 'inconnue'}`)
+    } finally {
+      setResettingQuestionnaire(false)
     }
   }
 
@@ -1336,6 +1385,12 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                   className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
                   {questionnaireRempli ? 'Modifier' : 'Remplir'}
                 </button>
+                {questionnaireRempli && (
+                  <button onClick={() => setShowResetQuestionnaireConfirm(true)}
+                    className="text-xs text-red-600 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-50 transition">
+                    Réinitialiser
+                  </button>
+                )}
                 <button onClick={handleSendSMS}
                   className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition">
                   Rappel rdv
@@ -2225,42 +2280,74 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
       {/* Modal CR de RDV */}
       <Modal isOpen={showCrModal} onClose={() => setShowCrModal(false)} title="Compte rendu de RDV" size="lg">
-        <div className="space-y-4">
-          <textarea value={crValue} onChange={(e) => setCrValue(e.target.value)}
-            rows={6} placeholder="Rédigez votre compte rendu..."
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          />
-          <div className="flex gap-3">
-            <button onClick={() => setShowCrModal(false)}
-              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
-              Annuler
-            </button>
-            <button onClick={async () => { await updatePlanning(id, { observations_rdv: crValue } as any); setShowCrModal(false) }}
-              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
-              Enregistrer
-            </button>
-          </div>
-        </div>
+        {(() => {
+          const linkedIds = ((planning as any)?.participants_supplementaires as any[] || [])
+            .map((p: any) => typeof p.ref_planning_id === 'string' ? p.ref_planning_id : '').filter(Boolean)
+          return (
+            <div className="space-y-4">
+              <textarea value={crValue} onChange={(e) => setCrValue(e.target.value)}
+                rows={6} placeholder="Rédigez votre compte rendu..."
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+              {isAdmin && linkedIds.length > 0 && (
+                <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+                  <input type="checkbox" checked={crDupliquer} onChange={(e) => setCrDupliquer(e.target.checked)}
+                    className="w-4 h-4 rounded accent-blue-600" />
+                  Dupliquer sur les {linkedIds.length} RDV{linkedIds.length > 1 ? 's' : ''} lié{linkedIds.length > 1 ? 's' : ''}
+                </label>
+              )}
+              <div className="flex gap-3">
+                <button onClick={() => setShowCrModal(false)}
+                  className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+                  Annuler
+                </button>
+                <button onClick={async () => {
+                  await updatePlanning(id, { observations_rdv: crValue } as any)
+                  if (crDupliquer) await Promise.all(linkedIds.map((lpId: string) => updatePlanning(lpId, { observations_rdv: crValue } as any)))
+                  setShowCrModal(false)
+                }} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+                  Enregistrer
+                </button>
+              </div>
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* Modal commentaire coach */}
       <Modal isOpen={showCrCoachModal} onClose={() => setShowCrCoachModal(false)} title="Commentaire coach" size="lg">
-        <div className="space-y-4">
-          <textarea value={crCoachValue} onChange={(e) => setCrCoachValue(e.target.value)}
-            rows={6} placeholder="Votre commentaire..."
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          />
-          <div className="flex gap-3">
-            <button onClick={() => setShowCrCoachModal(false)}
-              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
-              Annuler
-            </button>
-            <button onClick={async () => { await updatePlanning(id, { cr_rdv_moi: crCoachValue } as any); setShowCrCoachModal(false) }}
-              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
-              Enregistrer
-            </button>
-          </div>
-        </div>
+        {(() => {
+          const linkedIds = ((planning as any)?.participants_supplementaires as any[] || [])
+            .map((p: any) => typeof p.ref_planning_id === 'string' ? p.ref_planning_id : '').filter(Boolean)
+          return (
+            <div className="space-y-4">
+              <textarea value={crCoachValue} onChange={(e) => setCrCoachValue(e.target.value)}
+                rows={6} placeholder="Votre commentaire..."
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+              {linkedIds.length > 0 && (
+                <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+                  <input type="checkbox" checked={crCoachDupliquer} onChange={(e) => setCrCoachDupliquer(e.target.checked)}
+                    className="w-4 h-4 rounded accent-blue-600" />
+                  Dupliquer sur les {linkedIds.length} RDV{linkedIds.length > 1 ? 's' : ''} lié{linkedIds.length > 1 ? 's' : ''}
+                </label>
+              )}
+              <div className="flex gap-3">
+                <button onClick={() => setShowCrCoachModal(false)}
+                  className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+                  Annuler
+                </button>
+                <button onClick={async () => {
+                  await updatePlanning(id, { cr_rdv_moi: crCoachValue } as any)
+                  if (crCoachDupliquer) await Promise.all(linkedIds.map((lpId: string) => updatePlanning(lpId, { cr_rdv_moi: crCoachValue } as any)))
+                  setShowCrCoachModal(false)
+                }} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+                  Enregistrer
+                </button>
+              </div>
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* Modal commentaire client */}
@@ -2874,6 +2961,24 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
           <button onClick={() => deleteSeanceConfirm && handleDeleteSeance(deleteSeanceConfirm)}
             className="flex-1 bg-red-500 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition">
             Supprimer
+          </button>
+        </div>
+      </Modal>
+
+      {/* Confirmation réinitialisation questionnaire */}
+      <Modal isOpen={showResetQuestionnaireConfirm} onClose={() => setShowResetQuestionnaireConfirm(false)} title="Réinitialiser le questionnaire ?" size="sm">
+        <p className="text-sm text-gray-600 mb-4">
+          Les réponses du client (sommeil, fatigue, douleurs, commentaire, indice Hooper…) seront effacées pour ce RDV.
+          Utile après un décalage de date : le client pourra le remplir à nouveau lors du prochain rappel. Cette action est irréversible.
+        </p>
+        <div className="flex gap-3">
+          <button onClick={() => setShowResetQuestionnaireConfirm(false)}
+            className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+            Annuler
+          </button>
+          <button onClick={handleResetQuestionnaire} disabled={resettingQuestionnaire}
+            className="flex-1 bg-red-500 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition disabled:opacity-50">
+            {resettingQuestionnaire ? 'Réinitialisation…' : 'Réinitialiser'}
           </button>
         </div>
       </Modal>

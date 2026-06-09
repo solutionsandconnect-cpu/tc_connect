@@ -1473,9 +1473,10 @@ export default function ClientsPage() {
       setExpiringAbos(expiring);
 
       if (!notifSentRef.current && expiring.length) {
+        const today = new Date().toISOString().split("T")[0];
         const key = `tc_abo_notif_${currentUser.uid}`;
-        const last = localStorage.getItem(key);
-        if (!last || Date.now() - Number(last) > 86400000) {
+        // Garde-fou local ; la déduplication entre appareils est assurée côté serveur (dedupeKey).
+        if (localStorage.getItem(key) !== today) {
           notifSentRef.current = true;
           const now = Date.now();
           const overdue = expiring.filter((a) => (a.dateFin as any).toMillis() < now);
@@ -1484,8 +1485,8 @@ export default function ClientsPage() {
             overdue.length ? `${overdue.length} abonnement${overdue.length > 1 ? "s" : ""} expiré${overdue.length > 1 ? "s" : ""}` : "",
             soon.length ? `${soon.length} abonnement${soon.length > 1 ? "s" : ""} expire${soon.length > 1 ? "nt" : ""} sous 15 j` : "",
           ].filter(Boolean).join(" · ");
-          fetch("/api/push/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: currentUser.uid, persist: true, type: "ABONNEMENT", title: "Abonnements à renouveler", body: msg, url: "/clients" }) }).catch(() => {});
-          localStorage.setItem(key, String(Date.now()));
+          fetch("/api/push/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: currentUser.uid, persist: true, type: "ABONNEMENT", title: "Abonnements à renouveler", body: msg, url: "/clients", dedupeKey: `abo_${currentUser.uid}_${today}` }) }).catch(() => {});
+          localStorage.setItem(key, today);
         }
       }
     });
@@ -1560,6 +1561,7 @@ export default function ClientsPage() {
           title: "Toutes les séances effectuées",
           body: `${clientName} — ${abo.categorie} : ${abo.nbSeancesTotal} séances réalisées. Renouvellement à prévoir.`,
           url: "/clients",
+          dedupeKey: `sessions_done_${abo.id}`,
         }),
       }).catch(() => {});
       localStorage.setItem(storageKey, "1");

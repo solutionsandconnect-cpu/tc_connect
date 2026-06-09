@@ -169,6 +169,7 @@ export default function QuestionnairePage() {
   })
   const [commentaire, setCommentaire] = useState('')
   const [douleurs, setDouleurs] = useState<PainPoint[]>([])
+  const [clientName, setClientName] = useState('')
 
   useEffect(() => {
     const fetch = async () => {
@@ -187,6 +188,16 @@ export default function QuestionnairePage() {
         })
         setCommentaire(data.infos_complementaire_avant_seance_client || '')
         setDouleurs(data.douleurs ?? [])
+        // Charger le nom du client pour les notifications
+        const uid = data.ref_users?.id ?? data.ref_client?.id ?? null
+        if (uid) {
+          getDoc(doc(db, 'users', uid)).then((uSnap) => {
+            if (uSnap.exists()) {
+              const u = uSnap.data() as any
+              setClientName([u.prenom, u.nom].filter(Boolean).join(' '))
+            }
+          }).catch(() => {})
+        }
       }
       setLoading(false)
     }
@@ -226,29 +237,33 @@ export default function QuestionnairePage() {
       )).then((snap) => {
         snap.docs.forEach((d) => updateDoc(d.ref, { etat_notification: 'Lu', date_lecture: new Date() }).catch(() => {}))
       }).catch(() => {})
+      const dateRdv = planning?.date_planning?.toDate?.()
+      const dateStr = dateRdv
+        ? dateRdv.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+        : null
+      const notifBody = [clientName, dateStr].filter(Boolean).join(' — ')
+
       if (wasAlreadyFilled) {
-        // Notification de modification (push + Firestore pour les admins)
         fetch('/api/push/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             toAdmins: true,
             title: 'Questionnaire modifié',
-            body: 'Un client vient de modifier son questionnaire de forme.',
+            body: notifBody || 'Un client vient de modifier son questionnaire de forme.',
             url: `/planning/${id}`,
             persist: true,
             type: 'QUESTIONNAIRE_MODIFICATION',
           }),
         }).catch(() => {})
       } else {
-        // Notification de premier remplissage (push + Firestore pour les admins)
         fetch('/api/push/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             toAdmins: true,
             title: 'Questionnaire rempli',
-            body: 'Un client vient de remplir son questionnaire de forme.',
+            body: notifBody || 'Un client vient de remplir son questionnaire de forme.',
             url: `/planning/${id}`,
             persist: true,
             type: 'QUESTIONNAIRE_FORME',

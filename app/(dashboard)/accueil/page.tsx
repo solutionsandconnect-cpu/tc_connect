@@ -122,6 +122,8 @@ export default function AccueilPage() {
             url: '/facturation?tab=devis',
             persist: true,
             type: 'FACTURE_ECHEANCE',
+            // Déduplication serveur partagée entre appareils (localStorage = garde-fou local).
+            dedupeKey: `ech_${devis.id}_${index}_${today}`,
           }),
         }).catch(() => {})
         localStorage.setItem(storageKey, '1')

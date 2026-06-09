@@ -31,9 +31,11 @@ export default function DashboardLayout({
   // Vérifie les abonnements à renouveler (admin) dès l'ouverture de l'app — une fois par jour.
   useEffect(() => {
     if (!currentUser || userProfile?.role_app !== 'Admin') return
+    const today = new Date().toISOString().split('T')[0]
     const KEY = `tc_abo_notif_${currentUser.uid}`
-    const last = localStorage.getItem(KEY)
-    if (last && Date.now() - Number(last) < 86400000) return
+    // Garde-fou local (évite un appel réseau inutile sur le même appareil dans la journée).
+    // La déduplication réelle entre appareils est assurée côté serveur via dedupeKey.
+    if (localStorage.getItem(KEY) === today) return
     ;(async () => {
       try {
         const snap = await getDocs(query(
@@ -62,9 +64,10 @@ export default function DashboardLayout({
             title: 'Abonnements à renouveler',
             body: msg,
             url: '/clients',
+            dedupeKey: `abo_${currentUser.uid}_${today}`,
           }),
         })
-        localStorage.setItem(KEY, String(Date.now()))
+        localStorage.setItem(KEY, today)
       } catch { /* silencieux */ }
     })()
   }, [currentUser, userProfile])

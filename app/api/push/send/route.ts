@@ -20,6 +20,24 @@ async function persistForAdmins(title: string, body: string, url?: string, type 
   ))
 }
 
+// Réserve atomiquement une clé d'envoi pour éviter les doublons entre appareils.
+// Retourne true si l'envoi doit avoir lieu, false si une notification identique a déjà été émise.
+// (localStorage côté client ne suffit pas : il est propre à chaque appareil/navigateur.)
+async function claimDedupe(dedupeKey: string): Promise<boolean> {
+  const db = getAdminDb()
+  try {
+    // create() échoue si le document existe déjà → garde-fou atomique, sûr en cas de course.
+    await db.collection('notif_dedupe').doc(dedupeKey).create({
+      createdAt: FieldValue.serverTimestamp(),
+    })
+    return true
+  } catch (err: any) {
+    // Code 6 = ALREADY_EXISTS : une autre session a déjà envoyé cette notification.
+    if (err?.code === 6 || /already exists/i.test(err?.message ?? '')) return false
+    throw err
+  }
+}
+
 // Persiste une notification pour un utilisateur précis (section "Notifications" de son app).
 async function persistForUser(userId: string, title: string, body: string, url?: string, type = 'PARCOURS') {
   const db = getAdminDb()
@@ -35,8 +53,14 @@ async function persistForUser(userId: string, title: string, body: string, url?:
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId, toAdmins, title, body, url, persist, type } = await req.json()
+    const { userId, toAdmins, title, body, url, persist, type, dedupeKey } = await req.json()
     const payload = { title: title || 'TC Connect', body: body || '', url }
+
+    // Déduplication inter-appareils : si cette clé a déjà été émise, on n'envoie rien.
+    if (dedupeKey) {
+      const shouldSend = await claimDedupe(String(dedupeKey))
+      if (!shouldSend) return NextResponse.json({ ok: true, deduped: true })
+    }
 
     if (toAdmins) {
       await sendPushToAdmins(payload)
