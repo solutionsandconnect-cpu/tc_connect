@@ -122,7 +122,7 @@ export default function TripModal({ isOpen, onClose, trip, templates = [], onCre
 
         {/* Catégorie */}
         {(() => {
-          const PRESET_TYPES = ['shopping', 'event', 'home', 'work', 'sport', 'other']
+          const PRESET_TYPES = ['vacances', 'shopping', 'event', 'home', 'work', 'sport', 'other']
           const isPreset = TRIP_TYPES.some(t => t.value === form.type && PRESET_TYPES.includes(t.value))
           const isCustom = !TRIP_TYPES.some(t => t.value === form.type)
           const btnClass = (active: boolean) =>

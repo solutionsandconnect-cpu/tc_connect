@@ -2,6 +2,7 @@ import type { TripType } from '@/types'
 
 export const TRIP_TYPES: { value: TripType; label: string; icon: string }[] = [
   // Voyage
+  { value: 'vacances', label: 'Vacances',   icon: '🌴' },
   { value: 'hotel',    label: 'Hôtel',      icon: '🏨' },
   { value: 'camping',  label: 'Camping',    icon: '⛺' },
   { value: 'airbnb',   label: 'Airbnb',     icon: '🏡' },

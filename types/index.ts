@@ -706,6 +706,7 @@ export interface BebeEvent {
 // ─── CheckConnect (listes / checklists) ────────────────────────────────────────
 
 export type TripType =
+  | 'vacances'
   | 'hotel' | 'camping' | 'airbnb' | 'roadtrip' | 'cruise'
   | 'ski' | 'city' | 'beach'
   | 'shopping' | 'event' | 'home' | 'work' | 'sport'

@@ -38,15 +38,20 @@ export default function DashboardLayout({
     if (localStorage.getItem(KEY) === today) return
     ;(async () => {
       try {
-        const snap = await getDocs(query(
-          collection(db, 'abonnements'),
-          where('userId', '==', currentUser.uid),
-        ))
+        const [abosSnap, clientsSnap] = await Promise.all([
+          getDocs(query(collection(db, 'abonnements'), where('userId', '==', currentUser.uid))),
+          getDocs(query(collection(db, 'clients'), where('userId', '==', currentUser.uid))),
+        ])
+        // Mêmes exclusions que l'affichage de la rubrique Clients : on ignore les abos
+        // dont le client est supprimé (orphelin) ou désactivé (actif === false).
+        const activeClientIds = new Set(
+          clientsSnap.docs.filter(d => (d.data() as any).actif !== false).map(d => d.id)
+        )
         const in30 = Date.now() + 15 * 86400000
         const now = Date.now()
-        const expiring = snap.docs
+        const expiring = abosSnap.docs
           .map(d => d.data() as any)
-          .filter(a => a.etat === 'Actif' && a.dateFin && a.dateFin.toMillis() <= in30)
+          .filter(a => a.etat === 'Actif' && a.dateFin && a.dateFin.toMillis() <= in30 && activeClientIds.has(a.clientId))
         if (expiring.length === 0) return
         const overdue = expiring.filter(a => a.dateFin.toMillis() < now)
         const soon = expiring.filter(a => a.dateFin.toMillis() >= now)
@@ -133,6 +138,7 @@ export default function DashboardLayout({
   const quitImpersonation = async () => {
     const adminToken = impersonation?.adminToken
     localStorage.removeItem('tc_impersonation')
+    setImpersonation(null) // masque le bandeau immédiatement (le layout ne se remonte pas au retour)
     if (adminToken) {
       try {
         await signInWithCustomToken(auth, adminToken)

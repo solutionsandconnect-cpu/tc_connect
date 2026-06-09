@@ -46,6 +46,18 @@ export function tripProgress(trip: Trip): { done: number; total: number; pct: nu
   return { done, total, pct: total === 0 ? 0 : Math.round((done / total) * 100) }
 }
 
+/** Progression en quantités : somme des qtyReady (plafonnée à l'effectif) sur somme des qtyEffective */
+export function tripQtyProgress(trip: Trip): { readyQty: number; totalQty: number } {
+  const nbJours = nbJoursOf(trip)
+  let readyQty = 0, totalQty = 0
+  trip.sections.forEach(s => s.items.forEach(it => {
+    const eff = qtyEffective(it, nbJours)
+    totalQty += eff
+    readyQty += Math.min(it.qtyReady, eff)
+  }))
+  return { readyQty, totalQty }
+}
+
 /** Construit un membre depuis un profil utilisateur (sans champ undefined) */
 export function memberFromUser(u: Pick<User, 'uid' | 'nom' | 'prenom' | 'email' | 'photo_url'>, role: TripMember['role']): TripMember {
   const m: TripMember = {

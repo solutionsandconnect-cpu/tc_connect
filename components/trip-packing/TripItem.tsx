@@ -287,12 +287,12 @@ export default function TripItem({
             <div>
               <label className="block text-[11px] font-medium text-gray-500 mb-1">Par jour (×)</label>
               <div className="flex items-center gap-1">
-                <button onClick={() => onUpdate({ multiplier: Math.max(0, Math.round(item.multiplier) - 1) })} aria-label="Moins"
+                <button onClick={() => onUpdate({ multiplier: item.multiplier <= 1 ? 0 : item.multiplier - 0.5 })} aria-label="Moins"
                   className="w-7 h-7 rounded-md bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center transition">
                   <MinusIcon className="w-3.5 h-3.5" />
                 </button>
                 <span className="text-sm font-semibold tabular-nums w-8 text-center">{item.multiplier || '—'}</span>
-                <button onClick={() => onUpdate({ multiplier: Math.round(item.multiplier) + 1 })} aria-label="Plus"
+                <button onClick={() => onUpdate({ multiplier: item.multiplier < 1 ? 1 : item.multiplier + 0.5 })} aria-label="Plus"
                   className="w-7 h-7 rounded-md bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 flex items-center justify-center transition">
                   <PlusIcon className="w-3.5 h-3.5" />
                 </button>

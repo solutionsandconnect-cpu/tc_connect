@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useTripDetail } from '@/hooks/useTripDetail'
 import { useUserPhotoMap } from '@/hooks/useUserPhotoMap'
-import { tripProgress, nbJoursOf, saveAsTemplate, resetTripReady, deleteTrip, archiveTrip, memberCan, memberCanToggle } from '@/lib/tripsService'
+import { tripProgress, tripQtyProgress, nbJoursOf, saveAsTemplate, resetTripReady, deleteTrip, archiveTrip, memberCan, memberCanToggle } from '@/lib/tripsService'
 import { tripTypeLabel, SUGGESTED_SECTIONS } from './constants'
 import TripProgressBar from './TripProgressBar'
 import TripSection from './TripSection'
@@ -13,8 +13,12 @@ import ShareModal from './modals/ShareModal'
 import Modal from '@/components/ui/Modal'
 import {
   PencilIcon, ShareIcon, BookmarkIcon, ArrowPathIcon, TrashIcon, PlusIcon, ChevronLeftIcon,
-  CheckCircleIcon, ArchiveBoxIcon, ArchiveBoxArrowDownIcon,
+  CheckCircleIcon, ArchiveBoxIcon, ArchiveBoxArrowDownIcon, MagnifyingGlassIcon, XMarkIcon,
+  ChevronUpIcon, ChevronDownIcon,
 } from '@heroicons/react/24/outline'
+
+// Normalisation pour la recherche : minuscules + suppression des accents
+const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
 type Filter = 'all' | 'todo' | 'done'
 
@@ -42,6 +46,8 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
   } = useTripDetail(tripId)
 
   const [filter, setFilter] = useState<Filter>('all')
+  const [search, setSearch] = useState('')
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [sectionFilter, setSectionFilter] = useState<string>('all')
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all')
   const [newSection, setNewSection] = useState('')
@@ -79,6 +85,26 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
   const sortedSections = sectionFilter === 'all'
     ? allSortedSections
     : allSortedSections.filter(s => s.id === sectionFilter)
+
+  const searchQ = norm(search.trim())
+  const searchActive = !!searchQ
+  // Un résultat = section dont le titre correspond, OU section contenant un article correspondant
+  const hasResults = !searchActive || sortedSections.some(s =>
+    norm(s.title).includes(searchQ) ||
+    s.items.some(it => norm(it.name).includes(searchQ) || (it.note ? norm(it.note).includes(searchQ) : false))
+  )
+
+  const qtyProg = tripQtyProgress(trip)
+
+  const allCollapsed = allSortedSections.length > 0 && allSortedSections.every(s => collapsedSections.has(s.id))
+  const collapseAll = () => setCollapsedSections(new Set(allSortedSections.map(s => s.id)))
+  const expandAll = () => setCollapsedSections(new Set())
+  const toggleSectionCollapse = (sectionId: string) =>
+    setCollapsedSections(prev => {
+      const next = new Set(prev)
+      if (next.has(sectionId)) next.delete(sectionId); else next.add(sectionId)
+      return next
+    })
 
   const dFrom = trip.dateFrom?.toDate?.()
   const dTo = trip.dateTo?.toDate?.()
@@ -266,8 +292,29 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
       {!trip.isTemplate && progress.total > 0 && (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
           <TripProgressBar {...progress} />
+          <p className="text-xs text-gray-400 mt-2">
+            {qtyProg.readyQty} / {qtyProg.totalQty} unité{qtyProg.totalQty > 1 ? 's' : ''} prête{qtyProg.readyQty > 1 ? 's' : ''} (quantités)
+          </p>
         </div>
       )}
+
+      {/* Recherche globale */}
+      <div className="relative">
+        <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Rechercher dans toute la CheckConnect…"
+          className="w-full text-sm border border-gray-200 rounded-xl pl-9 pr-9 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+        />
+        {search && (
+          <button onClick={() => setSearch('')} aria-label="Effacer la recherche"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600 transition">
+            <XMarkIcon className="w-4 h-4" />
+          </button>
+        )}
+      </div>
 
       {/* Filtres */}
       <div className="flex flex-wrap items-center gap-2">
@@ -300,6 +347,18 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
             <option value="none">Non assigné</option>
           </select>
         )}
+
+        {/* Tout réduire / développer */}
+        {allSortedSections.length > 1 && (
+          <button
+            onClick={() => allCollapsed ? expandAll() : collapseAll()}
+            className="flex items-center gap-1.5 text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-600 hover:bg-gray-50 transition ml-auto">
+            {allCollapsed
+              ? <><ChevronDownIcon className="w-4 h-4" /> Tout développer</>
+              : <><ChevronUpIcon className="w-4 h-4" /> Tout réduire</>
+            }
+          </button>
+        )}
       </div>
 
       {/* Sections */}
@@ -313,6 +372,9 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
             tripId={trip.id}
             filter={filter}
             assigneeFilter={assigneeFilter}
+            search={search}
+            collapsed={collapsedSections.has(section.id)}
+            onToggleCollapse={() => toggleSectionCollapse(section.id)}
             isFirst={i === 0}
             isLast={i === sortedSections.length - 1}
             canEditSection={canAddSections}
@@ -340,8 +402,13 @@ export default function TripDetail({ tripId, onDeleted, onBack, notify }: Props)
           />
         ))}
 
-        {/* Ajout de section (droits requis) */}
-        {canAddSections && (
+        {/* Aucun résultat de recherche */}
+        {searchActive && !hasResults && (
+          <p className="text-center py-8 text-sm text-gray-400">Aucun résultat pour «&nbsp;{search.trim()}&nbsp;».</p>
+        )}
+
+        {/* Ajout de section (droits requis) — masqué pendant une recherche */}
+        {canAddSections && !searchActive && (
           <div className="flex items-center gap-2 bg-white rounded-2xl border border-dashed border-gray-200 p-3">
             <div className="flex-1 relative">
               <input

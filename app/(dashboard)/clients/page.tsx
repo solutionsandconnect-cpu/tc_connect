@@ -1191,7 +1191,9 @@ function AboNotesPanel({ value, onChange }: { value: Array<{ texte: string; type
 // ── Composant abonnement row ──────────────────────────────────────────────────
 
 function aboExpiryAlert(abo: Abonnement): { label: string; cls: string } | null {
-  if (!abo.dateFin || abo.etat === "Inactif") return null
+  // Seul un abonnement Actif peut être "à échéance" ou "expiré".
+  // Un Prospect (ou Inactif) ne doit jamais apparaître comme expiré ni déclencher d'alerte.
+  if (!abo.dateFin || abo.etat !== "Actif") return null
   const now = Date.now()
   const endMs = abo.dateFin.toMillis()
   const diffDays = Math.round((endMs - now) / 86400000)
@@ -1452,7 +1454,6 @@ export default function ClientsPage() {
   const [allAbosLoaded, setAllAbosLoaded] = useState(false);
   const [expiringAbos, setExpiringAbos] = useState<Abonnement[]>([]);
   const [rdvCountsMap, setRdvCountsMap] = useState<Record<string, number>>({});
-  const notifSentRef = useRef(false);
   const sessionsDoneNotifRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -1471,24 +1472,8 @@ export default function ClientsPage() {
         a.etat === "Actif" && a.dateFin && (a.dateFin as any).toMillis() <= in30
       );
       setExpiringAbos(expiring);
-
-      if (!notifSentRef.current && expiring.length) {
-        const today = new Date().toISOString().split("T")[0];
-        const key = `tc_abo_notif_${currentUser.uid}`;
-        // Garde-fou local ; la déduplication entre appareils est assurée côté serveur (dedupeKey).
-        if (localStorage.getItem(key) !== today) {
-          notifSentRef.current = true;
-          const now = Date.now();
-          const overdue = expiring.filter((a) => (a.dateFin as any).toMillis() < now);
-          const soon = expiring.filter((a) => (a.dateFin as any).toMillis() >= now);
-          const msg = [
-            overdue.length ? `${overdue.length} abonnement${overdue.length > 1 ? "s" : ""} expiré${overdue.length > 1 ? "s" : ""}` : "",
-            soon.length ? `${soon.length} abonnement${soon.length > 1 ? "s" : ""} expire${soon.length > 1 ? "nt" : ""} sous 15 j` : "",
-          ].filter(Boolean).join(" · ");
-          fetch("/api/push/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: currentUser.uid, persist: true, type: "ABONNEMENT", title: "Abonnements à renouveler", body: msg, url: "/clients", dedupeKey: `abo_${currentUser.uid}_${today}` }) }).catch(() => {});
-          localStorage.setItem(key, today);
-        }
-      }
+      // La notification push "Abonnements à renouveler" est envoyée (et dédupliquée) depuis
+      // le layout du dashboard, avec la même exclusion des clients supprimés/désactivés.
     });
     return unsub;
   }, [currentUser]);

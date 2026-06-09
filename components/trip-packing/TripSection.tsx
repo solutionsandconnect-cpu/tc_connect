@@ -13,6 +13,9 @@ import {
 
 type Filter = 'all' | 'todo' | 'done'
 
+// Normalisation pour la recherche : minuscules + suppression des accents
+const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
 interface Props {
   section: TripSectionType
   nbJours: number | null
@@ -20,6 +23,9 @@ interface Props {
   tripId: string
   filter: Filter
   assigneeFilter: string
+  search?: string
+  collapsed?: boolean
+  onToggleCollapse?: () => void
   isFirst: boolean
   isLast: boolean
   canEditSection?: boolean
@@ -47,12 +53,11 @@ interface Props {
 }
 
 export default function TripSection({
-  section, nbJours, members, tripId, filter, assigneeFilter, isFirst, isLast,
+  section, nbJours, members, tripId, filter, assigneeFilter, search = '', collapsed = false, onToggleCollapse, isFirst, isLast,
   canEditSection = true, canAddItems = true, currentUserId = '', currentMember, isOwner = false, photoMap = {}, allItemNames = [], allSections = [],
   onCheckAll, onUncheckAll, onRename, onDelete, onMove, onDuplicateSection, onAddItem,
   onUpdateItem, onDeleteItem, onMoveItem, onToggleItem, onSetReady, onDuplicateItem, onMoveItemToSection,
 }: Props) {
-  const [collapsed, setCollapsed] = useState(false)
   const [editing, setEditing] = useState(false)
   const [titleDraft, setTitleDraft] = useState(section.title)
   const [newItem, setNewItem] = useState('')
@@ -64,6 +69,9 @@ export default function TripSection({
   const total = sortedItems.length
   const done = sortedItems.filter(it => isItemDone(it, nbJours)).length
 
+  const searchQ = norm(search.trim())
+  // Si le titre de la section correspond, on affiche toute la section (sans filtrer ses articles par la recherche)
+  const titleMatch = !!searchQ && norm(section.title).includes(searchQ)
   const visibleItems = sortedItems.filter(it => {
     // Filtre statut
     if (filter === 'todo' && isItemDone(it, nbJours)) return false
@@ -71,8 +79,13 @@ export default function TripSection({
     // Filtre responsable
     if (assigneeFilter === 'none' && it.assigneeId) return false
     if (assigneeFilter !== 'all' && assigneeFilter !== 'none' && it.assigneeId !== assigneeFilter) return false
+    // Recherche (nom + note) — ignorée si le titre de la section correspond déjà
+    if (searchQ && !titleMatch && !norm(it.name).includes(searchQ) && !(it.note && norm(it.note).includes(searchQ))) return false
     return true
   })
+
+  // Pendant une recherche, on masque les sections sans correspondance (ni titre, ni article)
+  if (searchQ && !titleMatch && visibleItems.length === 0) return null
 
   const commitTitle = () => {
     const v = titleDraft.trim()
@@ -129,7 +142,7 @@ export default function TripSection({
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
       {/* En-tête section — toute la barre replie/déplie (sauf zones interactives) */}
       <div
-        onClick={() => !editing && setCollapsed(c => !c)}
+        onClick={() => !editing && onToggleCollapse?.()}
         className="flex items-center gap-2 px-4 py-3 border-b border-gray-50 cursor-pointer select-none"
       >
         {/* Indicateur replier (visuel — le clic est géré par la barre entière) */}
@@ -249,7 +262,7 @@ export default function TripSection({
         )}
       </div>
 
-      {!collapsed && (
+      {(!collapsed || !!searchQ) && (
         <div className="p-3 space-y-2">
           {visibleItems.length === 0 ? (
             <p className="text-xs text-gray-400 text-center py-3">
