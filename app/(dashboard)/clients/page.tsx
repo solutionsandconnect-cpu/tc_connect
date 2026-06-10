@@ -1203,7 +1203,7 @@ function aboExpiryAlert(abo: Abonnement): { label: string; cls: string } | null 
   return null
 }
 
-function AboCard({ abo, onEdit, onDelete, onClick, displayName, isHighlighted }: { abo: Abonnement; onEdit: () => void; onDelete: () => void; onClick: () => void; displayName?: string; isHighlighted?: boolean }) {
+function AboCard({ abo, onEdit, onDelete, onClick, displayName, isHighlighted, rdvCount }: { abo: Abonnement; onEdit: () => void; onDelete: () => void; onClick: () => void; displayName?: string; isHighlighted?: boolean; rdvCount?: number }) {
   const expiryAlert = aboExpiryAlert(abo)
   const missingFields = !abo.categorie || !abo.companyId || !abo.dateDebut || !abo.etat
   const title = displayName ?? ((abo.titre && abo.titre !== '0' && !abo.titre.endsWith('N°0')) ? abo.titre : abo.categorie)
@@ -1228,7 +1228,14 @@ function AboCard({ abo, onEdit, onDelete, onClick, displayName, isHighlighted }:
         {abo.tarifUnitaire != null && abo.tarifUnitaire > 0 && (
           <div className="text-xs font-semibold text-gray-700 mt-0.5">{abo.tarifUnitaire} € {abo.tarifLabel ?? ""}</div>
         )}
-        <span className={`inline-block mt-1 px-1.5 py-0.5 rounded text-xs font-medium ${ETAT_STYLE[abo.etat] ?? "bg-gray-100 text-gray-600"}`}>{abo.etat}</span>
+        <div className="flex items-center gap-2 mt-1 flex-wrap">
+          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${ETAT_STYLE[abo.etat] ?? "bg-gray-100 text-gray-600"}`}>{abo.etat}</span>
+          {rdvCount !== undefined && (
+            <span className="text-xs text-gray-500">
+              {abo.nbSeancesTotal ? `${rdvCount} / ${abo.nbSeancesTotal} rdv` : `${rdvCount} rdv`}
+            </span>
+          )}
+        </div>
       </div>
       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition shrink-0 pt-0.5">
         <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1 rounded hover:bg-gray-200 text-gray-500 transition" title="Modifier">
@@ -1248,10 +1255,11 @@ function isSCOnly(abonnements: Abonnement[]) {
   )
 }
 
-function ClientRow({ client, isAdmin, abonnements, aboLoading, collapseAllTick, highlightAboId, onEdit, onDelete, onAddAbo, onEditAbo, onDeleteAbo, onViewAbo }: {
+function ClientRow({ client, isAdmin, abonnements, aboLoading, collapseAllTick, highlightAboId, rdvCountsMap, onEdit, onDelete, onAddAbo, onEditAbo, onDeleteAbo, onViewAbo }: {
   client: Client; isAdmin: boolean;
   abonnements: Abonnement[]; aboLoading: boolean;
   collapseAllTick?: number; highlightAboId?: string;
+  rdvCountsMap: Record<string, number>;
   onEdit: (sc: boolean) => void; onDelete: () => void; onAddAbo: () => void;
   onEditAbo: (a: Abonnement) => void; onDeleteAbo: (id: string) => void;
   onViewAbo: (a: Abonnement, linkedUserId: string | undefined) => void;
@@ -1414,6 +1422,7 @@ function ClientRow({ client, isAdmin, abonnements, aboLoading, collapseAllTick, 
                   <div key={a.id} ref={highlightAboId === a.id ? highlightRef : null}>
                     <AboCard abo={a}
                       displayName={aboNumbers[a.id] ? `${a.categorie} - N°${aboNumbers[a.id]}` : a.categorie}
+                      rdvCount={rdvCountsMap[`${client.id}_${a.id}`]}
                       onClick={() => onViewAbo(a, client.linkedUserId)}
                       onEdit={() => onEditAbo(a)}
                       onDelete={() => onDeleteAbo(a.id)}
@@ -1478,7 +1487,7 @@ export default function ClientsPage() {
     return unsub;
   }, [currentUser]);
 
-  // Charger le nb de rdv effectués pour les abos actifs avec nbSeancesTotal
+  // Charger le nb de rdv effectués pour tous les abos
   useEffect(() => {
     if (!allAbosLoaded || clients.length === 0) return;
     let cancelled = false;
@@ -1487,21 +1496,24 @@ export default function ClientsPage() {
       for (const client of clients) {
         const linkedUserId = (client as any).linkedUserId as string | undefined;
         if (!linkedUserId) continue;
-        const activeAbos = (allAbosMap[client.id] ?? []).filter(
-          (a) => a.etat === "Actif" && a.nbSeancesTotal && a.nbSeancesTotal > 0
-        );
-        if (activeAbos.length === 0) continue;
+        const clientAbos = allAbosMap[client.id] ?? [];
+        if (clientAbos.length === 0) continue;
         try {
-          const snap = await getDocs(
-            query(collection(db, "planning_pro"), where("ref_users", "==", linkedUserId))
-          );
-          const plannings = snap.docs.map((d) => d.data() as any);
-          for (const abo of activeAbos) {
+          const userRef = doc(db, "users", linkedUserId);
+          const [s1, s2] = await Promise.all([
+            getDocs(query(collection(db, "planning_pro"), where("ref_users", "==", userRef))).catch(() => ({ docs: [] as any[] })),
+            getDocs(query(collection(db, "planning_pro"), where("ref_client", "==", userRef))).catch(() => ({ docs: [] as any[] })),
+          ]);
+          const seen = new Set<string>();
+          const plannings = [...s1.docs, ...s2.docs]
+            .filter((d) => { if (seen.has(d.id)) return false; seen.add(d.id); return true; })
+            .map((d) => d.data() as any);
+          for (const abo of clientAbos) {
             const startMs = abo.dateDebut ? (abo.dateDebut as any).toMillis() : 0;
             const endMs = abo.dateFin ? (abo.dateFin as any).toMillis() : Date.now();
             counts[`${client.id}_${abo.id}`] = plannings.filter((p) => {
-              if (!p.date_planning) return false;
-              const ms = p.date_planning.seconds * 1000;
+              const ms = (p.date_planning?.seconds ?? p.heure_planning_debut?.seconds ?? 0) * 1000;
+              if (!ms) return false;
               return ms >= startMs && ms <= endMs;
             }).length;
           }
@@ -1843,6 +1855,7 @@ export default function ClientsPage() {
             aboLoading={!allAbosLoaded}
             collapseAllTick={collapseAllTick}
             highlightAboId={highlightAbo?.clientId === c.id ? highlightAbo.aboId : undefined}
+            rdvCountsMap={rdvCountsMap}
             onEdit={(sc) => setClientModal({ open: true, editing: c, isSC: sc })}
             onDelete={() => setConfirmDeleteClient(c.id)}
             onAddAbo={() => openAddAbo(c.id, c.objectifs ?? [])}

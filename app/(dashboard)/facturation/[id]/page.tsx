@@ -11,7 +11,6 @@ import { getCompany, listenCompanies } from "@/lib/companyService";
 import { getClient, updateClient } from "@/lib/clientService";
 import { downloadInvoicePDF, generateInvoicePDFBlob, itemNetTotal } from "@/lib/invoicePdf";
 import { uploadBlob } from "@/lib/uploadImage";
-import { addToCalendar, BILLING_CAL_ID } from "@/lib/googleCalendar";
 import { buildInvoiceEmailText } from "@/lib/invoiceEmailTemplate";
 import { Timestamp } from "firebase/firestore";
 import type { Facture, FactureItem, FactureStatus, Echeance, EcheanceRef, Company, Client } from "@/types";
@@ -229,19 +228,19 @@ function toDateInputValue(ts?: { seconds: number } | null) {
 
 // ── Google Agenda ─────────────────────────────────────────────────────────────
 
-async function addCalEvent(
-  title: string, date: Date, details: string,
-  setToast: (t: { msg: string; ok: boolean } | null) => void
-) {
-  try {
-    const dateAt12 = new Date(date);
-    dateAt12.setHours(12, 0, 0, 0);
-    const end = new Date(dateAt12.getTime() + 60 * 60 * 1000);
-    await addToCalendar(BILLING_CAL_ID, { summary: title, start: dateAt12, end, description: details });
-    setToast({ msg: "Événement ajouté à Google Agenda !", ok: true });
-  } catch (e: any) {
-    setToast({ msg: e.message?.includes("GOOGLE_CLIENT_ID") ? "Clé Google manquante (voir .env.local)" : "Erreur Google Agenda", ok: false });
-  }
+function addCalEvent(title: string, date: Date, details: string) {
+  const toGcal = (d: Date) =>
+    d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+  const start = new Date(date)
+  start.setHours(12, 0, 0, 0)
+  const end = new Date(start.getTime() + 60 * 60 * 1000)
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: title,
+    dates: `${toGcal(start)}/${toGcal(end)}`,
+    details,
+  })
+  window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, '_blank')
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -666,10 +665,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
   const docDate = documentDate ? new Date(documentDate) : (facture.createdAt ? new Date(facture.createdAt.seconds * 1000) : new Date());
 
   const gcalAdd = (title: string, date: Date, details: string) =>
-    addCalEvent(title, date, details, (t) => {
-      setToast(t);
-      if (t) setTimeout(() => setToast(null), 3500);
-    });
+    addCalEvent(title, date, details);
 
   return (
     <div className="min-h-screen">
@@ -1683,6 +1679,26 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                 <svg className="w-4 h-4 text-orange-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
                 Ajouter relance (J+30) au calendrier
               </button>
+              {!isDevis && (() => {
+                const mm = String(docDate.getMonth() + 1).padStart(2, '0')
+                const yyyy = docDate.getFullYear()
+                const seq = echeanceRef
+                  ? `(${echeanceRef.index + 1}/${echeanceRef.count})`
+                  : '(1/1)'
+                return (
+                  <button
+                    onClick={() => gcalAdd(
+                      `Encaiss ${fmtMoney(total)} ${facture.clientName} ${seq} ${mm}/${yyyy} ${calNum(facture.number)}`,
+                      docDate,
+                      `Montant : ${fmtMoney(total)} · ${facture.clientName}`
+                    )}
+                    className="flex items-center gap-2 w-full px-3 py-2.5 border rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    <svg className="w-4 h-4 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    Encaiss {seq} — {fmtMoney(total)} — {mm}/{yyyy}
+                  </button>
+                )
+              })()}
             </div>
           </div>
 

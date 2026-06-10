@@ -190,13 +190,14 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   const planning = plannings.find((p) => p.id === id)
   const _rU = (planning as any)?.ref_users
   const _rC = (planning as any)?.ref_client
+  // ref_client est toujours le client ; ref_users peut être le coach (anciens plannings Flutter)
   const clientId: string | undefined =
-    _rU?.id ||
-    _rU?.path?.split('/').pop() ||
-    (typeof _rU === 'string' && _rU ? _rU.split('/').pop() : undefined) ||
     _rC?.id ||
     _rC?.path?.split('/').pop() ||
-    (typeof _rC === 'string' && _rC ? _rC.split('/').pop() : undefined)
+    (typeof _rC === 'string' && _rC ? _rC.split('/').pop() : undefined) ||
+    _rU?.id ||
+    _rU?.path?.split('/').pop() ||
+    (typeof _rU === 'string' && _rU ? _rU.split('/').pop() : undefined)
   const client = users.find((u) => u.id === clientId)
 
   // Normalise un linkedUserId : "uid", "users/uid" ou référence { id }
@@ -275,11 +276,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
         const seen = new Set<string>()
         const all = [...s1.docs, ...s2.docs]
           .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((r: any) => {
-            if (r.id === id || seen.has(r.id)) return false
-            seen.add(r.id)
-            return true
-          }) as any[]
+          .filter((r: any) => { if (r.id === id || seen.has(r.id)) return false; seen.add(r.id); return true }) as any[]
 
         const now = new Date()
         const past = all
@@ -323,26 +320,35 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
   useEffect(() => {
     if (!planning || !clientId) { setRdvSequence(null); return }
-    // Trouver la période d'abonnement (collection abonnements) qui contient ce RDV — comparaison par jour
-    const ms = startOfDayMs(((planning as any).date_planning?.seconds ?? 0) * 1000)
+    const type = (planning as any).type_planning || 'Séance'
+    const rdvSec = (planning as any).heure_planning_debut?.seconds ?? (planning as any).date_planning?.seconds ?? 0
+    const ms = startOfDayMs(rdvSec * 1000)
     const aboStart = (a: any) => a.dateDebut?.toMillis ? startOfDayMs(a.dateDebut.toMillis()) : 0
     const aboEnd = (a: any) => a.dateFin?.toMillis ? endOfDayMs(a.dateFin.toMillis()) : Infinity
-    const abo = clientAbonnements.find((a) => ms >= aboStart(a) && ms <= aboEnd(a))
+    const abo = clientAbonnements.find((a) => a.id === (planning as any).abonnementId)
+      ?? clientAbonnements.find((a) => ms > 0 && ms >= aboStart(a) && ms <= aboEnd(a))
     if (!abo) { setRdvSequence(null); return }
     const start = aboStart(abo)
     const end = aboEnd(abo)
-    // Tous les RDVs du même client, même type, dans cette période
-    const type = (planning as any).type_planning || 'Séance'
+    const getUid = (p: any) =>
+      p.ref_client?.id || p.ref_client?.path?.split('/').pop() ||
+      (typeof p.ref_client === 'string' && p.ref_client ? p.ref_client.split('/').pop() : undefined) ||
+      p.ref_users?.id || p.ref_users?.path?.split('/').pop() ||
+      (typeof p.ref_users === 'string' && p.ref_users ? p.ref_users.split('/').pop() : undefined)
     const grouped = plannings
       .filter((p) => {
-        const uid = (p as any).ref_users?.id || (p as any).ref_users?.path?.split('/').pop() || (p as any).ref_client?.id
-        if (uid !== clientId) return false
-        const pms = startOfDayMs(((p as any).date_planning?.seconds ?? 0) * 1000)
-        return pms >= start && pms <= end && ((p as any).type_planning || 'Séance') === type
+        if (getUid(p) !== clientId) return false
+        const pSec = (p as any).heure_planning_debut?.seconds ?? (p as any).date_planning?.seconds ?? 0
+        const pms = startOfDayMs(pSec * 1000)
+        return pms > 0 && pms >= start && pms <= end && ((p as any).type_planning || 'Séance') === type
       })
-      .sort((a, b) => ((a as any).date_planning?.seconds ?? 0) - ((b as any).date_planning?.seconds ?? 0))
+      .sort((a, b) => {
+        const sa = (a as any).heure_planning_debut?.seconds ?? (a as any).date_planning?.seconds ?? 0
+        const sb = (b as any).heure_planning_debut?.seconds ?? (b as any).date_planning?.seconds ?? 0
+        return sa - sb
+      })
     const idx = grouped.findIndex((p) => p.id === id)
-    setRdvSequence(idx !== -1 && grouped.length > 1 ? { index: idx + 1, total: grouped.length } : null)
+    setRdvSequence(idx !== -1 ? { index: idx + 1, total: grouped.length } : null)
   }, [planning, plannings, id, clientId, clientAbonnements])
 
   // Modal states
@@ -453,9 +459,9 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   }, [plannings, form.participants_supplementaires, id, searchNewParticipant, users])
   const [calcDistance, setCalcDistance] = useState(false)
 
-  const handleCalculateDistance = async () => {
+  const handleCalculateDistance = async (toAddr?: string) => {
     const from = (userProfile as any)?.adresse_postale || (userProfile as any)?.rue_adresse || ''
-    const to = form.adresse_rdv
+    const to = toAddr ?? form.adresse_rdv
     if (!from || !to) return
     setCalcDistance(true)
     try {
@@ -861,31 +867,27 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
 
     const type = (planning as any).type_planning || 'Séance'
 
-    // Un SEUL compteur fiable : position de ce RDV parmi tous les RDV du même type pour ce client.
-    // Dédoublonné par id (évite tout sur-comptage) et trié chronologiquement → "N/Total".
-    const timeSec = (p: any) => p.heure_planning_debut?.seconds ?? p.date_planning?.seconds ?? 0
+    // X = tous les rdvs de ce type pour ce client (depuis plannings déjà en mémoire)
+    const getUid = (p: any) =>
+      (p as any).ref_client?.id || (p as any).ref_client?.path?.split('/').pop() ||
+      (typeof (p as any).ref_client === 'string' && (p as any).ref_client ? (p as any).ref_client.split('/').pop() : undefined) ||
+      (p as any).ref_users?.id || (p as any).ref_users?.path?.split('/').pop() ||
+      (typeof (p as any).ref_users === 'string' && (p as any).ref_users ? (p as any).ref_users.split('/').pop() : undefined)
+    const timeSec = (p: any) => (p as any).heure_planning_debut?.seconds ?? (p as any).date_planning?.seconds ?? 0
     const clientRdvs = clientId
-      ? Array.from(
-          new Map(
-            plannings
-              .filter((p: any) => {
-                const uid = p.ref_users?.id || p.ref_users?.path?.split('/').pop()
-                  || p.ref_client?.id || p.ref_client?.path?.split('/').pop()
-                return uid === clientId && ((p.type_planning as string) || 'Séance') === type
-              })
-              .map((p: any) => [p.id, p] as const),
-          ).values(),
-        ).sort((a: any, b: any) => timeSec(a) - timeSec(b))
+      ? plannings
+          .filter((p) => getUid(p) === clientId && (((p as any).type_planning as string) || 'Séance') === type)
+          .sort((a, b) => timeSec(a) - timeSec(b))
       : []
-    const total = clientRdvs.length
-    const index = clientRdvs.findIndex((p: any) => p.id === id) + 1
-    const seq = total > 1 && index > 0 ? `${index}/${total}` : ''
+    const totalAll = clientRdvs.length
     const clientName = client
       ? `${(client.nom ?? '').toUpperCase()} ${client.prenom ?? ''}`.trim()
       : ''
 
-    const parts = [type, seq, clientName]
-    const title = parts.filter(Boolean).join(' ')
+    const countStr = totalAll > 0 ? ` ${totalAll}` : ''
+    const seqStr = rdvSequence ? ` (${rdvSequence.index}/${rdvSequence.total})` : ''
+    const nameStr = clientName ? ` ${clientName}` : ''
+    const title = `${type}${countStr}${seqStr}${nameStr}`.trim()
 
     const params = new URLSearchParams({
       action: 'TEMPLATE',
@@ -2237,10 +2239,10 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Adresse</label>
-            <AdresseAutocomplete value={form.adresse_rdv} onChange={(val) => setForm({ ...form, adresse_rdv: val })} />
+            <AdresseAutocomplete value={form.adresse_rdv} onChange={(val) => { setForm({ ...form, adresse_rdv: val }); if (val) handleCalculateDistance(val) }} />
             {form.adresse_rdv && (
               <div className="mt-2 flex items-center gap-2">
-                <button type="button" onClick={handleCalculateDistance} disabled={calcDistance}
+                <button type="button" onClick={() => handleCalculateDistance()} disabled={calcDistance}
                   className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-50 transition font-medium">
                   {calcDistance ? 'Calcul…' : 'Calculer temps de route'}
                 </button>

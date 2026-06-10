@@ -198,8 +198,8 @@ export default function DetailSeancePage() {
     setForm({
       exercice_id: '',
       type_effort: fromFirestoreEffort((seance as any)?.type_effort_exo_default || 'Répétitions'),
-      effort: (seance as any)?.tps_effort_exo_default || 10,
-      recup_effort: (seance as any)?.tps_recup_exo_default || 60,
+      effort: (seance as any)?.tps_effort_exo_default ?? 10,
+      recup_effort: (seance as any)?.tps_recup_exo_default ?? 60,
       tempo_phase1: 1,
       tempo_phase2: 1,
       tempo_phase3: 1,
@@ -220,8 +220,8 @@ export default function DetailSeancePage() {
     setForm({
       exercice_id: item.exercice?.id || '',
       type_effort: fromFirestoreEffort(item.type_effort || 'Répétitions'),
-      effort: item.effort || 10,
-      recup_effort: item.recup_effort || 60,
+      effort: item.effort ?? 10,
+      recup_effort: item.recup_effort ?? 60,
       tempo_phase1: item.tempo_phase1 ?? 1,
       tempo_phase2: item.tempo_phase2 ?? 1,
       tempo_phase3: item.tempo_phase3 ?? 1,
