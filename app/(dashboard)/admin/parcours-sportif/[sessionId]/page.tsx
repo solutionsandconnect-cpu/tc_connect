@@ -713,10 +713,6 @@ Teddy`
     const heure = fmtHeure(session.date)
     const locationDisplay = session.locationLabel || session.location || session.locationCoords || ''
     const link = `${window.location.origin}/parcours-sportif`
-    const manageLink = reg.uniqueToken ? `${window.location.origin}/mon-inscription/${reg.uniqueToken}` : ''
-    const manageSection = manageLink
-      ? `\n\nPour voir ou gérer votre inscription (vous désinscrire si besoin) : ${manageLink}.`
-      : ''
 
     // Rappel d'impayé d'un parcours précédent (pré-calculé au chargement → disponible instantanément)
     const unpaidDate = reg.email ? pastUnpaidByEmail[reg.email.toLowerCase()] : undefined
@@ -729,7 +725,7 @@ Teddy`
 Rappel de votre inscription pour le Parcours Sportif d'aujourd'hui à ${heure}.
 Lieu du rendez-vous : ${locationDisplay}.
 
-Si vous avez un imprévu, merci de revenir vers moi au plus vite.${unpaidSection}${manageSection}
+Si vous avez un imprévu, merci de revenir vers moi au plus vite.${unpaidSection}
 
 Je vous joins également le formulaire d'inscription aux Parcours pour que vous l'ayez à porté de main pour les prochaines dates si vous souhaitez y participer : ${link}.
 
