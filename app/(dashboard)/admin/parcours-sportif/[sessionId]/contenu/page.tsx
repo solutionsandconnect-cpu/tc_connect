@@ -19,8 +19,9 @@ interface Exercise {
   tempsEffort: number   // secondes (ignoré pour AMRAP)
   recupEntreExos: number // secondes (ignoré pour AMRAP)
   reps?: string          // répétitions texte libre (utilisé pour AMRAP)
-  options?: string  // version allégée ou modification
-  variant?: string  // variante si limitation physique
+  options?: string     // option à la baisse (version allégée)
+  optionHausse?: string // option à la hausse (version plus difficile)
+  variant?: string     // variante si limitation physique
 }
 
 interface Circuit {
@@ -214,7 +215,7 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
         const expanded = new Set<string>()
         for (const c of loadedCircuits) {
           for (const ex of c.exercises) {
-            if (ex.options || ex.variant) expanded.add(ex.id)
+            if (ex.options || ex.optionHausse || ex.variant) expanded.add(ex.id)
           }
         }
         setExpandedExercises(expanded)
@@ -254,6 +255,7 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
         recupEntreExos: ex.recupEntreExos,
         reps: ex.reps ?? null,
         options: ex.options ?? null,
+        optionHausse: ex.optionHausse ?? null,
         variant: ex.variant ?? null,
       })),
     }))
@@ -451,7 +453,7 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
             {/* Exercices */}
             <div className="divide-y divide-gray-50">
               {circuit.exercises.map((ex, ei) => {
-                const isExpanded = expandedExercises.has(ex.id) || !!(ex.options || ex.variant)
+                const isExpanded = expandedExercises.has(ex.id) || !!(ex.options || ex.optionHausse || ex.variant)
                 const toggleExpand = () => setExpandedExercises((prev) => {
                   const next = new Set(prev)
                   if (next.has(ex.id)) next.delete(ex.id)
@@ -536,20 +538,36 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
                     </div>
                     {isExpanded && (
                       <div className="pl-10 space-y-1.5">
-                        <input
-                          type="text"
-                          value={ex.options ?? ''}
-                          onChange={(e) => updateExercise(circuit.id, ex.id, 'options', e.target.value || undefined)}
-                          placeholder="Option / version allégée (ex: genoux au sol si nécessaire)"
-                          className="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-300 placeholder-gray-300"
-                        />
-                        <input
-                          type="text"
-                          value={ex.variant ?? ''}
-                          onChange={(e) => updateExercise(circuit.id, ex.id, 'variant', e.target.value || undefined)}
-                          placeholder="Variante si limitation physique (ex: si épaules → ...)"
-                          className="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-300 placeholder-gray-300"
-                        />
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-semibold text-gray-400 w-24 shrink-0">Option ↓ baisse</span>
+                          <input
+                            type="text"
+                            value={ex.options ?? ''}
+                            onChange={(e) => updateExercise(circuit.id, ex.id, 'options', e.target.value || undefined)}
+                            placeholder="Version allégée (ex: genoux au sol)"
+                            className="flex-1 border border-gray-200 rounded-xl px-3 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-300 placeholder-gray-300"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-semibold text-blue-400 w-24 shrink-0">Option ↑ hausse</span>
+                          <input
+                            type="text"
+                            value={ex.optionHausse ?? ''}
+                            onChange={(e) => updateExercise(circuit.id, ex.id, 'optionHausse', e.target.value || undefined)}
+                            placeholder="Version plus difficile (ex: avec charge)"
+                            className="flex-1 border border-blue-100 rounded-xl px-3 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder-gray-300"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-semibold text-orange-400 w-24 shrink-0">Variante</span>
+                          <input
+                            type="text"
+                            value={ex.variant ?? ''}
+                            onChange={(e) => updateExercise(circuit.id, ex.id, 'variant', e.target.value || undefined)}
+                            placeholder="Si limitation physique (ex: si épaules → ...)"
+                            className="flex-1 border border-orange-100 rounded-xl px-3 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-300 placeholder-gray-300"
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
