@@ -16,8 +16,9 @@ interface Exercise {
   id: string
   name: string
   exerciceRefId?: string   // lien optionnel vers la base d'exercices
-  tempsEffort: number   // secondes
-  recupEntreExos: number // secondes
+  tempsEffort: number   // secondes (ignoré pour AMRAP)
+  recupEntreExos: number // secondes (ignoré pour AMRAP)
+  reps?: string          // répétitions texte libre (utilisé pour AMRAP)
   options?: string  // version allégée ou modification
   variant?: string  // variante si limitation physique
 }
@@ -25,8 +26,10 @@ interface Exercise {
 interface Circuit {
   id: string
   name: string
+  type?: 'standard' | 'amrap'
   nbTours: number
   recupEntreTours: number // secondes
+  dureeAmrap?: number    // secondes — durée totale si type AMRAP
   exercises: Exercise[]
 }
 
@@ -65,12 +68,14 @@ function createStandardTemplate(): Circuit[] {
     {
       id: newId(),
       name: 'Circuit 2 - Lomer (AMRAP)',
+      type: 'amrap',
       nbTours: 1,
       recupEntreTours: 0,
+      dureeAmrap: 300,
       exercises: [
-        { id: newId(), name: '', tempsEffort: 0, recupEntreExos: 0 },
-        { id: newId(), name: '', tempsEffort: 0, recupEntreExos: 0 },
-        { id: newId(), name: 'Tour de course', tempsEffort: 0, recupEntreExos: 0 },
+        { id: newId(), name: '', tempsEffort: 0, recupEntreExos: 0, reps: '' },
+        { id: newId(), name: '', tempsEffort: 0, recupEntreExos: 0, reps: '' },
+        { id: newId(), name: 'Tour de course', tempsEffort: 0, recupEntreExos: 0, reps: '' },
       ],
     },
     {
@@ -89,6 +94,7 @@ function createStandardTemplate(): Circuit[] {
 }
 
 function calcCircuitSeconds(c: Circuit): number {
+  if (c.type === 'amrap') return c.dureeAmrap ?? 0
   if (c.exercises.length === 0) return 0
   const timePerTour = c.exercises.reduce((s, ex) => s + ex.tempsEffort + ex.recupEntreExos, 0)
   return timePerTour * c.nbTours + c.recupEntreTours * Math.max(0, c.nbTours - 1)
@@ -234,13 +240,19 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
     }
     // Nettoyer les undefined (Firestore les refuse) — exerciceRefId devient null si absent
     const cleanCircuits = circuits.map((c) => ({
-      ...c,
+      id: c.id,
+      name: c.name,
+      type: c.type ?? null,
+      nbTours: c.nbTours,
+      recupEntreTours: c.recupEntreTours,
+      dureeAmrap: c.dureeAmrap ?? null,
       exercises: c.exercises.map((ex) => ({
         id: ex.id,
         name: ex.name,
         exerciceRefId: ex.exerciceRefId ?? null,
         tempsEffort: ex.tempsEffort,
         recupEntreExos: ex.recupEntreExos,
+        reps: ex.reps ?? null,
         options: ex.options ?? null,
         variant: ex.variant ?? null,
       })),
@@ -391,24 +403,48 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
 
               {/* Paramètres circuit */}
               <div className="flex items-center gap-4 mt-3 flex-wrap">
-                <label className="flex items-center gap-2 text-sm text-gray-600">
-                  <span className="font-medium shrink-0">Nb tours</span>
-                  <input type="number" min={1} value={circuit.nbTours}
-                    onChange={(e) => updateCircuit(circuit.id, 'nbTours', Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-purple-400" />
-                </label>
-                <label className="flex items-center gap-2 text-sm text-gray-600">
-                  <span className="font-medium shrink-0">Récup entre tours</span>
-                  <div className="flex items-center gap-1">
-                    <input type="number" min={0} value={circuit.recupEntreTours}
-                      onChange={(e) => updateCircuit(circuit.id, 'recupEntreTours', Math.max(0, parseInt(e.target.value) || 0))}
-                      className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-purple-400" />
-                    <span className="text-xs text-gray-400">s</span>
-                  </div>
-                </label>
-                <span className="text-xs text-gray-400 shrink-0">
-                  ({circuit.nbTours} tour{circuit.nbTours > 1 ? 's' : ''} × {formatSeconds(circuit.exercises.reduce((s, ex) => s + ex.tempsEffort + ex.recupEntreExos, 0))}{circuit.nbTours > 1 ? ` + ${circuit.nbTours - 1}×${formatSeconds(circuit.recupEntreTours)} récup` : ''})
-                </span>
+                {/* Type selector */}
+                <div className="flex rounded-lg overflow-hidden border border-gray-200 shrink-0">
+                  {(['standard', 'amrap'] as const).map((t) => (
+                    <button key={t} type="button"
+                      onClick={() => updateCircuit(circuit.id, 'type', t)}
+                      className={`px-2.5 py-1 text-xs font-semibold transition ${(circuit.type ?? 'standard') === t ? 'bg-purple-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>
+                      {t === 'standard' ? 'Standard' : 'AMRAP'}
+                    </button>
+                  ))}
+                </div>
+                {circuit.type === 'amrap' ? (
+                  <label className="flex items-center gap-2 text-sm text-gray-600">
+                    <span className="font-medium shrink-0 text-orange-600">Durée totale</span>
+                    <div className="flex items-center gap-1">
+                      <input type="number" min={0} value={Math.floor((circuit.dureeAmrap ?? 0) / 60)}
+                        onChange={(e) => updateCircuit(circuit.id, 'dureeAmrap', Math.max(0, parseInt(e.target.value) || 0) * 60)}
+                        className="w-16 border border-orange-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                      <span className="text-xs text-gray-400">min</span>
+                    </div>
+                  </label>
+                ) : (
+                  <>
+                    <label className="flex items-center gap-2 text-sm text-gray-600">
+                      <span className="font-medium shrink-0">Nb tours</span>
+                      <input type="number" min={1} value={circuit.nbTours}
+                        onChange={(e) => updateCircuit(circuit.id, 'nbTours', Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-600">
+                      <span className="font-medium shrink-0">Récup entre tours</span>
+                      <div className="flex items-center gap-1">
+                        <input type="number" min={0} value={circuit.recupEntreTours}
+                          onChange={(e) => updateCircuit(circuit.id, 'recupEntreTours', Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                        <span className="text-xs text-gray-400">s</span>
+                      </div>
+                    </label>
+                    <span className="text-xs text-gray-400 shrink-0">
+                      ({circuit.nbTours} tour{circuit.nbTours > 1 ? 's' : ''} × {formatSeconds(circuit.exercises.reduce((s, ex) => s + ex.tempsEffort + ex.recupEntreExos, 0))}{circuit.nbTours > 1 ? ` + ${circuit.nbTours - 1}×${formatSeconds(circuit.recupEntreTours)} récup` : ''})
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -454,26 +490,39 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
                             : c))
                         }}
                       />
-                      {/* Temps effort */}
-                      <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
-                        <span className="text-xs font-medium text-blue-600">Effort</span>
-                        <input type="number" min={0} value={ex.tempsEffort}
-                          onChange={(e) => updateExercise(circuit.id, ex.id, 'tempsEffort', Math.max(0, parseInt(e.target.value) || 0))}
-                          className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                        <span className="text-xs text-gray-400">s</span>
-                      </label>
-                      {/* Récup entre exos */}
-                      <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
-                        <span className="text-xs font-medium text-green-600">Récup</span>
-                        <input type="number" min={0} value={ex.recupEntreExos}
-                          onChange={(e) => updateExercise(circuit.id, ex.id, 'recupEntreExos', Math.max(0, parseInt(e.target.value) || 0))}
-                          className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-400" />
-                        <span className="text-xs text-gray-400">s</span>
-                      </label>
-                      {/* Temps exercice */}
-                      <span className="text-xs text-gray-400 shrink-0 w-12 text-right">
-                        {ex.tempsEffort + ex.recupEntreExos > 0 ? formatSeconds(ex.tempsEffort + ex.recupEntreExos) : '—'}
-                      </span>
+                      {circuit.type === 'amrap' ? (
+                        /* AMRAP : champ reps texte libre */
+                        <input
+                          type="text"
+                          value={ex.reps ?? ''}
+                          onChange={(e) => updateExercise(circuit.id, ex.id, 'reps', e.target.value)}
+                          placeholder="Répétitions (ex: 10, variable…)"
+                          className="flex-1 border border-orange-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 min-w-0"
+                        />
+                      ) : (
+                        <>
+                          {/* Temps effort */}
+                          <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
+                            <span className="text-xs font-medium text-blue-600">Effort</span>
+                            <input type="number" min={0} value={ex.tempsEffort}
+                              onChange={(e) => updateExercise(circuit.id, ex.id, 'tempsEffort', Math.max(0, parseInt(e.target.value) || 0))}
+                              className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                            <span className="text-xs text-gray-400">s</span>
+                          </label>
+                          {/* Récup entre exos */}
+                          <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
+                            <span className="text-xs font-medium text-green-600">Récup</span>
+                            <input type="number" min={0} value={ex.recupEntreExos}
+                              onChange={(e) => updateExercise(circuit.id, ex.id, 'recupEntreExos', Math.max(0, parseInt(e.target.value) || 0))}
+                              className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-400" />
+                            <span className="text-xs text-gray-400">s</span>
+                          </label>
+                          {/* Temps exercice */}
+                          <span className="text-xs text-gray-400 shrink-0 w-12 text-right">
+                            {ex.tempsEffort + ex.recupEntreExos > 0 ? formatSeconds(ex.tempsEffort + ex.recupEntreExos) : '—'}
+                          </span>
+                        </>
+                      )}
                       {/* Toggle options */}
                       <button onClick={toggleExpand}
                         className={`text-[10px] font-medium px-2 py-0.5 rounded-lg border transition shrink-0 ${isExpanded ? 'bg-orange-50 border-orange-200 text-orange-600' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}>
