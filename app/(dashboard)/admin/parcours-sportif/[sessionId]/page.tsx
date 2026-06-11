@@ -131,6 +131,8 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const [loadingSession, setLoadingSession] = useState(true)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false)
+  const [restoring, setRestoring] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [editReg, setEditReg] = useState<Registration | null>(null)
   const [editRegForm, setEditRegForm] = useState({ firstName: '', lastName: '', email: '', phone: '' })
@@ -305,6 +307,19 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     return Array.from(map.values())
   }, [users, registrantDirectory])
 
+  // Détection de doublon : la personne est-elle déjà inscrite à CETTE séance ?
+  const quickAddDuplicate = useMemo(() => {
+    if (!quickForm.firstName.trim()) return null
+    const active = registrations.filter((r) => r.attendance !== 'deregistered')
+    const email = quickForm.email.trim().toLowerCase()
+    const fname = quickForm.firstName.trim().toLowerCase()
+    const lname = quickForm.lastName.trim().toLowerCase()
+    return active.find((r) => {
+      if (email && r.email?.toLowerCase() === email) return true
+      return r.firstName?.toLowerCase() === fname && r.lastName?.toLowerCase() === lname
+    }) ?? null
+  }, [registrations, quickForm])
+
   // Suggestions basées sur ce qui est tapé dans Prénom / Nom
   const nameQuery = `${quickForm.firstName} ${quickForm.lastName}`.trim().toLowerCase()
   const nameSuggestions = useMemo<Candidate[]>(() => {
@@ -434,6 +449,43 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     } finally {
       setSavingEditReg(false)
     }
+  }
+
+  const handleRestoreSession = async () => {
+    if (!session) return
+    setRestoring(true)
+    try {
+      const newStatus = session.registeredCount >= session.maxSpots ? 'full' : 'open'
+      await updateDoc(doc(db, 'sessions', sessionId), { status: newStatus })
+      // Restaurer les inscriptions annulées par l'admin → pending
+      const regsSnap = await getDocs(
+        query(collection(db, 'registrations'), where('sessionId', '==', sessionId))
+      )
+      const toRestore = regsSnap.docs.filter((d) => {
+        const data = d.data()
+        return data.paymentStatus === 'cancelled_admin' && data.attendance !== 'deregistered'
+      })
+      await Promise.all(toRestore.map((d) => updateDoc(d.ref, { paymentStatus: 'pending' })))
+      // Re-créer les activités de planning pour les comptes liés
+      await Promise.all(toRestore.map(async (d) => {
+        const data = d.data() as Registration
+        let userId: string | null = data.userId ?? null
+        if (!userId && data.email) {
+          try {
+            const uSnap = await getDocs(query(collection(db, 'users'), where('email', '==', data.email.toLowerCase())))
+            if (!uSnap.empty) userId = uSnap.docs[0].id
+          } catch {}
+        }
+        if (userId) {
+          await addParcoursActivite({ userId, registrationId: d.id, sessionId, session: session as any }).catch(() => {})
+        }
+      }))
+      setSession((s) => s ? { ...s, status: newStatus } : s)
+      setShowRestoreConfirm(false)
+    } catch (e) {
+      console.error('[handleRestoreSession]', e)
+    }
+    setRestoring(false)
   }
 
   const handleCancelSession = async () => {
@@ -912,9 +964,22 @@ Teddy`
                 <span>{session.price}€ / personne</span>
               </div>
             )}
-            {!isCancelled && (
-              <div className="pt-1 border-t border-gray-100">
-                {!showCancelConfirm ? (
+            <div className="pt-1 border-t border-gray-100">
+              {isCancelled ? (
+                !showRestoreConfirm ? (
+                  <button onClick={() => setShowRestoreConfirm(true)}
+                    className="text-xs font-medium text-green-700 border border-green-300 px-3 py-1.5 rounded-lg hover:bg-green-50 transition">
+                    Restaurer la séance
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-gray-600 flex-1">Remettre en ligne et restaurer les inscriptions ?</p>
+                    <button onClick={() => setShowRestoreConfirm(false)} className="text-xs border border-gray-200 px-2 py-1 rounded-lg hover:bg-gray-50">Non</button>
+                    <button onClick={handleRestoreSession} disabled={restoring} className="text-xs bg-green-600 text-white px-2 py-1 rounded-lg hover:bg-green-700 disabled:opacity-50">{restoring ? '...' : 'Oui'}</button>
+                  </div>
+                )
+              ) : (
+                !showCancelConfirm ? (
                   <button onClick={() => setShowCancelConfirm(true)}
                     className="text-xs font-medium text-red-600 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-50 transition">
                     Annuler la séance
@@ -925,9 +990,9 @@ Teddy`
                     <button onClick={() => setShowCancelConfirm(false)} className="text-xs border border-gray-200 px-2 py-1 rounded-lg hover:bg-gray-50">Non</button>
                     <button onClick={handleCancelSession} disabled={cancelling} className="text-xs bg-red-500 text-white px-2 py-1 rounded-lg hover:bg-red-600 disabled:opacity-50">{cancelling ? '...' : 'Oui'}</button>
                   </div>
-                )}
-              </div>
-            )}
+                )
+              )}
+            </div>
           </div>
 
           {/* Bilan financier */}
@@ -1120,6 +1185,14 @@ Teddy`
                     {quickExtraSessionIds.size > 0 && (
                       <p className="text-xs font-medium text-blue-600 mt-2">{quickExtraSessionIds.size + 1} dates au total</p>
                     )}
+                  </div>
+                )}
+                {quickAddDuplicate && (
+                  <div className="col-span-2 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                    <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-700">
+                      <span className="font-semibold">{quickAddDuplicate.firstName} {quickAddDuplicate.lastName}</span> semble déjà inscrit à cette séance. L'ajout reste possible si c'est voulu.
+                    </p>
                   </div>
                 )}
                 {addError && <p className="col-span-2 text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{addError}</p>}

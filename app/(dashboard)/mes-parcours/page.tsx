@@ -22,6 +22,7 @@ import {
   FireIcon, BanknotesIcon, ClockIcon, UsersIcon, HeartIcon,
   SparklesIcon, BoltIcon, ArrowRightIcon, ClipboardDocumentIcon, CheckIcon,
   ExclamationCircleIcon, ChatBubbleLeftRightIcon, PhotoIcon, TrashIcon,
+  ChartBarIcon,
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
@@ -90,6 +91,8 @@ const PAYMENT_LABELS: Record<string, string> = {
   pending: 'En attente de règlement',
   cash: 'Réglé en espèces',
   transfer: 'Réglé par virement',
+  free: 'Offert',
+  waived: 'Non dû',
   cancelled_admin: 'Séance annulée',
 }
 
@@ -349,6 +352,27 @@ export default function MesParcoursPage() {
   const availableSessions = sessions.filter((s) => !registeredSessionIds.has(s.id))
   const upcoming = items.filter((i) => (i.session?.date?.toMillis() ?? 0) >= now)
   const past = items.filter((i) => (i.session?.date?.toMillis() ?? 0) < now)
+
+  const myStats = useMemo(() => {
+    if (past.length === 0) return null
+    const presentCount = past.filter((i) => i.attendance === 'present').length
+    const absentCount = past.filter((i) => i.attendance === 'absent').length
+    const cancelledCount = past.filter((i) => i.paymentStatus === 'cancelled_admin' || i.session?.status === 'cancelled').length
+    const unknownCount = past.length - presentCount - absentCount - cancelledCount
+    const ratedCount = presentCount + absentCount
+    const presenceRate = ratedCount > 0 ? Math.round((presentCount / ratedCount) * 100) : null
+    // Par année (hors annulées)
+    const byYear: Record<number, { total: number; present: number }> = {}
+    for (const i of past) {
+      if (i.paymentStatus === 'cancelled_admin' || i.session?.status === 'cancelled') continue
+      const y = i.session?.date?.toDate().getFullYear()
+      if (!y) continue
+      if (!byYear[y]) byYear[y] = { total: 0, present: 0 }
+      byYear[y].total++
+      if (i.attendance === 'present') byYear[y].present++
+    }
+    return { total: past.length, presentCount, absentCount, cancelledCount, unknownCount, presenceRate, byYear }
+  }, [past])
 
   const openRegister = (session: Session) => {
     setSelected(session)
@@ -622,7 +646,12 @@ export default function MesParcoursPage() {
           </div>
         )}
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${reg.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+            reg.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-700'
+            : reg.paymentStatus === 'cancelled_admin' ? 'bg-gray-100 text-gray-500'
+            : reg.paymentStatus === 'free' || reg.paymentStatus === 'waived' ? 'bg-purple-100 text-purple-600'
+            : 'bg-green-100 text-green-700'
+          }`}>
             {PAYMENT_LABELS[reg.paymentStatus] ?? reg.paymentStatus}
           </span>
           {!isPast && !isCancelled && (
@@ -816,6 +845,101 @@ export default function MesParcoursPage() {
           </h2>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {past.map((reg) => <RegCard key={reg.id} reg={reg} />)}
+          </div>
+        </div>
+      )}
+
+      {/* ── Mes stats ── */}
+      {myStats && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+            <ChartBarIcon className="w-4 h-4 text-blue-500" />
+            Mes stats
+          </h2>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-5">
+            {/* Chiffres clés */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="text-center bg-gray-50 rounded-xl py-3">
+                <p className="text-2xl font-bold text-gray-800">{myStats.total}</p>
+                <p className="text-xs text-gray-500 mt-0.5">Séance{myStats.total > 1 ? 's' : ''}</p>
+              </div>
+              <div className="text-center bg-green-50 rounded-xl py-3">
+                <p className="text-2xl font-bold text-green-600">{myStats.presentCount}</p>
+                <p className="text-xs text-green-700 mt-0.5">Présence{myStats.presentCount !== 1 ? 's' : ''}</p>
+              </div>
+              <div className="text-center bg-red-50 rounded-xl py-3">
+                <p className="text-2xl font-bold text-red-500">{myStats.absentCount}</p>
+                <p className="text-xs text-red-600 mt-0.5">Absence{myStats.absentCount !== 1 ? 's' : ''}</p>
+              </div>
+              <div className="text-center bg-gray-50 rounded-xl py-3">
+                <p className="text-2xl font-bold text-gray-400">{myStats.cancelledCount + myStats.unknownCount}</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {myStats.cancelledCount > 0 && myStats.unknownCount === 0 ? 'Annulée' + (myStats.cancelledCount !== 1 ? 's' : '')
+                   : myStats.unknownCount > 0 && myStats.cancelledCount === 0 ? 'Non pointée' + (myStats.unknownCount !== 1 ? 's' : '')
+                   : 'Non comptées'}
+                </p>
+              </div>
+            </div>
+            {/* Détail si mix annulées + non pointées */}
+            {myStats.cancelledCount > 0 && myStats.unknownCount > 0 && (
+              <p className="text-[11px] text-gray-400 text-center -mt-2">
+                dont {myStats.cancelledCount} annulée{myStats.cancelledCount !== 1 ? 's' : ''} et {myStats.unknownCount} non pointée{myStats.unknownCount !== 1 ? 's' : ''}
+              </p>
+            )}
+
+            {/* Taux de présence */}
+            {myStats.presenceRate !== null && (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-xs font-semibold text-gray-600">Taux de présence</p>
+                  <span className={`text-sm font-bold ${myStats.presenceRate >= 70 ? 'text-green-600' : myStats.presenceRate >= 40 ? 'text-orange-500' : 'text-red-500'}`}>
+                    {myStats.presenceRate}%
+                  </span>
+                </div>
+                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${myStats.presenceRate >= 70 ? 'bg-green-500' : myStats.presenceRate >= 40 ? 'bg-orange-400' : 'bg-red-400'}`}
+                    style={{ width: `${myStats.presenceRate}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Par année */}
+            {Object.keys(myStats.byYear).length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-2">Par année</p>
+                <div className="space-y-1.5">
+                  {Object.entries(myStats.byYear).sort(([a], [b]) => Number(b) - Number(a)).map(([year, b]) => {
+                    const rate = b.total > 0 ? Math.round((b.present / b.total) * 100) : 0
+                    return (
+                      <div key={year} className="flex items-center gap-3">
+                        <span className="text-xs font-semibold text-gray-700 w-10 shrink-0">{year}</span>
+                        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-blue-400 rounded-full" style={{ width: `${rate}%` }} />
+                        </div>
+                        <span className="text-xs text-gray-500 shrink-0 w-24 text-right">
+                          {b.total} séance{b.total > 1 ? 's' : ''} · {rate}% présence
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Prochaine séance */}
+            {upcoming.length > 0 && (
+              <div className="flex items-center gap-3 bg-blue-50 rounded-xl px-4 py-3">
+                <CalendarIcon className="w-4 h-4 text-blue-500 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-blue-700">{upcoming.length} séance{upcoming.length > 1 ? 's' : ''} à venir</p>
+                  {upcoming[0].session && (
+                    <p className="text-xs text-blue-600 truncate capitalize">{fmtDate(upcoming[0].session.date)}</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

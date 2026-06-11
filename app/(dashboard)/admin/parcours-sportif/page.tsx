@@ -15,7 +15,7 @@ import {
   PlusIcon, CalendarIcon, MapPinIcon, UsersIcon,
   ChevronRightIcon, BanknotesIcon, ClipboardDocumentIcon,
   CheckIcon, ShareIcon, ChatBubbleLeftIcon, FireIcon, TrashIcon,
-  EyeIcon, EyeSlashIcon, Cog6ToothIcon,
+  EyeIcon, EyeSlashIcon, Cog6ToothIcon, ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 
@@ -97,21 +97,30 @@ export default function AdminParcoursPage() {
   // Annuaire des candidats : utilisateurs de l'app + anciens inscrits (chargé à l'ouverture du modal)
   const { users } = useUsers()
   const [registrantDirectory, setRegistrantDirectory] = useState<{ firstName: string; lastName: string; email: string; phone: string }[]>([])
+  // Map sessionId → Set de clés normalisées des inscrits (pour détecter les doublons dans le modal)
+  const [sessionKeyMap, setSessionKeyMap] = useState<Map<string, Set<string>>>(new Map())
   const dirLoadedRef = useRef(false)
   useEffect(() => {
     if (!showAddParticipant || dirLoadedRef.current) return
     dirLoadedRef.current = true
     getDocs(collection(db, 'registrations')).then((snap) => {
-      const map = new Map<string, { firstName: string; lastName: string; email: string; phone: string }>()
+      const dirMap = new Map<string, { firstName: string; lastName: string; email: string; phone: string }>()
+      const skMap = new Map<string, Set<string>>()
       snap.docs.forEach((d) => {
         const r = d.data() as any
         const c = { firstName: r.firstName ?? '', lastName: r.lastName ?? '', email: r.email ?? '', phone: r.phone ?? '' }
         if (!c.firstName && !c.lastName && !c.email) return
         const key = (c.email || `${c.firstName}|${c.lastName}`).toLowerCase()
-        const prev = map.get(key)
-        if (!prev || ((!prev.phone && c.phone) || (!prev.email && c.email))) map.set(key, c)
+        const prev = dirMap.get(key)
+        if (!prev || ((!prev.phone && c.phone) || (!prev.email && c.email))) dirMap.set(key, c)
+        // Tracking par séance (hors désinscrits)
+        if (r.sessionId && r.attendance !== 'deregistered') {
+          if (!skMap.has(r.sessionId)) skMap.set(r.sessionId, new Set())
+          skMap.get(r.sessionId)!.add(key)
+        }
       })
-      setRegistrantDirectory(Array.from(map.values()))
+      setRegistrantDirectory(Array.from(dirMap.values()))
+      setSessionKeyMap(skMap)
     }).catch(() => {})
   }, [showAddParticipant])
 
@@ -128,6 +137,17 @@ export default function AdminParcoursPage() {
     })
     return Array.from(map.values())
   }, [users, registrantDirectory])
+
+  // Clé normalisée de la personne en cours de saisie (pour détecter si déjà inscrite)
+  const addFormKey = (addForm.email.trim() || `${addForm.firstName}|${addForm.lastName}`).toLowerCase()
+
+  // Sessions sélectionnées où cette personne est déjà inscrite
+  const duplicateSessionIds = useMemo(() => {
+    if (!addForm.firstName.trim() && !addForm.email.trim()) return new Set<string>()
+    const result = new Set<string>()
+    addSessionIds.forEach((sid) => { if (sessionKeyMap.get(sid)?.has(addFormKey)) result.add(sid) })
+    return result
+  }, [addSessionIds, addFormKey, sessionKeyMap])
 
   const addNameQuery = `${addForm.firstName} ${addForm.lastName} ${addForm.email}`.trim().toLowerCase()
   const addNameSuggestions = useMemo(() => {
@@ -517,6 +537,14 @@ export default function AdminParcoursPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push('/admin/parcours-sportif/participants')}
+            className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            title="Listing des participants"
+          >
+            <UsersIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">Participants</span>
+          </button>
           <button
             onClick={() => router.push('/admin/parcours-sportif/parametres')}
             className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
@@ -930,8 +958,9 @@ export default function AdminParcoursPage() {
                 const left = s.maxSpots - s.registeredCount
                 const isPast = s.date.toMillis() < now
                 const checked = addSessionIds.has(s.id)
+                const isDuplicate = duplicateSessionIds.has(s.id)
                 return (
-                  <label key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-gray-100 hover:bg-gray-50 cursor-pointer">
+                  <label key={s.id} className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg border cursor-pointer transition ${isDuplicate ? 'border-amber-200 bg-amber-50' : 'border-gray-100 hover:bg-gray-50'}`}>
                     <input type="checkbox" checked={checked}
                       onChange={() => setAddSessionIds((prev) => {
                         const next = new Set(prev)
@@ -946,6 +975,12 @@ export default function AdminParcoursPage() {
                       </p>
                       <p className="text-xs text-gray-400 truncate">{s.title} — {left > 0 ? `${left} place${left > 1 ? 's' : ''}` : 'complète'}</p>
                     </div>
+                    {isDuplicate && (
+                      <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-700 shrink-0">
+                        <ExclamationTriangleIcon className="w-3.5 h-3.5" />
+                        Déjà inscrit
+                      </span>
+                    )}
                   </label>
                 )
               })}
@@ -955,6 +990,14 @@ export default function AdminParcoursPage() {
             )}
           </div>
 
+          {duplicateSessionIds.size > 0 && (
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+              <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-700">
+                Cette personne est peut-être déjà inscrite à {duplicateSessionIds.size === 1 ? 'une date sélectionnée' : `${duplicateSessionIds.size} dates sélectionnées`}. L'ajout reste possible si voulu.
+              </p>
+            </div>
+          )}
           {addError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2">{addError}</p>}
           {addSuccess && <p className="text-sm text-green-700 bg-green-50 rounded-xl px-3 py-2">{addSuccess}</p>}
 
