@@ -60,6 +60,7 @@ interface Registration {
   bookingEmail?: string
   bookingName?: string
   uniqueToken?: string
+  reminderSentAt?: Timestamp
 }
 
 const PAYMENT_OPTIONS = [
@@ -193,6 +194,10 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const [showNameSuggestions, setShowNameSuggestions] = useState(false)
   const [otherSessions, setOtherSessions] = useState<Session[]>([])
   const [quickExtraSessionIds, setQuickExtraSessionIds] = useState<Set<string>>(new Set())
+
+  // Rappel SMS : confirmation + suivi des envois
+  const [reminderConfirmId, setReminderConfirmId] = useState<string | null>(null)
+  const [reminderSentIds, setReminderSentIds] = useState<Set<string>>(new Set())
 
   // Pré-calcul des impayés passés par email (pour enrichir le SMS de rappel sans bloquer le clic).
   // Map: email -> date (JJ/MM/AAAA) du parcours passé non réglé le plus récent.
@@ -710,6 +715,11 @@ Teddy`
 
   const handleReminderSMS = (reg: Registration) => {
     if (!session || !reg.phone) return
+    setReminderConfirmId(null)
+    const sentAt = Timestamp.now()
+    setReminderSentIds((prev) => new Set(prev).add(reg.id))
+    updateDoc(doc(db, 'registrations', reg.id), { reminderSentAt: sentAt }).catch(() => {})
+    setRegistrations((prev) => prev.map((r) => r.id === reg.id ? { ...r, reminderSentAt: sentAt } : r))
     const heure = fmtHeure(session.date)
     const locationDisplay = session.locationLabel || session.location || session.locationCoords || ''
     const link = `${window.location.origin}/parcours-sportif`
@@ -1406,10 +1416,25 @@ Teddy`
                         </button>
                       )}
                       {reg.attendance !== 'deregistered' && reg.phone && (
-                        <button onClick={() => handleReminderSMS(reg)}
-                          className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition">
-                          <ChatBubbleLeftIcon className="w-3.5 h-3.5" />Rappel
-                        </button>
+                        reg.reminderSentAt ? (
+                          <span className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-green-200 text-green-600 bg-green-50"
+                            title={`Envoyé le ${reg.reminderSentAt.toDate().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`}>
+                            <CheckCircleIcon className="w-3.5 h-3.5" />Rappel envoyé
+                          </span>
+                        ) : reminderConfirmId === reg.id ? (
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-500">Envoyer ?</span>
+                            <button onClick={() => setReminderConfirmId(null)}
+                              className="text-xs text-gray-500 border border-gray-200 px-2 py-0.5 rounded-lg hover:bg-gray-50 transition">Non</button>
+                            <button onClick={() => handleReminderSMS(reg)}
+                              className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-2 py-0.5 rounded-lg transition">Oui</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setReminderConfirmId(reg.id)}
+                            className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition">
+                            <ChatBubbleLeftIcon className="w-3.5 h-3.5" />Rappel
+                          </button>
+                        )
                       )}
                       {reg.attendance !== 'deregistered' && reg.paymentStatus === 'pending' && effectiveContactPhone(reg) && (
                         <button onClick={() => openSMS(reg)}
