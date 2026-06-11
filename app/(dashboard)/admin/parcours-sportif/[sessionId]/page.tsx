@@ -441,6 +441,16 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     await updateDoc(doc(db, 'sessions', sessionId), { status: 'cancelled' })
     // Retirer du planning des participants toutes les activités de cette séance
     await removeParcoursActivitesForSession(sessionId)
+    // Marquer toutes les inscriptions non-désinscrites comme annulées par l'admin
+    // → les inscrits ne verront plus de "règlement en attente" côté client
+    const regsSnap = await getDocs(
+      query(collection(db, 'registrations'), where('sessionId', '==', sessionId))
+    )
+    await Promise.all(
+      regsSnap.docs
+        .filter((d) => d.data().attendance !== 'deregistered')
+        .map((d) => updateDoc(d.ref, { paymentStatus: 'cancelled_admin' }))
+    )
     setSession((s) => s ? { ...s, status: 'cancelled' } : s)
     setShowCancelConfirm(false)
     setCancelling(false)

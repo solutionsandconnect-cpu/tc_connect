@@ -18,6 +18,11 @@ interface SessionLike {
   location?: string
 }
 
+// Verrou en mémoire : empêche les appels concurrents (ex. React Strict Mode) de créer
+// deux activités pour le même couple userId+sessionId avant que le premier write Firestore
+// ne soit visible. Persiste au niveau module (survit aux remontages de composants).
+const _inProgress = new Set<string>()
+
 /**
  * Ajoute (sans doublon) une activité "Parcours Sportif" au planning de l'utilisateur,
  * liée à son inscription. Ne fait rien si l'utilisateur n'a pas de compte (userId vide).
@@ -30,12 +35,18 @@ export async function addParcoursActivite(params: {
 }): Promise<void> {
   const { userId, registrationId, sessionId, session } = params
   if (!userId || !registrationId) return
+
+  const key = `${userId}:${sessionId}`
+  if (_inProgress.has(key)) return
+  _inProgress.add(key)
+
   try {
-    // Anti-doublon : une seule activité par inscription
-    const existing = await getDocs(
-      query(collection(db, 'activites_clients'), where('registrationId', '==', registrationId))
-    )
-    if (!existing.empty) return
+    // Anti-doublon Firestore : vérifie par registrationId ET par sessionId+userId
+    const [byRegId, bySession] = await Promise.all([
+      getDocs(query(collection(db, 'activites_clients'), where('registrationId', '==', registrationId))),
+      getDocs(query(collection(db, 'activites_clients'), where('sessionId', '==', sessionId), where('userId', '==', userId))),
+    ])
+    if (!byRegId.empty || !bySession.empty) return
 
     const heureDebut = fmtHeure(session.date)
     const heureFin = session.dateEnd
@@ -59,6 +70,7 @@ export async function addParcoursActivite(params: {
       date_create: Timestamp.now(),
     })
   } catch (e) {
+    _inProgress.delete(key) // libère le verrou sur erreur pour permettre un retry
     console.error('[addParcoursActivite]', e)
   }
 }

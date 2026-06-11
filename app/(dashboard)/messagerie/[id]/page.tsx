@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { use, useState, useEffect, useRef, useCallback, useMemo, CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { db, storage } from '@/lib/firebase'
@@ -14,7 +14,7 @@ import {
   ArrowLeftIcon, PaperAirplaneIcon, UserGroupIcon,
   PaperClipIcon, XMarkIcon, DocumentIcon, MagnifyingGlassIcon,
   UserPlusIcon, PhotoIcon, ArrowDownTrayIcon,
-  ChevronLeftIcon, ChevronRightIcon,
+  ChevronLeftIcon, ChevronRightIcon, InformationCircleIcon,
 } from '@heroicons/react/24/outline'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -45,6 +45,7 @@ interface Discussion {
   etat_message_expediteur?: boolean
   etat_message_destinataire?: boolean
   archives_par?: string[]
+  read_by?: Record<string, Timestamp>
 }
 
 interface UserInfo {
@@ -62,6 +63,13 @@ function formatDateTime(ts: Timestamp | null): string {
   })
 }
 
+function formatReadAt(ts: Timestamp): string {
+  const d = ts.toDate()
+  const isToday = d.toDateString() === new Date().toDateString()
+  if (isToday) return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' · ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+}
+
 function fileEmoji(file: File) {
   if (file.type.startsWith('image/')) return '🖼️'
   if (file.type.startsWith('video/')) return '🎥'
@@ -70,17 +78,72 @@ function fileEmoji(file: File) {
 
 // ─── Message bubble ───────────────────────────────────────────────────────────
 
-function MessageBubble({ m, isMe, onImageClick, canEdit, onEdit }: {
+function MessageBubble({ m, isMe, onImageClick, canEdit, onEdit, readBy, participants, myUid }: {
   m: ResolvedMessage
   isMe: boolean
   onImageClick: (url: string) => void
   canEdit?: boolean
   onEdit?: (m: ResolvedMessage) => void
+  readBy?: Record<string, Timestamp>
+  participants?: UserInfo[]
+  myUid?: string
 }) {
+  const [showReadInfo, setShowReadInfo] = useState(false)
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties | null>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
   const images = m.document_image_list?.filter(Boolean) ?? []
   const videos = m.document_video_list?.filter(Boolean) ?? []
   const pdfs = m.document_pdf_list?.filter(Boolean) ?? []
   const initials = m.authorName.split(' ').map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
+
+  // Participants (hors moi) qui ont lu ce message : leur readAt >= date_create du message
+  const readers = useMemo(() => {
+    if (!isMe || !readBy || !participants || !m.date_create) return []
+    return participants
+      .filter((p) => {
+        if (p.uid === myUid) return false
+        const readAt = readBy[p.uid]
+        if (!readAt) return false
+        return readAt.toMillis() >= m.date_create!.toMillis()
+      })
+      .map((p) => ({ ...p, readAt: readBy[p.uid] }))
+  }, [isMe, readBy, participants, m.date_create, myUid])
+
+  // Fermeture du popover au clic extérieur
+  useEffect(() => {
+    if (!showReadInfo) return
+    const handler = (e: MouseEvent) => {
+      if (
+        popoverRef.current && !popoverRef.current.contains(e.target as Node) &&
+        buttonRef.current && !buttonRef.current.contains(e.target as Node)
+      ) {
+        setShowReadInfo(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showReadInfo])
+
+  const handleInfoClick = () => {
+    if (showReadInfo) { setShowReadInfo(false); return }
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect()
+      const approxHeight = readers.length * 44 + 48
+      const showAbove = rect.top > approxHeight + 16
+      const style: CSSProperties = {
+        position: 'fixed',
+        zIndex: 200,
+        right: `${Math.max(8, window.innerWidth - rect.right)}px`,
+        ...(showAbove
+          ? { bottom: `${window.innerHeight - rect.top + 6}px` }
+          : { top: `${rect.bottom + 6}px` }),
+      }
+      setPopoverStyle(style)
+    }
+    setShowReadInfo(true)
+  }
 
   return (
     <div className={`flex items-end gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -126,6 +189,56 @@ function MessageBubble({ m, isMe, onImageClick, canEdit, onEdit }: {
             <button onClick={() => onEdit(m)} className="text-[10px] text-gray-400 hover:text-blue-500 transition">
               Modifier
             </button>
+          )}
+          {/* Indicateur de lecture — avatars visibles + bouton détail */}
+          {isMe && readers.length > 0 && (
+            <div className="flex items-center gap-1">
+              {/* Mini-avatars visibles sans clic */}
+              <div className="flex -space-x-1.5">
+                {readers.slice(0, 3).map((r) => (
+                  <div key={r.uid} className="w-4 h-4 rounded-full ring-1 ring-white overflow-hidden bg-blue-100 flex items-center justify-center shrink-0">
+                    {r.photo
+                      ? <img src={r.photo} alt="" className="w-full h-full object-cover" />
+                      : <span className="text-[7px] font-bold text-blue-600">{r.name.charAt(0).toUpperCase()}</span>}
+                  </div>
+                ))}
+                {readers.length > 3 && (
+                  <div className="w-4 h-4 rounded-full ring-1 ring-white bg-gray-200 flex items-center justify-center shrink-0">
+                    <span className="text-[7px] font-bold text-gray-500">+{readers.length - 3}</span>
+                  </div>
+                )}
+              </div>
+              {/* Bouton info */}
+              <button
+                ref={buttonRef}
+                onClick={handleInfoClick}
+                className="text-blue-400 hover:text-blue-600 transition"
+                title="Détails de lecture"
+              >
+                <InformationCircleIcon className="w-3.5 h-3.5" />
+              </button>
+              {/* Popover positionné en fixed pour ne jamais passer derrière le header */}
+              {showReadInfo && popoverStyle && (
+                <div ref={popoverRef} style={popoverStyle} className="bg-white rounded-xl shadow-xl border border-gray-100 p-3 min-w-[180px] max-w-[220px]">
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Lu par</p>
+                  <div className="space-y-2.5">
+                    {readers.map((r) => (
+                      <div key={r.uid} className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-blue-100 shrink-0 overflow-hidden flex items-center justify-center">
+                          {r.photo
+                            ? <img src={r.photo} alt="" className="w-full h-full object-cover" />
+                            : <span className="text-[9px] font-bold text-blue-600">{r.name.charAt(0).toUpperCase()}</span>}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-gray-800 truncate leading-tight">{r.name}</p>
+                          <p className="text-[10px] text-gray-400 leading-tight">{r.readAt ? formatReadAt(r.readAt) : ''}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -497,17 +610,20 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
     if (!currentUser || !discussion) return
     const uid = currentUser.uid
     try {
+      // Toujours enregistrer l'horodatage de lecture pour les accusés de réception
+      const updates: Record<string, any> = { [`read_by.${uid}`]: serverTimestamp() }
       if (discussion.participants_ids !== undefined) {
         if (discussion.non_lus_ids?.includes(uid)) {
-          await updateDoc(doc(db, 'messagerie', id), { non_lus_ids: arrayRemove(uid) })
+          updates.non_lus_ids = arrayRemove(uid)
         }
       } else {
         if (discussion.user_create?.id === uid && discussion.etat_message_expediteur === false) {
-          await updateDoc(doc(db, 'messagerie', id), { etat_message_expediteur: true })
+          updates.etat_message_expediteur = true
         } else if (discussion.user_destinataire?.id === uid && discussion.etat_message_destinataire === false) {
-          await updateDoc(doc(db, 'messagerie', id), { etat_message_destinataire: true })
+          updates.etat_message_destinataire = true
         }
       }
+      await updateDoc(doc(db, 'messagerie', id), updates)
     } catch {}
   }, [currentUser, discussion, id])
 
@@ -752,6 +868,9 @@ export default function DiscussionPage({ params }: { params: Promise<{ id: strin
                   const idx = allImages.indexOf(url)
                   setLightbox({ urls: allImages, index: Math.max(0, idx) })
                 }}
+                readBy={discussion?.read_by}
+                participants={participants}
+                myUid={uid}
               />
             ))
           )}

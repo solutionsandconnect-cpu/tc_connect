@@ -1,5 +1,9 @@
 'use client'
 
+// Garde module-level : la création rétroactive ne tourne qu'une seule fois par UID
+// et par session navigateur, même si le composant remonte (React Strict Mode inclus).
+const _retroDoneUids = new Set<string>()
+
 import { useState, useEffect, useMemo } from 'react'
 import {
   collection, query, where, getDocs, doc, getDoc, onSnapshot,
@@ -86,6 +90,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   pending: 'En attente de règlement',
   cash: 'Réglé en espèces',
   transfer: 'Réglé par virement',
+  cancelled_admin: 'Séance annulée',
 }
 
 function fmtDate(ts: Timestamp) {
@@ -307,6 +312,30 @@ export default function MesParcoursPage() {
       const merged: RegWithSession[] = regs.map((r) => ({ ...r, session: sessionMap[r.sessionId] ?? null }))
       merged.sort((a, b) => (b.session?.date?.toMillis() ?? 0) - (a.session?.date?.toMillis() ?? 0))
       setItems(merged)
+      // Création rétroactive des activités planning manquantes — une seule fois par UID
+      // par session navigateur (garde module-level _retroDoneUids).
+      if (!_retroDoneUids.has(currentUser!.uid)) {
+        _retroDoneUids.add(currentUser!.uid)
+        const seenSessionIds = new Set<string>()
+        await Promise.all(
+          regs
+            .filter((r) => {
+              if (seenSessionIds.has(r.sessionId)) return false
+              seenSessionIds.add(r.sessionId)
+              return true
+            })
+            .map((r) => {
+              const sess = sessionMap[r.sessionId]
+              if (!sess) return Promise.resolve()
+              return addParcoursActivite({
+                userId: currentUser!.uid,
+                registrationId: r.id,
+                sessionId: r.sessionId,
+                session: sess as any,
+              })
+            })
+        )
+      }
     } catch (err) {
       console.error(err)
     }
@@ -679,7 +708,7 @@ export default function MesParcoursPage() {
       {/* ── Règlements en attente PASSÉS (bannière, lendemain matin) ─ */}
       {(() => {
         const tomorrow0h = new Date(); tomorrow0h.setDate(tomorrow0h.getDate() + 1); tomorrow0h.setHours(0, 0, 0, 0)
-        const pastUnpaid = items.filter((i) => i.paymentStatus === 'pending' && i.session && (i.session.date?.toMillis() ?? 0) < tomorrow0h.getTime())
+        const pastUnpaid = items.filter((i) => i.paymentStatus === 'pending' && i.session && i.session.status !== 'cancelled' && (i.session.date?.toMillis() ?? 0) < tomorrow0h.getTime())
         if (!pastUnpaid.length) return null
         return (
           <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5 space-y-4">
