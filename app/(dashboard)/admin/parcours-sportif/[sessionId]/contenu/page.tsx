@@ -18,6 +18,8 @@ interface Exercise {
   exerciceRefId?: string   // lien optionnel vers la base d'exercices
   tempsEffort: number   // secondes
   recupEntreExos: number // secondes
+  options?: string  // version allégée ou modification
+  variant?: string  // variante si limitation physique
 }
 
 interface Circuit {
@@ -44,6 +46,46 @@ function emptyCircuit(index: number): Circuit {
     recupEntreTours: 30,
     exercises: [emptyExercise()],
   }
+}
+
+function createStandardTemplate(): Circuit[] {
+  return [
+    {
+      id: newId(),
+      name: 'Circuit 1 - La Source (30-10)',
+      nbTours: 2,
+      recupEntreTours: 10,
+      exercises: [
+        { id: newId(), name: '', tempsEffort: 30, recupEntreExos: 10 },
+        { id: newId(), name: '', tempsEffort: 30, recupEntreExos: 10 },
+        { id: newId(), name: '', tempsEffort: 30, recupEntreExos: 10 },
+        { id: newId(), name: '', tempsEffort: 30, recupEntreExos: 10 },
+      ],
+    },
+    {
+      id: newId(),
+      name: 'Circuit 2 - Lomer (AMRAP)',
+      nbTours: 1,
+      recupEntreTours: 0,
+      exercises: [
+        { id: newId(), name: '', tempsEffort: 0, recupEntreExos: 0 },
+        { id: newId(), name: '', tempsEffort: 0, recupEntreExos: 0 },
+        { id: newId(), name: 'Tour de course', tempsEffort: 0, recupEntreExos: 0 },
+      ],
+    },
+    {
+      id: newId(),
+      name: 'Circuit 3 - La Source (Tabata)',
+      nbTours: 4,
+      recupEntreTours: 0,
+      exercises: [
+        { id: newId(), name: '', tempsEffort: 20, recupEntreExos: 0 },
+        { id: newId(), name: '', tempsEffort: 10, recupEntreExos: 0 },
+        { id: newId(), name: '', tempsEffort: 20, recupEntreExos: 0 },
+        { id: newId(), name: '', tempsEffort: 10, recupEntreExos: 0 },
+      ],
+    },
+  ]
 }
 
 function calcCircuitSeconds(c: Circuit): number {
@@ -148,6 +190,8 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [templateConfirm, setTemplateConfirm] = useState(false)
+  const [expandedExercises, setExpandedExercises] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (!isAdmin) return
@@ -159,7 +203,15 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
       // Load content if exists
       const contentSnap = await getDoc(doc(db, 'session_content', sessionId))
       if (contentSnap.exists()) {
-        setCircuits(contentSnap.data().circuits ?? [])
+        const loadedCircuits: Circuit[] = contentSnap.data().circuits ?? []
+        setCircuits(loadedCircuits)
+        const expanded = new Set<string>()
+        for (const c of loadedCircuits) {
+          for (const ex of c.exercises) {
+            if (ex.options || ex.variant) expanded.add(ex.id)
+          }
+        }
+        setExpandedExercises(expanded)
       } else {
         setCircuits([emptyCircuit(1)])
       }
@@ -189,6 +241,8 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
         exerciceRefId: ex.exerciceRefId ?? null,
         tempsEffort: ex.tempsEffort,
         recupEntreExos: ex.recupEntreExos,
+        options: ex.options ?? null,
+        variant: ex.variant ?? null,
       })),
     }))
     await setDoc(doc(db, 'session_content', sessionId), {
@@ -277,6 +331,20 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
           <EyeIcon className="w-4 h-4" />
           Vue séance
         </button>
+        {templateConfirm ? (
+          <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl px-3 py-2 shrink-0">
+            <span className="text-xs font-medium text-orange-700">Remplacer le contenu ?</span>
+            <button onClick={() => setTemplateConfirm(false)}
+              className="text-xs font-semibold text-gray-500 border border-gray-300 px-2 py-0.5 rounded-lg hover:bg-gray-50 transition">Non</button>
+            <button onClick={() => { setCircuits(createStandardTemplate()); setTemplateConfirm(false) }}
+              className="text-xs font-semibold text-orange-700 bg-orange-100 border border-orange-300 px-2 py-0.5 rounded-lg hover:bg-orange-200 transition">Oui</button>
+          </div>
+        ) : (
+          <button onClick={() => setTemplateConfirm(true)}
+            className="flex items-center gap-1.5 border border-orange-200 text-orange-600 hover:bg-orange-50 text-sm font-medium px-3 py-2 rounded-xl transition shrink-0">
+            ↺ Template
+          </button>
+        )}
         <button onClick={handleSave} disabled={saving}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-xl transition shrink-0">
           {saving ? 'Enregistrement...' : saved ? '✓ Enregistré' : 'Enregistrer'}
@@ -346,65 +414,98 @@ export default function ContenuSeancePage({ params }: { params: Promise<{ sessio
 
             {/* Exercices */}
             <div className="divide-y divide-gray-50">
-              {circuit.exercises.map((ex, ei) => (
-                <div key={ex.id} className="px-5 py-3 flex items-center gap-3 flex-wrap">
-                  {/* Move up/down */}
-                  <div className="flex flex-col gap-0.5 shrink-0">
-                    <button onClick={() => moveExercise(circuit.id, ex.id, 'up')} disabled={ei === 0}
-                      className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-30 transition">
-                      <ChevronUpIcon className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => moveExercise(circuit.id, ex.id, 'down')} disabled={ei === circuit.exercises.length - 1}
-                      className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-30 transition">
-                      <ChevronDownIcon className="w-3.5 h-3.5" />
-                    </button>
+              {circuit.exercises.map((ex, ei) => {
+                const isExpanded = expandedExercises.has(ex.id) || !!(ex.options || ex.variant)
+                const toggleExpand = () => setExpandedExercises((prev) => {
+                  const next = new Set(prev)
+                  if (next.has(ex.id)) next.delete(ex.id)
+                  else next.add(ex.id)
+                  return next
+                })
+                return (
+                  <div key={ex.id} className="px-5 py-3 space-y-2">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {/* Move up/down */}
+                      <div className="flex flex-col gap-0.5 shrink-0">
+                        <button onClick={() => moveExercise(circuit.id, ex.id, 'up')} disabled={ei === 0}
+                          className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-30 transition">
+                          <ChevronUpIcon className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => moveExercise(circuit.id, ex.id, 'down')} disabled={ei === circuit.exercises.length - 1}
+                          className="p-0.5 text-gray-300 hover:text-gray-500 disabled:opacity-30 transition">
+                          <ChevronDownIcon className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      {/* Numéro */}
+                      <span className="text-xs font-bold text-gray-400 w-4 shrink-0">{ei + 1}</span>
+                      {/* Nom exercice avec suggestions */}
+                      <ExerciseNameInput
+                        value={ex.name}
+                        linked={!!ex.exerciceRefId}
+                        exercices={exercices}
+                        onChange={(v) => {
+                          setCircuits((prev) => prev.map((c) => c.id === circuit.id
+                            ? { ...c, exercises: c.exercises.map((x) => x.id === ex.id ? { ...x, name: v, exerciceRefId: undefined } : x) }
+                            : c))
+                        }}
+                        onSelectExercice={(picked) => {
+                          setCircuits((prev) => prev.map((c) => c.id === circuit.id
+                            ? { ...c, exercises: c.exercises.map((x) => x.id === ex.id ? { ...x, name: picked.nom_exercice, exerciceRefId: picked.id } : x) }
+                            : c))
+                        }}
+                      />
+                      {/* Temps effort */}
+                      <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
+                        <span className="text-xs font-medium text-blue-600">Effort</span>
+                        <input type="number" min={0} value={ex.tempsEffort}
+                          onChange={(e) => updateExercise(circuit.id, ex.id, 'tempsEffort', Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                        <span className="text-xs text-gray-400">s</span>
+                      </label>
+                      {/* Récup entre exos */}
+                      <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
+                        <span className="text-xs font-medium text-green-600">Récup</span>
+                        <input type="number" min={0} value={ex.recupEntreExos}
+                          onChange={(e) => updateExercise(circuit.id, ex.id, 'recupEntreExos', Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-400" />
+                        <span className="text-xs text-gray-400">s</span>
+                      </label>
+                      {/* Temps exercice */}
+                      <span className="text-xs text-gray-400 shrink-0 w-12 text-right">
+                        {ex.tempsEffort + ex.recupEntreExos > 0 ? formatSeconds(ex.tempsEffort + ex.recupEntreExos) : '—'}
+                      </span>
+                      {/* Toggle options */}
+                      <button onClick={toggleExpand}
+                        className={`text-[10px] font-medium px-2 py-0.5 rounded-lg border transition shrink-0 ${isExpanded ? 'bg-orange-50 border-orange-200 text-orange-600' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}>
+                        Options
+                      </button>
+                      {/* Supprimer exo */}
+                      <button onClick={() => removeExercise(circuit.id, ex.id)}
+                        className="p-1 text-gray-300 hover:text-red-400 transition shrink-0">
+                        <TrashIcon className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {isExpanded && (
+                      <div className="pl-10 space-y-1.5">
+                        <input
+                          type="text"
+                          value={ex.options ?? ''}
+                          onChange={(e) => updateExercise(circuit.id, ex.id, 'options', e.target.value || undefined)}
+                          placeholder="Option / version allégée (ex: genoux au sol si nécessaire)"
+                          className="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-300 placeholder-gray-300"
+                        />
+                        <input
+                          type="text"
+                          value={ex.variant ?? ''}
+                          onChange={(e) => updateExercise(circuit.id, ex.id, 'variant', e.target.value || undefined)}
+                          placeholder="Variante si limitation physique (ex: si épaules → ...)"
+                          className="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-300 placeholder-gray-300"
+                        />
+                      </div>
+                    )}
                   </div>
-                  {/* Numéro */}
-                  <span className="text-xs font-bold text-gray-400 w-4 shrink-0">{ei + 1}</span>
-                  {/* Nom exercice avec suggestions */}
-                  <ExerciseNameInput
-                    value={ex.name}
-                    linked={!!ex.exerciceRefId}
-                    exercices={exercices}
-                    onChange={(v) => {
-                      // si on tape manuellement, on retire le lien
-                      setCircuits((prev) => prev.map((c) => c.id === circuit.id
-                        ? { ...c, exercises: c.exercises.map((x) => x.id === ex.id ? { ...x, name: v, exerciceRefId: undefined } : x) }
-                        : c))
-                    }}
-                    onSelectExercice={(picked) => {
-                      setCircuits((prev) => prev.map((c) => c.id === circuit.id
-                        ? { ...c, exercises: c.exercises.map((x) => x.id === ex.id ? { ...x, name: picked.nom_exercice, exerciceRefId: picked.id } : x) }
-                        : c))
-                    }}
-                  />
-                  {/* Temps effort */}
-                  <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
-                    <span className="text-xs font-medium text-blue-600">Effort</span>
-                    <input type="number" min={1} value={ex.tempsEffort}
-                      onChange={(e) => updateExercise(circuit.id, ex.id, 'tempsEffort', Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                    <span className="text-xs text-gray-400">s</span>
-                  </label>
-                  {/* Récup entre exos */}
-                  <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
-                    <span className="text-xs font-medium text-green-600">Récup</span>
-                    <input type="number" min={0} value={ex.recupEntreExos}
-                      onChange={(e) => updateExercise(circuit.id, ex.id, 'recupEntreExos', Math.max(0, parseInt(e.target.value) || 0))}
-                      className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-400" />
-                    <span className="text-xs text-gray-400">s</span>
-                  </label>
-                  {/* Temps exercice */}
-                  <span className="text-xs text-gray-400 shrink-0 w-12 text-right">
-                    {formatSeconds(ex.tempsEffort + ex.recupEntreExos)}
-                  </span>
-                  {/* Supprimer exo */}
-                  <button onClick={() => removeExercise(circuit.id, ex.id)}
-                    className="p-1 text-gray-300 hover:text-red-400 transition shrink-0">
-                    <TrashIcon className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             {/* Ajouter exercice */}
