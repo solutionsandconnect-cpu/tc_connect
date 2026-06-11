@@ -63,7 +63,7 @@ interface Registration {
   lastName: string
   email: string
   phone: string
-  paymentStatus: 'pending' | 'cash' | 'transfer'
+  paymentStatus: 'pending' | 'cash' | 'transfer' | 'cancelled_admin' | 'free' | 'waived'
   attendance: 'unknown' | 'present' | 'absent'
   registeredAt: Timestamp
   uniqueToken: string
