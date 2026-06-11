@@ -732,7 +732,7 @@ Teddy`
 
     const sms = `Bonjour,
 
-Rappel de votre inscription pour le Parcours Sportif d'aujourd'hui à ${heure}.
+Rappel de votre inscription pour le Parcours Sportif d'aujourd'hui à ${heure} (merci d'arriver 10 minutes avant si possible).
 Lieu du rendez-vous : ${locationDisplay}.
 
 Si vous avez un imprévu, merci de revenir vers moi au plus vite.${unpaidSection}
