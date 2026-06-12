@@ -1,7 +1,28 @@
 import { NextResponse } from 'next/server'
 import { getAdminDb } from '@/lib/firebaseAdmin'
+import { sendPushToUser } from '@/lib/webpush'
+import { FieldValue } from 'firebase-admin/firestore'
 
 const CRON_SECRET = process.env.CRON_SECRET
+
+async function persistForUser(userId: string, title: string, body: string, url: string, type: string) {
+  const db = getAdminDb()
+  await db.collection('Notifications').add({
+    refUsers: db.collection('users').doc(userId),
+    type_notification: type,
+    notification: `${title} — ${body}`,
+    etat_notification: 'Non lu',
+    url,
+    date_create: FieldValue.serverTimestamp(),
+  })
+}
+
+async function notify(userId: string, title: string, body: string, url: string, type: string) {
+  await Promise.allSettled([
+    sendPushToUser(userId, { title, body, url }),
+    persistForUser(userId, title, body, url, type),
+  ])
+}
 
 async function runReminders(req: Request) {
   const auth = req.headers.get('authorization')
@@ -11,14 +32,6 @@ async function runReminders(req: Request) {
 
   const db = getAdminDb()
   const now = new Date(); now.setHours(0, 0, 0, 0)
-
-  const pushUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  const sendPush = (payload: object) =>
-    fetch(`${pushUrl}/api/push/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).catch(() => {})
 
   let notified = 0
   let checked = 0
@@ -39,7 +52,7 @@ async function runReminders(req: Request) {
         checked++
         const due: string | null | undefined = item.dueDate
         if (!due) continue
-        if ((item.qtyReady ?? 0) >= (item.qtyNeeded ?? 1)) continue  // déjà fait
+        if ((item.qtyReady ?? 0) >= (item.qtyNeeded ?? 1)) continue
 
         const diffDays = Math.round(
           (new Date(due + 'T00:00:00').getTime() - now.getTime()) / 86400000
@@ -49,14 +62,13 @@ async function runReminders(req: Request) {
         const targetUid: string = item.assigneeId || ownerId
         const label = diffDays === 0 ? "Aujourd'hui !" : 'Dans 2 jours'
 
-        await sendPush({
-          userId: targetUid,
-          title: `📅 CheckConnect — ${item.name}`,
-          body: `${label} — ${trip.name}`,
-          url: '/trips',
-          persist: true,
-          type: 'CHECKLIST_DUE',
-        })
+        await notify(
+          targetUid,
+          `📅 CheckConnect — ${item.name}`,
+          `${label} — ${trip.name}`,
+          '/trips',
+          'CHECKLIST_DUE',
+        )
         notified++
       }
     }
@@ -73,14 +85,13 @@ async function runReminders(req: Request) {
         const progress = total > 0 ? ` ${done}/${total} tâches faites.` : ''
 
         await Promise.allSettled(memberIds.map(uid =>
-          sendPush({
-            userId: uid,
-            title: `✅ ${trip.name} — Tout est prêt ?`,
-            body: `Votre CheckConnect commence demain.${progress}`,
-            url: '/trips',
-            persist: true,
-            type: 'CHECKLIST_START',
-          })
+          notify(
+            uid,
+            `✅ ${trip.name} — Tout est prêt ?`,
+            `Votre CheckConnect commence demain.${progress}`,
+            '/trips',
+            'CHECKLIST_START',
+          )
         ))
         notified += memberIds.length
       }
@@ -96,19 +107,18 @@ async function runReminders(req: Request) {
         const total = allItems.length
         if (total === 0) return
         const done = allItems.filter((it: any) => (it.qtyReady ?? 0) >= (it.qtyNeeded ?? 1)).length
-        if (done >= total) return  // liste complète, pas de rappel
+        if (done >= total) return
 
         const label = diffTo === 1 ? 'demain' : 'dans 3 jours'
 
         await Promise.allSettled(memberIds.map(uid =>
-          sendPush({
-            userId: uid,
-            title: `📋 ${trip.name} — Êtes-vous à jour ?`,
-            body: `La liste se termine ${label}. ${done}/${total} tâches faites.`,
-            url: '/trips',
-            persist: true,
-            type: 'CHECKLIST_DEADLINE',
-          })
+          notify(
+            uid,
+            `📋 ${trip.name} — Êtes-vous à jour ?`,
+            `La liste se termine ${label}. ${done}/${total} tâches faites.`,
+            '/trips',
+            'CHECKLIST_DEADLINE',
+          )
         ))
         notified += memberIds.length
       }
