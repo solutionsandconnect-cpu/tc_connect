@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/checklist/due-reminders",
-      "schedule": "15 9 * * *"
+      "schedule": "0 7 * * *"
     },
     {
       "path": "/api/factures/echeance-reminders",
