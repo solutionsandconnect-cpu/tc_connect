@@ -782,11 +782,12 @@ Teddy`
   // La séance est "passée" si elle a eu lieu un jour antérieur (une séance du jour même n'est pas encore passée)
   const startOfTodayMs = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() })()
   const isPast = session.date.toMillis() < startOfTodayMs
-  const unpaidWithPhone = registrations.filter((r) => r.paymentStatus === 'pending' && effectiveContactPhone(r))
+  const unpaidWithPhone = registrations.filter((r) => r.paymentStatus === 'pending' && r.attendance !== 'deregistered' && effectiveContactPhone(r))
 
   const filteredRegistrations = registrations.filter((r) => {
-    if (filterPayment === 'pending' && r.paymentStatus !== 'pending') return false
-    if (filterPayment === 'paid' && r.paymentStatus === 'pending') return false
+    const isDeregistered = r.attendance === 'deregistered'
+    if (filterPayment === 'pending' && (r.paymentStatus !== 'pending' || isDeregistered)) return false
+    if (filterPayment === 'paid' && r.paymentStatus === 'pending' && !isDeregistered) return false
     if (filterAttendance !== 'all' && (r.attendance ?? 'unknown') !== filterAttendance) return false
     if (search.trim()) {
       const q = search.toLowerCase()
