@@ -6,10 +6,11 @@ import { useBebe } from '@/hooks/useBebe'
 import { useBebeEvents } from '@/hooks/useBebeEvents'
 import { StoreGate } from '@/components/ui/StoreGate'
 import Modal from '@/components/ui/Modal'
-import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play } from 'lucide-react'
+import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play, Gift } from 'lucide-react'
 import { Milk, Pill, Baby } from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
 import { uploadImage } from '@/lib/uploadImage'
+import { ArrivalSection } from '@/components/bebe/ArrivalSection'
 import type { BebeEvent, BebeEventType } from '@/types'
 
 // ─── Icône couche (SVG custom rempli — aucun équivalent dans lucide) ──────────
@@ -237,7 +238,7 @@ export default function BebePage() {
   }
 
   // ── Vue ───────────────────────────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState<'dashboard' | 'planning'>('dashboard')
+  const [viewMode, setViewMode] = useState<'dashboard' | 'planning' | 'arrival'>('dashboard')
   const [planningRange, setPlanningRange] = useState<'7j' | '30j'>('7j')
 
   // ── Timer sommeil actif ───────────────────────────────────────────────────
@@ -566,7 +567,7 @@ export default function BebePage() {
 
         {/* Onglets vue */}
         <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-          {[{ key: 'dashboard', icon: LayoutList, label: "Aujourd'hui" }, { key: 'planning', icon: CalendarDays, label: 'Planning' }].map(v => {
+          {[{ key: 'dashboard', icon: LayoutList, label: "Aujourd'hui" }, { key: 'planning', icon: CalendarDays, label: 'Planning' }, { key: 'arrival', icon: Gift, label: 'Arrivée' }].map(v => {
             const Icon = v.icon
             return (
               <button key={v.key} onClick={() => setViewMode(v.key as any)}
@@ -832,6 +833,11 @@ export default function BebePage() {
               </div>
             )}
           </>
+        )}
+
+        {/* ═══ VUE ARRIVÉE DU BÉBÉ ═══ */}
+        {viewMode === 'arrival' && selectedBaby && (
+          <ArrivalSection baby={selectedBaby} updateBebe={updateBebe} />
         )}
 
       </div>

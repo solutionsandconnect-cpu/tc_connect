@@ -689,6 +689,42 @@ export interface Bebe {
   photoUrl?: string
   /** Sommeil en cours — défini au "Start", supprimé au "Réveillé !" */
   activeSleep?: { startTime: Timestamp } | null
+
+  // ── Arrivée du bébé (faire-part) ──────────────────────────────────────────
+  /** Sexe — sert à accorder les messages ({ne} → né/née) */
+  sex?: 'boy' | 'girl'
+  /** Poids de naissance en grammes (ex : 3450) */
+  birthWeightG?: number
+  /** Taille de naissance en cm (ex : 50) */
+  birthHeightCm?: number
+  /** Heure de naissance "HH:MM" */
+  birthTime?: string
+  /** Modèles de message d'annonce, assignables aux contacts */
+  arrivalTemplates?: ArrivalTemplate[]
+}
+
+/** Modèle de message d'annonce de naissance (stocké sur le doc bébé) */
+export interface ArrivalTemplate {
+  id: string
+  label: string
+  /** Corps avec variables : {prenom} {poids} {taille} {date} {heure} {ne} {sexe} */
+  body: string
+}
+
+/** Document Firestore : babies/{babyId}/contacts/{contactId} */
+export interface BebeContact {
+  id: string
+  name: string
+  /** Indicatif pays, ex : "+33" */
+  indicatif: string
+  telephone: string
+  /** Modèle de message assigné (id d'un ArrivalTemplate) */
+  templateId?: string
+  createdAt: Timestamp
+  /** Date d'envoi du message (null/absent = pas encore envoyé) */
+  sentAt?: Timestamp | null
+  /** Canal utilisé pour l'envoi */
+  sentVia?: 'sms' | 'whatsapp' | null
 }
 
 export type BebeEventType = 'bottle' | 'diaper' | 'sleep' | 'meds'

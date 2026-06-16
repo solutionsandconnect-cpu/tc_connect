@@ -252,6 +252,12 @@ service cloud.firestore {
         allow read, write, delete: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/babies/$(babyId)).data.members;
       }
+
+      match /contacts/{contactId} {
+        // Les contacts d'annonce héritent de l'accès au document bébé parent
+        allow read, write, delete: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/babies/$(babyId)).data.members;
+      }
     }
 
     match /store_reviews/{id} {

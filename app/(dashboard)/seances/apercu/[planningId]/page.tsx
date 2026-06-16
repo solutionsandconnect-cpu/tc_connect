@@ -7,9 +7,10 @@ import {
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
+import { useExercices } from '@/hooks/useExercices'
 import { saveExerciceMemory } from '@/lib/exerciceMemory'
 import Modal from '@/components/ui/Modal'
-import { ArrowLeftIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon, PlayIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon, PlayIcon, CheckIcon } from '@heroicons/react/24/outline'
 
 const TYPES_SEANCE_APERCU = ['Circuit classique','Tabata','Circuit en 30-10','Circuit varié (rep)','Circuit varié (temps)','Circuit varié']
 const PARTIES_SEANCE_APERCU = ['Échauffement','Corps de séance','Retour au calme','Séance complète']
@@ -150,6 +151,7 @@ export default function OverviewSeancePage() {
   const searchParams = useSearchParams()
   const sourcePlanningId = searchParams.get('sourcePlanningId') || ''
   const { userProfile, currentUser } = useAuth()
+  const { exercices } = useExercices()
   const isAdmin = userProfile?.role_app === 'Admin'
   const droits = userProfile?.droits
 
@@ -194,6 +196,8 @@ export default function OverviewSeancePage() {
   // Édition rapide d'un exercice (admin uniquement, en pleine séance)
   const [editExo, setEditExo] = useState<{ seanceId: string; item: ProgItem; exoName: string } | null>(null)
   const [savingExo, setSavingExo] = useState(false)
+  const [exoSelId, setExoSelId] = useState('')
+  const [exoSearch, setExoSearch] = useState('')
   const [exoForm, setExoForm] = useState({
     type_effort: 'Durée (sec)', effort: 0, recup_effort: 0,
     tempo_phase1: 0, tempo_phase2: 0, tempo_phase3: 0, tempo_phase4: 0,
@@ -203,6 +207,8 @@ export default function OverviewSeancePage() {
 
   const openEditExo = (seanceId: string, item: ProgItem, exoName: string) => {
     setEditExo({ seanceId, item, exoName })
+    setExoSelId(item.exercice?.id || '')
+    setExoSearch('')
     setExoForm({
       type_effort: fromFirestoreEffortApercu(item.type_effort || 'Durée (sec)'),
       effort: item.effort ?? 0,
@@ -225,6 +231,8 @@ export default function OverviewSeancePage() {
     if (!editExo) return
     setSavingExo(true)
     try {
+      const exoChanged = !!exoSelId && exoSelId !== (editExo.item.exercice?.id || '')
+      const exoRef = exoSelId ? doc(db, 'exercices', exoSelId) : null
       const payload = {
         type_effort: toFirestoreEffortApercu(exoForm.type_effort),
         effort: Number(exoForm.effort),
@@ -240,18 +248,29 @@ export default function OverviewSeancePage() {
         intensite_exercice: exoForm.intensite_exercice,
         explication_exercice: exoForm.explication_exercice,
         observations_exercice: exoForm.observations_exercice,
+        ...(exoChanged && exoRef ? { exercice: exoRef } : {}),
       }
       await updateDoc(doc(db, 'programme_seance', editExo.item.id), payload)
+      // Données du nouvel exercice (pour l'affichage) si l'exercice a changé
+      const newExo = exoChanged
+        ? (() => {
+            const e = exercices.find(x => x.id === exoSelId) as any
+            return e ? { id: e.id, nom_exercice: e.nom_exercice, image_exercice: e.image_exercice } as ExerciceData : null
+          })()
+        : null
       // Mise à jour optimiste du state local
       setSeances(prev => prev.map(s => s.id === editExo.seanceId
         ? { ...s, programme: s.programme.map(p => p.item.id === editExo.item.id
-            ? { ...p, item: { ...p.item, ...payload } }
+            ? {
+                item: { ...p.item, ...payload, ...(exoChanged && exoRef ? { exercice: exoRef } : {}) },
+                exo: newExo ?? p.exo,
+              }
             : p) }
         : s
       ))
       // Mémoriser l'intensité/alerte de cet exercice pour ce client
       const cid = (planning as any)?.ref_users?.id ?? (planning as any)?.ref_client?.id ?? null
-      await saveExerciceMemory(cid, editExo.item.exercice?.id, {
+      await saveExerciceMemory(cid, exoSelId || editExo.item.exercice?.id, {
         intensite_exercice: payload.intensite_exercice,
         alerte_exercice: payload.alerte_exercice,
         raison_alerte_exercice: payload.raison_alerte_exercice,
@@ -1031,6 +1050,60 @@ export default function OverviewSeancePage() {
       {/* Modal édition rapide d'un exercice (admin) */}
       <Modal isOpen={!!editExo} onClose={() => setEditExo(null)} title={editExo ? `Modifier — ${editExo.exoName}` : 'Modifier'} size="lg">
         <div className="space-y-4">
+          {/* Sélection de l'exercice */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Exercice</label>
+            {exoSelId && (() => {
+              const sel = exercices.find(e => e.id === exoSelId) as any
+              return sel ? (
+                <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                  <CheckIcon className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span className="text-sm font-medium text-blue-700 truncate">{sel.nom_exercice}</span>
+                  {sel.partie_prioritaire && <span className="text-xs text-blue-400 shrink-0">· {sel.partie_prioritaire}</span>}
+                </div>
+              ) : null
+            })()}
+            <input
+              type="text"
+              placeholder="Rechercher un autre exercice..."
+              value={exoSearch}
+              onChange={e => setExoSearch(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            {exoSearch.trim() && (
+              <div className="border border-gray-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
+                {exercices.filter(e => e.nom_exercice?.toLowerCase().includes(exoSearch.toLowerCase())).length === 0 ? (
+                  <p className="text-xs text-gray-400 p-3">Aucun exercice trouvé</p>
+                ) : (
+                  exercices
+                    .filter(e => e.nom_exercice?.toLowerCase().includes(exoSearch.toLowerCase()))
+                    .map(ex => (
+                      <button
+                        key={ex.id}
+                        type="button"
+                        onClick={() => {
+                          setExoSelId(ex.id)
+                          setExoSearch('')
+                          setExoForm(f => ({ ...f, explication_exercice: (ex as any).explications_commentees_exercice || '' }))
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50 transition ${
+                          exoSelId === ex.id ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'
+                        }`}
+                      >
+                        <span>
+                          {ex.nom_exercice}
+                          {(ex as any).partie_prioritaire && (
+                            <span className="text-xs text-gray-400 ml-2">· {(ex as any).partie_prioritaire}</span>
+                          )}
+                        </span>
+                        {exoSelId === ex.id && <CheckIcon className="w-4 h-4 text-blue-600 shrink-0" />}
+                      </button>
+                    ))
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Type d'effort</label>
