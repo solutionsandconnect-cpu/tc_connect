@@ -15,7 +15,7 @@ import {
   PlusIcon, CalendarIcon, MapPinIcon, UsersIcon,
   ChevronRightIcon, BanknotesIcon, ClipboardDocumentIcon,
   CheckIcon, ShareIcon, ChatBubbleLeftIcon, FireIcon, TrashIcon,
-  EyeIcon, EyeSlashIcon, Cog6ToothIcon, ExclamationTriangleIcon,
+  EyeIcon, EyeSlashIcon, Cog6ToothIcon, ExclamationTriangleIcon, ClipboardDocumentListIcon,
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 
@@ -544,6 +544,14 @@ export default function AdminParcoursPage() {
           >
             <UsersIcon className="w-4 h-4" />
             <span className="hidden sm:inline">Participants</span>
+          </button>
+          <button
+            onClick={() => router.push('/admin/parcours-sportif/template')}
+            className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            title="Template de séance"
+          >
+            <ClipboardDocumentListIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">Template</span>
           </button>
           <button
             onClick={() => router.push('/admin/parcours-sportif/parametres')}
