@@ -219,7 +219,14 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
           const snap = await getDocs(query(collection(db, 'registrations'), where('email', 'in', chunk)))
           snap.docs.forEach((d) => {
             const r = { id: d.id, ...d.data() } as Registration
-            if (r.paymentStatus === 'pending' && r.sessionId !== sessionId) others.push(r)
+            // On ignore les désinscrits et les absents de la séance passée :
+            // pas de rappel d'impayé si la personne n'a finalement pas participé.
+            if (
+              r.paymentStatus === 'pending' &&
+              r.sessionId !== sessionId &&
+              r.attendance !== 'deregistered' &&
+              r.attendance !== 'absent'
+            ) others.push(r)
           })
         }
         if (!others.length) { if (!cancelled) setPastUnpaidByEmail({}); return }
@@ -713,13 +720,25 @@ Teddy`
     window.open(`sms:${phone}?body=${encodeURIComponent(body)}`, '_blank')
   }
 
-  const handleReminderSMS = (reg: Registration) => {
-    if (!session || !reg.phone) return
-    setReminderConfirmId(null)
+  // Marque le rappel comme envoyé (Firestore + état local), sans déclencher SMS/notification.
+  const markReminderSent = (reg: Registration) => {
     const sentAt = Timestamp.now()
+    setReminderConfirmId(null)
     setReminderSentIds((prev) => new Set(prev).add(reg.id))
     updateDoc(doc(db, 'registrations', reg.id), { reminderSentAt: sentAt }).catch(() => {})
     setRegistrations((prev) => prev.map((r) => r.id === reg.id ? { ...r, reminderSentAt: sentAt } : r))
+  }
+
+  // Rappel "silencieux" : on note qu'il a été envoyé sans SMS ni notification
+  // (pour les clients qui viennent avec moi → pas besoin de les solliciter).
+  const handleReminderSilent = (reg: Registration) => {
+    if (!session) return
+    markReminderSent(reg)
+  }
+
+  const handleReminderSMS = (reg: Registration) => {
+    if (!session || !reg.phone) return
+    markReminderSent(reg)
     const heure = fmtHeure(session.date)
     const locationDisplay = session.locationLabel || session.location || session.locationCoords || ''
     const link = `${window.location.origin}/parcours-sportif`
@@ -1417,19 +1436,23 @@ Teddy`
                         </button>
                       )}
                       {reg.attendance !== 'deregistered' && reg.phone && (
-                        reg.reminderSentAt ? (
-                          <span className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-green-200 text-green-600 bg-green-50"
-                            title={`Envoyé le ${reg.reminderSentAt.toDate().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`}>
-                            <CheckCircleIcon className="w-3.5 h-3.5" />Rappel envoyé
-                          </span>
-                        ) : reminderConfirmId === reg.id ? (
+                        reminderConfirmId === reg.id ? (
                           <div className="flex items-center gap-1">
-                            <span className="text-xs text-gray-500">Envoyer ?</span>
+                            <span className="text-xs text-gray-500">{reg.reminderSentAt ? 'Renvoyer ?' : 'Envoyer ?'}</span>
                             <button onClick={() => setReminderConfirmId(null)}
                               className="text-xs text-gray-500 border border-gray-200 px-2 py-0.5 rounded-lg hover:bg-gray-50 transition">Non</button>
+                            <button onClick={() => handleReminderSilent(reg)}
+                              title="Marquer comme envoyé sans SMS ni notification"
+                              className="text-xs text-gray-600 border border-gray-300 px-2 py-0.5 rounded-lg hover:bg-gray-50 transition">Sans SMS</button>
                             <button onClick={() => handleReminderSMS(reg)}
                               className="text-xs text-white bg-blue-600 hover:bg-blue-700 px-2 py-0.5 rounded-lg transition">Oui</button>
                           </div>
+                        ) : reg.reminderSentAt ? (
+                          <button onClick={() => setReminderConfirmId(reg.id)}
+                            className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-green-200 text-green-600 bg-green-50 hover:bg-green-100 transition"
+                            title={`Envoyé le ${reg.reminderSentAt.toDate().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} — cliquer pour renvoyer`}>
+                            <CheckCircleIcon className="w-3.5 h-3.5" />Rappel envoyé
+                          </button>
                         ) : (
                           <button onClick={() => setReminderConfirmId(reg.id)}
                             className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition">
