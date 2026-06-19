@@ -97,6 +97,30 @@ service cloud.firestore {
       allow create, read, write, delete: if request.auth != null;
     }
 
+    // Pilotage de l'activité (contrats clients, MRR, marge) — réservé à l'admin
+    match /pilotage_contrats/{document} {
+      allow read, create, write, delete: if request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
+    }
+
+    // Catalogue de briques de fonctionnalités (estimateur de tarif) — réservé à l'admin
+    match /pilotage_catalogue/{document} {
+      allow read, create, write, delete: if request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
+    }
+
+    // Réglages du Pilotage (valeurs par défaut du calculateur) — réservé à l'admin
+    match /pilotage_settings/{document} {
+      allow read, create, write, delete: if request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
+    }
+
+    // Documents projet & contrats légaux reliés à un contrat — réservé à l'admin
+    match /pilotage_documents/{document} {
+      allow read, create, write, delete: if request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
+    }
+
     match /database_users_details/{document} {
       allow create: if request.auth != null;
       allow read: if request.auth != null;

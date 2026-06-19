@@ -209,6 +209,126 @@ export interface ParcoursNote {
   date_max_note_active?: Timestamp | null
 }
 
+// Champs des contrats légaux (portés par le contrat, réutilisés par les documents officiels)
+export interface LegalFields {
+  prestataireNom: string
+  prestataireStatut: string
+  prestataireSiret: string
+  prestataireAdresse: string
+  prestataireEmail: string
+  prestataireTel: string
+  prestataireRepresentant: string
+  clientNom: string
+  clientRepresentant: string
+  clientAdresse: string
+  clientSiret: string
+  date: string
+  lieu: string
+  objet: string
+  prixCreation: string
+  prixAbo: string
+  donneesTraitees: string
+  finalites: string
+  personnesConcernees: string
+  dureeConservation: string
+  sousTraitantsUlterieurs: string
+  etendueDroits: string
+  exclusivite: string
+  territoire: string
+  duree: string
+}
+
+// Contenu structuré « projet » (partagé par le contrat, réutilisé par les documents)
+export interface ProjetFonction { categorie: string; description: string }
+export interface ProjetPlanning { etape: string; description: string; date: string; responsable: string; fait: boolean }
+export interface ProjetTache { description: string; date: string; fait: boolean }
+export interface ProjetContent {
+  contexte: string
+  fonctionnalites: ProjetFonction[]
+  livrables: string[]
+  planning: ProjetPlanning[]
+  tachesClient: ProjetTache[]
+  tachesSC: ProjetTache[]
+}
+
+// Collection : pilotage_contrats (pilotage de l'activité — contrats clients pro)
+export type PilotageContratStatut = 'actif' | 'pause' | 'termine'
+
+export interface PilotageContrat {
+  id: string
+  clientId?: string | null      // client relié (collection clients)
+  clientNom: string             // nom du client / entreprise
+  abonnementId?: string | null  // abonnement relié (collection abonnements)
+  abonnementTitre?: string | null // libellé de l'abonnement relié (affichage)
+  appNom?: string               // (déprécié) ancienne « app vendue »
+  fraisMiseEnPlace?: number     // frais ponctuels au démarrage
+  abonnementMensuel?: number    // revenu récurrent /mois
+  coutFirebaseMensuel?: number  // coût d'infra estimé /mois (pour la marge)
+  dateDebut?: Timestamp
+  premiereAnnee?: boolean       // tarif « 1ère année » → à revoir ensuite
+  tarifAnnee2Defini?: boolean   // le tarif année 2 a-t-il été décidé ?
+  devisId?: string | null       // devis validé relié (source de vérité du deal)
+  devisNumber?: string | null   // numéro du devis relié (affichage)
+  statut: PilotageContratStatut
+  notes?: string
+  projet?: ProjetContent       // contenu projet partagé (rempli une fois, réutilisé par les documents)
+  legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)
+  createdAt: Timestamp
+  updatedAt?: Timestamp
+}
+
+// Collection : pilotage_catalogue (briques de fonctionnalités réutilisables pour l'estimateur)
+export interface PilotageCatalogueItem {
+  id: string
+  nom: string
+  taille: 'xs' | 's' | 'm' | 'l' | 'xl'  // mappe sur TAILLES (jours d'effort)
+  groupe: string                          // ex : « Fonctionnelles », « Souvent oubliées »
+  createdAt: Timestamp
+}
+
+// Collection : pilotage_documents (documents projet & contrats légaux reliés à un contrat)
+export type PilotageDocumentType =
+  | 'cahier_charges' | 'besoins_client' | 'bilan'   // documents projet
+  | 'prestation' | 'dpa_rgpd' | 'cgv' | 'licence'   // contrats légaux
+
+export type PilotageDocumentStatut = 'brouillon' | 'finalise' | 'signe'
+
+export interface PilotageDocument {
+  id: string
+  contratId: string
+  clientNom?: string
+  type: PilotageDocumentType
+  titre: string
+  version: string
+  statut: PilotageDocumentStatut
+  contenu?: Record<string, unknown>   // données structurées (remplies aux phases suivantes)
+  signe?: boolean
+  signeLe?: Timestamp | null
+  signatairePar?: string | null
+  signatureUrl?: string | null        // image de la signature (Storage)
+  createdAt: Timestamp
+  updatedAt?: Timestamp
+}
+
+// Collection : pilotage_settings (valeurs par défaut du calculateur de tarif)
+export interface PilotageSettings {
+  tjm?: number
+  overheadPct?: number
+  bufferPct?: number
+  maintPct?: number
+  infra?: number
+  supportH?: number
+  heuresGagnees?: number
+  coutHoraireClient?: number
+  partCaptee?: number
+  // Mode « app à revendre » (revendeur / marque blanche)
+  premiumRevente?: number      // % en plus sur la création (droits commerciaux)
+  nbClientsFinaux?: number     // clients finaux visés par le revendeur
+  prixReventeMensuel?: number  // prix de revente par client final /mois
+  // Liste de fonctionnalités de départ du calculateur (durée/complexité par défaut)
+  features?: { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl' }[]
+}
+
 // Collection : Notifications
 export interface Notification {
   id: string
@@ -434,6 +554,7 @@ export interface Client {
   siret?: string
   nomEntreprise?: string
   adresseEntreprise?: string
+  representantEntreprise?: string   // nom du représentant légal (pour les contrats)
   // Contacts supplémentaires (facturation alternative)
   contactsSupplementaires?: ContactSupplementaire[]
   // Legacy (rétrocompat lectures anciennes données Firestore)
@@ -469,6 +590,7 @@ export interface Company {
   ville?: string
   email?: string
   telephone?: string
+  representant?: string      // nom du représentant légal (pour les contrats)
   siret?: string
   tva?: string
   iban?: string

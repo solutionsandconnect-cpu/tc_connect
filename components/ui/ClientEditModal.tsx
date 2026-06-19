@@ -141,7 +141,7 @@ type ClientForm = {
   prenom: string; nom: string; email: string; indicatif_tel: string; telephone: string; genre: string
   dateNaissance: string; adresse: string; ville: string; codePostal: string
   profession: string; sportPratique: string; niveauSportif: string; actif: boolean
-  siret: string; nomEntreprise: string; adresseEntreprise: string
+  siret: string; nomEntreprise: string; adresseEntreprise: string; representantEntreprise: string
   objectifs: Objectif[]
   antecedentsMedicaux: AntecedentMedical[]
   antecedentsSportifs: AntecedentSportif[]
@@ -161,7 +161,7 @@ type ClientForm = {
 const EMPTY_CLIENT: ClientForm = {
   prenom: "", nom: "", email: "", indicatif_tel: "+33", telephone: "", genre: "", dateNaissance: "",
   adresse: "", ville: "", codePostal: "", profession: "", sportPratique: "",
-  niveauSportif: "", actif: true, siret: "", nomEntreprise: "", adresseEntreprise: "",
+  niveauSportif: "", actif: true, siret: "", nomEntreprise: "", adresseEntreprise: "", representantEntreprise: "",
   objectifs: [], antecedentsMedicaux: [], antecedentsSportifs: [],
   materielItems: [], structureItems: [], autreCoachItems: [], suivisPassesItems: [],
   contactUrgenceNom: "", contactUrgenceTel: "", contactUrgenceRelation: "",
@@ -903,7 +903,7 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
       dateNaissance: toDateInput(client.dateNaissance ?? null), adresse: client.adresse ?? "",
       ville: client.ville ?? "", codePostal: client.codePostal ?? "", profession: client.profession ?? "",
       sportPratique: client.sportPratique ?? "", niveauSportif: client.niveauSportif ?? "", actif: client.actif,
-      siret: cc.siret ?? "", nomEntreprise: cc.nomEntreprise ?? "", adresseEntreprise: cc.adresseEntreprise ?? "",
+      siret: cc.siret ?? "", nomEntreprise: cc.nomEntreprise ?? "", adresseEntreprise: cc.adresseEntreprise ?? "", representantEntreprise: cc.representantEntreprise ?? "",
       objectifs: cc.objectifs ?? [], antecedentsMedicaux, antecedentsSportifs: cc.antecedentsSportifs ?? [],
       materielItems, structureItems, autreCoachItems, suivisPassesItems: cc.suivisPassesItems ?? [],
       contactUrgenceNom: client.contactUrgenceNom ?? "", contactUrgenceTel: client.contactUrgenceTel ?? "", contactUrgenceRelation: cc.contactUrgenceRelation ?? "",
@@ -919,7 +919,7 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
       contactsSupplementaires: Array.isArray(cc.contactsSupplementaires) ? cc.contactsSupplementaires : [],
       seanceAccessExpiry: client.seanceAccessExpiry ? client.seanceAccessExpiry.toDate().toISOString().slice(0, 10) : "",
     })
-    setShowEntreprise(!!(cc.siret || cc.nomEntreprise || cc.adresseEntreprise))
+    setShowEntreprise(!!(cc.siret || cc.nomEntreprise || cc.adresseEntreprise || cc.representantEntreprise))
   }, [isOpen, client?.id])
 
   useEffect(() => {
@@ -965,7 +965,7 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
         adresse: f.adresse || undefined, ville: f.ville || undefined, codePostal: f.codePostal || undefined,
         profession: f.profession || undefined, sportPratique: f.sportPratique || undefined, niveauSportif: f.niveauSportif || undefined,
         actif: f.actif,
-        siret: f.siret || undefined, nomEntreprise: f.nomEntreprise || undefined, adresseEntreprise: f.adresseEntreprise || undefined,
+        siret: f.siret || undefined, nomEntreprise: f.nomEntreprise || undefined, adresseEntreprise: f.adresseEntreprise || undefined, representantEntreprise: f.representantEntreprise || undefined,
         objectifs: f.objectifs.length ? f.objectifs : undefined,
         antecedentsMedicaux: f.antecedentsMedicaux.length ? f.antecedentsMedicaux : undefined,
         antecedentsSportifs: f.antecedentsSportifs.length ? f.antecedentsSportifs : undefined,
@@ -1148,7 +1148,10 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
                     <Field label="Adresse de l'entreprise">
                       <AdresseAutocomplete value={form.adresseEntreprise} onChange={(v) => setForm((p) => ({ ...p, adresseEntreprise: v }))} onSelectFull={(data) => setForm((p) => ({ ...p, adresseEntreprise: data.label }))} placeholder="Adresse du siège..." />
                     </Field>
-                    <button type="button" onClick={() => { setShowEntreprise(false); setForm((p) => ({ ...p, siret: "", nomEntreprise: "", adresseEntreprise: "" })) }}
+                    <Field label="Représentant (signataire des contrats)">
+                      <input className={inputCls} value={form.representantEntreprise} onChange={setF("representantEntreprise")} placeholder="ex : M. Dupont, gérant" />
+                    </Field>
+                    <button type="button" onClick={() => { setShowEntreprise(false); setForm((p) => ({ ...p, siret: "", nomEntreprise: "", adresseEntreprise: "", representantEntreprise: "" })) }}
                       className="text-xs text-gray-400 hover:text-red-500 transition">
                       Retirer les informations entreprise
                     </button>

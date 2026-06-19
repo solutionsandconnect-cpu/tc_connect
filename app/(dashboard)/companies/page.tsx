@@ -9,14 +9,14 @@ import type { Company } from "@/types";
 
 type Form = {
   nom: string; adresse: string; codePostal: string; ville: string;
-  email: string; telephone: string; siret: string; tva: string;
+  email: string; telephone: string; representant: string; siret: string; tva: string;
   iban: string; bic: string; logoUrl: string; couleurPrimaire: string; mentionsLegales: string;
   cgv: string; cgvDate: string;
 };
 
 const EMPTY: Form = {
   nom: "", adresse: "", codePostal: "", ville: "", email: "",
-  telephone: "", siret: "", tva: "", iban: "", bic: "", logoUrl: "",
+  telephone: "", representant: "", siret: "", tva: "", iban: "", bic: "", logoUrl: "",
   couleurPrimaire: "#2563eb", mentionsLegales: "", cgv: "", cgvDate: "",
 };
 
@@ -173,6 +173,7 @@ export default function CompaniesPage() {
     setForm({
       nom: c.nom, adresse: c.adresse ?? "", codePostal: c.codePostal ?? "",
       ville: c.ville ?? "", email: c.email ?? "", telephone: c.telephone ?? "",
+      representant: c.representant ?? "",
       siret: c.siret ?? "", tva: c.tva ?? "", iban: c.iban ?? "", bic: c.bic ?? "",
       logoUrl: c.logoUrl ?? "", couleurPrimaire: c.couleurPrimaire ?? "#2563eb",
       mentionsLegales: c.mentionsLegales ?? "", cgv: c.cgv ?? "", cgvDate: c.cgvDate ?? "",
@@ -194,6 +195,7 @@ export default function CompaniesPage() {
         ville: form.ville || undefined,
         email: form.email || undefined,
         telephone: form.telephone || undefined,
+        representant: form.representant || undefined,
         siret: form.siret || undefined,
         tva: form.tva || undefined,
         iban: form.iban || undefined,
@@ -360,6 +362,11 @@ export default function CompaniesPage() {
               <section>
                 <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Informations légales</h3>
                 <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Nom du représentant</label>
+                    <input className={inputCls} placeholder="ex : Teddy Blouet" value={form.representant} onChange={set("representant")} />
+                    <p className="text-[11px] text-gray-400 mt-1">Utilisé comme signataire/représentant sur tes contrats (Pilotage) et possible rattachement à des CGU ou politique de confidentialité par la suite.</p>
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">SIRET</label>
