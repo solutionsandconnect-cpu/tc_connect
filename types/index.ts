@@ -185,6 +185,30 @@ export interface NoteHistorique {
   date_max_note_active?: Timestamp | null
 }
 
+// Collection : parcours_notes (notes sur les participants du parcours sportif)
+export interface ParcoursNoteApplication {
+  sessionId: string
+  sessionTitle?: string
+  sessionDate?: Timestamp | null
+  registrationId: string
+  amount: number
+  appliedAt: Timestamp
+}
+
+export interface ParcoursNote {
+  id: string
+  participantKey: string        // clé du participant (email ou nom|prénom)
+  participantName?: string      // nom dénormalisé pour affichage
+  type_note: string
+  notes: string
+  montant?: number | null       // montant initial pour les paiements anticipés
+  montantMethode?: 'cash' | 'transfer' | null // moyen de paiement de l'avance (pour les stats)
+  montantConsomme?: number      // montant déjà appliqué à des séances (Option C)
+  applications?: ParcoursNoteApplication[] // historique des applications
+  date_create: Timestamp
+  date_max_note_active?: Timestamp | null
+}
+
 // Collection : Notifications
 export interface Notification {
   id: string

@@ -7,12 +7,13 @@ import { db } from '@/lib/firebase'
 import { copyText } from '@/lib/clipboard'
 import { randomUUID } from '@/lib/uuid'
 import { addParcoursActivite } from '@/lib/parcoursPlanning'
+import { participantKey } from '@/lib/parcoursNotes'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
 import {
-  PlusIcon, CalendarIcon, MapPinIcon, UsersIcon,
+  PlusIcon, CalendarIcon, MapPinIcon, UsersIcon, UserPlusIcon,
   ChevronRightIcon, BanknotesIcon, ClipboardDocumentIcon,
   CheckIcon, ShareIcon, ChatBubbleLeftIcon, FireIcon, TrashIcon,
   EyeIcon, EyeSlashIcon, Cog6ToothIcon, ExclamationTriangleIcon, ClipboardDocumentListIcon,
@@ -179,6 +180,7 @@ export default function AdminParcoursPage() {
     } catch {}
   }, [filtersReady, sessionView, sessionYear, sessionMonth])
   const [copied, setCopied] = useState(false)
+  const [homonymCount, setHomonymCount] = useState(0)
   const [reviews, setReviews] = useState<Review[]>([])
   const [deleteReviewConfirm, setDeleteReviewConfirm] = useState<string | null>(null)
   const [highlightedReviewId, setHighlightedReviewId] = useState<string | null>(highlightId)
@@ -270,12 +272,38 @@ export default function AdminParcoursPage() {
     return unsub
   }, [isAdmin])
 
+  // Détection d'homonymes (mêmes prénom+nom, clés différentes) pour alerter sur le bouton Participants
+  useEffect(() => {
+    if (!isAdmin) return
+    getDocs(collection(db, 'registrations')).then((snap) => {
+      const keyToName = new Map<string, { f: string; l: string }>()
+      snap.docs.forEach((d) => {
+        const r = d.data() as any
+        if (r.attendance === 'deregistered') return
+        const f = (r.firstName ?? '').trim(), l = (r.lastName ?? '').trim()
+        if (!f && !l && !r.email) return
+        const key = participantKey({ email: r.email, firstName: f, lastName: l })
+        if (!keyToName.has(key)) keyToName.set(key, { f, l })
+      })
+      const nameGroups = new Map<string, Set<string>>()
+      keyToName.forEach((name, key) => {
+        const nameKey = `${name.f.toLowerCase()}|${name.l.toLowerCase()}`
+        if (!nameKey.replace('|', '').trim()) return
+        if (!nameGroups.has(nameKey)) nameGroups.set(nameKey, new Set())
+        nameGroups.get(nameKey)!.add(key)
+      })
+      let count = 0
+      nameGroups.forEach((keys) => { if (keys.size > 1) count += keys.size })
+      setHomonymCount(count)
+    }).catch(() => {})
+  }, [isAdmin])
+
   // Load paid registration counts for financial stats
   useEffect(() => {
     if (!isAdmin || sessions.length === 0) return
     const load = async () => {
       const snap = await getDocs(
-        query(collection(db, 'registrations'), where('paymentStatus', 'in', ['cash', 'transfer']))
+        query(collection(db, 'registrations'), where('paymentStatus', 'in', ['cash', 'transfer', 'prepaid']))
       )
       const counts: Record<string, number> = {}
       snap.docs.forEach((d) => {
@@ -299,7 +327,8 @@ export default function AdminParcoursPage() {
       const counts: Record<string, number> = {}
       snap.docs.forEach((d) => {
         const data = d.data()
-        if (data.attendance === 'deregistered') return
+        // Un absent ou un désinscrit ne doit pas compter comme impayé
+        if (data.attendance === 'deregistered' || data.attendance === 'absent') return
         const sid = data.sessionId
         counts[sid] = (counts[sid] ?? 0) + 1
       })
@@ -526,28 +555,33 @@ export default function AdminParcoursPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center shrink-0">
             <FireIcon className="w-5 h-5 text-orange-600" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold text-gray-800">Parcours Sportif</h1>
             <p className="text-sm text-gray-500">Séances de sport en groupe</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0 sm:overflow-visible sm:flex-wrap sm:justify-end">
           <button
-            onClick={() => router.push('/admin/parcours-sportif/participants')}
-            className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
-            title="Listing des participants"
+            onClick={() => router.push(`/admin/parcours-sportif/participants${homonymCount > 0 ? '?filter=homonyms' : ''}`)}
+            className="relative flex items-center gap-2 shrink-0 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            title={homonymCount > 0 ? `${homonymCount} homonyme${homonymCount > 1 ? 's' : ''} à vérifier` : 'Listing des participants'}
           >
             <UsersIcon className="w-4 h-4" />
             <span className="hidden sm:inline">Participants</span>
+            {homonymCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {homonymCount}
+              </span>
+            )}
           </button>
           <button
             onClick={() => router.push('/admin/parcours-sportif/template')}
-            className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            className="flex items-center gap-2 shrink-0 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
             title="Template de séance"
           >
             <ClipboardDocumentListIcon className="w-4 h-4" />
@@ -555,7 +589,7 @@ export default function AdminParcoursPage() {
           </button>
           <button
             onClick={() => router.push('/admin/parcours-sportif/parametres')}
-            className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            className="flex items-center gap-2 shrink-0 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
             title="Paramètres"
           >
             <Cog6ToothIcon className="w-4 h-4" />
@@ -563,15 +597,15 @@ export default function AdminParcoursPage() {
           </button>
           <button
             onClick={openAddParticipant}
-            className="flex items-center gap-2 border border-blue-200 text-blue-700 hover:bg-blue-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            className="flex items-center gap-2 shrink-0 border border-blue-200 text-blue-700 hover:bg-blue-50 text-sm font-medium px-3 py-2 rounded-lg transition"
             title="Ajouter un participant manuellement"
           >
-            <UsersIcon className="w-4 h-4" />
+            <UserPlusIcon className="w-4 h-4" />
             <span className="hidden sm:inline">Ajouter un participant</span>
           </button>
           <button
             onClick={() => router.push('/admin/parcours-sportif/nouvelle-seance')}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
+            className="flex items-center gap-2 shrink-0 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
           >
             <PlusIcon className="w-4 h-4" />
             <span className="hidden sm:inline">Nouvelle séance</span>

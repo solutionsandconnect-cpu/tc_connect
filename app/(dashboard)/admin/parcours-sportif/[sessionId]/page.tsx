@@ -3,7 +3,7 @@
 import { use, useState, useEffect, useMemo, useRef } from 'react'
 import {
   doc, getDoc, deleteDoc, collection, query, where, onSnapshot,
-  updateDoc, runTransaction, Timestamp, addDoc, getDocs,
+  updateDoc, runTransaction, Timestamp, addDoc, getDocs, writeBatch,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { copyText } from '@/lib/clipboard'
@@ -16,8 +16,12 @@ import {
   ArrowLeftIcon, TrashIcon, ClipboardDocumentIcon,
   ExclamationTriangleIcon, UsersIcon, CalendarIcon, MapPinIcon,
   CheckCircleIcon, XCircleIcon, BanknotesIcon, PlusIcon,
-  MagnifyingGlassIcon, ChatBubbleLeftIcon, PencilIcon,
+  MagnifyingGlassIcon, ChatBubbleLeftIcon, PencilIcon, DocumentTextIcon,
 } from '@heroicons/react/24/outline'
+import { useParcoursNotes } from '@/hooks/useParcoursNotes'
+import ParticipantNotesModal from '@/components/parcours/ParticipantNotesModal'
+import { participantKey, noteRemaining, isAdvanceAvailable } from '@/lib/parcoursNotes'
+import type { ParcoursNote, ParcoursNoteApplication } from '@/types'
 
 interface Session {
   id: string
@@ -44,7 +48,10 @@ interface Registration {
   email: string
   phone: string
   suggestions: string
-  paymentStatus: 'pending' | 'cash' | 'transfer' | 'free' | 'waived'
+  paymentStatus: 'pending' | 'cash' | 'transfer' | 'free' | 'waived' | 'prepaid'
+  prepaidNoteId?: string | null    // avance appliquée (Option C)
+  prepaidAmount?: number | null    // montant prélevé sur l'avance
+  prepaidMethod?: 'cash' | 'transfer' | null // moyen de paiement de l'avance (pour les stats)
   attendance: 'unknown' | 'present' | 'absent' | 'deregistered'
   registeredAt: Timestamp
   userId?: string
@@ -126,6 +133,10 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const isAdmin = userProfile?.role_app === 'Admin'
   const { users } = useUsers()
   const [highlightedId, setHighlightedId] = useState<string | null>(highlightId)
+
+  // Notes participant (paiements anticipés, etc.)
+  const { notes: parcoursNotes, addNote: addParcoursNote, updateNote: updateParcoursNote, deleteNote: deleteParcoursNote } = useParcoursNotes()
+  const [notesTarget, setNotesTarget] = useState<{ key: string; name: string } | null>(null)
 
   const [session, setSession] = useState<Session | null>(null)
   const [registrations, setRegistrations] = useState<Registration[]>([])
@@ -381,14 +392,48 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     const byTransfer = active.filter((r) => r.paymentStatus === 'transfer').length
     const byFree = active.filter((r) => r.paymentStatus === 'free').length
     const byWaived = active.filter((r) => r.paymentStatus === 'waived').length
-    const total = (byCash + byTransfer) * price          // encaissé (offert/non dû ne rapportent rien)
+    const prepaid = active.filter((r) => r.paymentStatus === 'prepaid')
+    const byPrepaid = prepaid.length
+    const byPrepaidCash = prepaid.filter((r) => (r.prepaidMethod ?? 'cash') === 'cash').length
+    const byPrepaidTransfer = prepaid.filter((r) => r.prepaidMethod === 'transfer').length
+    const total = (byCash + byTransfer + byPrepaid) * price // encaissé (offert/non dû ne rapportent rien)
     // En attente (impayé) : uniquement les 'pending' → un absent passé en « Non dû » n'y compte plus
     const pending = active.filter((r) => r.paymentStatus === 'pending').length * price
     const present = active.filter((r) => r.attendance === 'present').length
     const absent = active.filter((r) => r.attendance === 'absent').length
     const deregistered = registrations.filter((r) => r.attendance === 'deregistered').length
-    return { total, pending, byCash, byTransfer, byFree, byWaived, present, absent, deregistered }
+    return { total, pending, byCash, byTransfer, byFree, byWaived, byPrepaid, byPrepaidCash, byPrepaidTransfer, present, absent, deregistered }
   }, [registrations, session])
+
+  const sessionPrice = session?.price ?? 5
+
+  // Avances disponibles (solde restant > 0) par participant, des plus anciennes aux plus récentes
+  const advancesByKey = useMemo(() => {
+    const m = new Map<string, ParcoursNote[]>()
+    for (const n of parcoursNotes) {
+      if (!isAdvanceAvailable(n)) continue
+      if (!m.has(n.participantKey)) m.set(n.participantKey, [])
+      m.get(n.participantKey)!.push(n)
+    }
+    m.forEach((arr) => arr.sort((a, b) => (a.date_create?.toMillis?.() ?? 0) - (b.date_create?.toMillis?.() ?? 0)))
+    return m
+  }, [parcoursNotes])
+
+  const advanceByKey = useMemo(() => {
+    const m = new Map<string, number>()
+    advancesByKey.forEach((arr, k) => m.set(k, arr.reduce((s, n) => s + noteRemaining(n), 0)))
+    return m
+  }, [advancesByKey])
+
+  // Avance dont le solde couvre le prix de cette séance (la plus ancienne d'abord)
+  const advanceToApply = (reg: Registration): ParcoursNote | null =>
+    (advancesByKey.get(participantKey(reg)) ?? []).find((n) => noteRemaining(n) >= sessionPrice) ?? null
+
+  const noteCountByKey = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const n of parcoursNotes) m.set(n.participantKey, (m.get(n.participantKey) ?? 0) + 1)
+    return m
+  }, [parcoursNotes])
 
   const handlePaymentChange = (regId: string, value: string) =>
     updateDoc(doc(db, 'registrations', regId), { paymentStatus: value })
@@ -396,9 +441,46 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   const handleAttendance = (regId: string, value: 'present' | 'absent' | 'unknown' | 'deregistered') =>
     updateDoc(doc(db, 'registrations', regId), { attendance: value })
 
+  // ── Avances (Option C) : application / retrait sur une inscription ──────────
+  // Recrédite la note d'avance en retirant l'application liée à cette inscription.
+  const refundAdvanceToNote = async (reg: Registration) => {
+    if (reg.paymentStatus !== 'prepaid' || !reg.prepaidNoteId) return
+    const noteRef = doc(db, 'parcours_notes', reg.prepaidNoteId)
+    const snap = await getDoc(noteRef)
+    if (!snap.exists()) return
+    const apps = ((snap.data().applications ?? []) as ParcoursNoteApplication[])
+      .filter((a) => a.registrationId !== reg.id)
+    const consumed = apps.reduce((s, a) => s + (a.amount ?? 0), 0)
+    await updateDoc(noteRef, { applications: apps, montantConsomme: consumed })
+  }
+
+  const applyAdvance = async (reg: Registration) => {
+    const note = advanceToApply(reg)
+    if (!note || !session) return
+    const amount = sessionPrice
+    const app: ParcoursNoteApplication = {
+      sessionId, sessionTitle: session.title, sessionDate: session.date,
+      registrationId: reg.id, amount, appliedAt: Timestamp.now(),
+    }
+    const apps = [...(note.applications ?? []), app]
+    const consumed = apps.reduce((s, a) => s + (a.amount ?? 0), 0)
+    const method = note.montantMethode === 'transfer' ? 'transfer' : 'cash'
+    const batch = writeBatch(db)
+    batch.update(doc(db, 'parcours_notes', note.id), { applications: apps, montantConsomme: consumed })
+    batch.update(doc(db, 'registrations', reg.id), { paymentStatus: 'prepaid', prepaidNoteId: note.id, prepaidAmount: amount, prepaidMethod: method })
+    await batch.commit()
+  }
+
+  const unapplyAdvance = async (reg: Registration) => {
+    await refundAdvanceToNote(reg)
+    await updateDoc(doc(db, 'registrations', reg.id), { paymentStatus: 'pending', prepaidNoteId: null, prepaidAmount: null, prepaidMethod: null })
+  }
+
   // Bascule "Désinscrit" : libère la place (décrémente le compteur) mais garde la fiche
   const handleToggleDeregister = async (reg: Registration) => {
     const becomingDereg = reg.attendance !== 'deregistered'
+    // Si la personne avait réglé via une avance, on la recrédite avant de la désinscrire
+    if (becomingDereg) await refundAdvanceToNote(reg).catch(() => {})
     await runTransaction(db, async (tx) => {
       const sessionRef = doc(db, 'sessions', sessionId)
       const snap = await tx.get(sessionRef)
@@ -410,7 +492,7 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
       }
       tx.update(doc(db, 'registrations', reg.id), {
         attendance: becomingDereg ? 'deregistered' : 'unknown',
-        ...(becomingDereg ? { paymentStatus: 'pending' } : {}),
+        ...(becomingDereg ? { paymentStatus: 'pending', prepaidNoteId: null, prepaidAmount: null, prepaidMethod: null } : {}),
       })
     })
     // Retire l'activité du planning si désinscrit
@@ -418,6 +500,8 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   }
 
   const handleDeleteReg = async (reg: Registration) => {
+    // Recrédite l'avance éventuelle avant de supprimer l'inscription
+    await refundAdvanceToNote(reg).catch(() => {})
     await runTransaction(db, async (tx) => {
       const sessionRef = doc(db, 'sessions', sessionId)
       const snap = await tx.get(sessionRef)
@@ -502,6 +586,10 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
 
   const handleCancelSession = async () => {
     setCancelling(true)
+    // Recrédite les avances appliquées sur cette séance avant de tout annuler
+    await Promise.all(
+      registrations.filter((r) => r.paymentStatus === 'prepaid').map((r) => refundAdvanceToNote(r).catch(() => {}))
+    )
     await updateDoc(doc(db, 'sessions', sessionId), { status: 'cancelled' })
     // Retirer du planning des participants toutes les activités de cette séance
     await removeParcoursActivitesForSession(sessionId)
@@ -1039,6 +1127,18 @@ Teddy`
               <span>Virement ({financials.byTransfer})</span>
               <span>{(financials.byTransfer * (session.price ?? 5)).toFixed(2)}€</span>
             </div>
+            {financials.byPrepaidCash > 0 && (
+              <div className="flex items-center justify-between text-xs text-gray-400">
+                <span className="flex items-center gap-1"><BanknotesIcon className="w-3 h-3 text-emerald-500" />Payé d'avance · Espèces ({financials.byPrepaidCash})</span>
+                <span>{(financials.byPrepaidCash * (session.price ?? 5)).toFixed(2)}€</span>
+              </div>
+            )}
+            {financials.byPrepaidTransfer > 0 && (
+              <div className="flex items-center justify-between text-xs text-gray-400">
+                <span className="flex items-center gap-1"><BanknotesIcon className="w-3 h-3 text-emerald-500" />Payé d'avance · Virement ({financials.byPrepaidTransfer})</span>
+                <span>{(financials.byPrepaidTransfer * (session.price ?? 5)).toFixed(2)}€</span>
+              </div>
+            )}
             {financials.byFree > 0 && (
               <div className="flex items-center justify-between text-xs text-gray-400">
                 <span>Offert ({financials.byFree})</span>
@@ -1335,6 +1435,11 @@ Teddy`
                           {reg.isMinor && (
                             <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Mineur</span>
                           )}
+                          {(advanceByKey.get(participantKey(reg)) ?? 0) > 0 && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                              <BanknotesIcon className="w-3 h-3" />{advanceByKey.get(participantKey(reg))}€
+                            </span>
+                          )}
                         </div>
                         {reg.email && <p className="text-xs text-gray-500">{reg.email}</p>}
                         {reg.phone && <p className="text-xs text-gray-500">{reg.phone}</p>}
@@ -1382,6 +1487,16 @@ Teddy`
                           </div>
                         ) : (
                           <div className="flex items-center gap-1">
+                            <button onClick={() => setNotesTarget({ key: participantKey(reg), name: `${reg.firstName} ${reg.lastName}`.trim() })}
+                              title="Notes (paiement anticipé, etc.)"
+                              className="relative p-1 text-gray-400 hover:text-emerald-600 transition">
+                              <DocumentTextIcon className="w-4 h-4" />
+                              {(noteCountByKey.get(participantKey(reg)) ?? 0) > 0 && (
+                                <span className="absolute -top-1 -right-1 min-w-3.5 h-3.5 px-0.5 rounded-full bg-emerald-500 text-white text-[8px] font-bold flex items-center justify-center">
+                                  {noteCountByKey.get(participantKey(reg))}
+                                </span>
+                              )}
+                            </button>
                             <button onClick={() => openEditReg(reg)} title="Modifier les infos" className="p-1 text-gray-400 hover:text-blue-500 transition">
                               <PencilIcon className="w-4 h-4" />
                             </button>
@@ -1405,15 +1520,36 @@ Teddy`
                         </>
                       ) : (
                         <>
-                          <select value={reg.paymentStatus} onChange={(e) => handlePaymentChange(reg.id, e.target.value)}
-                            className={`text-xs font-medium rounded-lg px-2 py-1 border focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                              reg.paymentStatus === 'pending' ? 'bg-yellow-50 border-yellow-200 text-yellow-700'
-                                : reg.paymentStatus === 'free' ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                                : reg.paymentStatus === 'waived' ? 'bg-slate-100 border-slate-200 text-slate-600'
-                                : 'bg-green-50 border-green-200 text-green-700'
-                            }`}>
-                            {PAYMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                          </select>
+                          {reg.paymentStatus === 'prepaid' ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2 py-1 border bg-emerald-50 border-emerald-200 text-emerald-700">
+                              <BanknotesIcon className="w-3.5 h-3.5" />
+                              Payé d'avance{reg.prepaidMethod === 'transfer' ? ' · Virement' : ' · Espèces'}
+                              <button onClick={() => unapplyAdvance(reg)} title="Retirer l'avance (recrédite le solde)"
+                                className="ml-0.5 text-emerald-500 hover:text-emerald-800">
+                                <XCircleIcon className="w-3.5 h-3.5" />
+                              </button>
+                            </span>
+                          ) : (
+                            <>
+                              <select value={reg.paymentStatus} onChange={(e) => handlePaymentChange(reg.id, e.target.value)}
+                                className={`text-xs font-medium rounded-lg px-2 py-1 border focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                                  reg.paymentStatus === 'pending' ? 'bg-yellow-50 border-yellow-200 text-yellow-700'
+                                    : reg.paymentStatus === 'free' ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                    : reg.paymentStatus === 'waived' ? 'bg-slate-100 border-slate-200 text-slate-600'
+                                    : 'bg-green-50 border-green-200 text-green-700'
+                                }`}>
+                                {PAYMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                              </select>
+                              {reg.paymentStatus === 'pending' && advanceToApply(reg) && (
+                                <button onClick={() => applyAdvance(reg)}
+                                  title={`Régler avec l'avance disponible (${advanceByKey.get(participantKey(reg))}€ restants)`}
+                                  className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition">
+                                  <BanknotesIcon className="w-3.5 h-3.5" />
+                                  Appliquer l'avance ({sessionPrice}€)
+                                </button>
+                              )}
+                            </>
+                          )}
                           <button onClick={() => handleAttendance(reg.id, reg.attendance === 'present' ? 'unknown' : 'present')}
                             className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition ${reg.attendance === 'present' ? 'bg-green-500 text-white border-green-500' : 'border-gray-200 text-gray-500 hover:border-green-300 hover:text-green-600'}`}>
                             <CheckCircleIcon className="w-3.5 h-3.5" />Présent
@@ -1567,6 +1703,20 @@ Teddy`
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Notes d'un participant (paiement anticipé, etc.) ── */}
+      {notesTarget && (
+        <ParticipantNotesModal
+          isOpen={!!notesTarget}
+          onClose={() => setNotesTarget(null)}
+          participantKey={notesTarget.key}
+          participantName={notesTarget.name}
+          notes={parcoursNotes}
+          addNote={addParcoursNote}
+          updateNote={updateParcoursNote}
+          deleteNote={deleteParcoursNote}
+        />
       )}
     </div>
   )
