@@ -26,7 +26,7 @@ import type { PilotageContrat, PilotageContratStatut, PilotageDocument, Pilotage
 import {
   PlusIcon, PencilIcon, TrashIcon, DocumentTextIcon,
   ExclamationTriangleIcon, PresentationChartLineIcon, CalculatorIcon,
-  ArrowDownTrayIcon, CheckIcon, CameraIcon,
+  ArrowDownTrayIcon, CheckIcon,
 } from '@heroicons/react/24/outline'
 
 // Plafond micro-entreprise (prestations de services / BNC) — à ajuster si le barème change
@@ -194,7 +194,6 @@ function toIsoDate(s: string): string {
 function TachesEditor({ items, onChange }: { items: ProjetTache[]; onChange: (v: ProjetTache[]) => void }) {
   const upd = (i: number, patch: Partial<ProjetTache>) => onChange(items.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   const [bulk, setBulk] = useState('')
-  const [ocr, setOcr] = useState(false)
   const addBulk = () => {
     const rows = bulk.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
       const [desc, date] = l.split('|').map((s) => s.trim())
@@ -202,30 +201,6 @@ function TachesEditor({ items, onChange }: { items: ProjetTache[]; onChange: (v:
     })
     if (rows.length) onChange([...items, ...rows])
     setBulk('')
-  }
-  const onPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    setOcr(true)
-    try {
-      const dataUrl = await new Promise<string>((res, rej) => {
-        const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file)
-      })
-      const resp = await fetch('/api/extract-tasks', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }),
-      })
-      const json = await resp.json()
-      if (!resp.ok) throw new Error(json.error || 'Échec')
-      const nouvelles: ProjetTache[] = (json.taches || [])
-        .map((t: { description?: string; date?: string }) => ({ description: String(t.description || ''), date: toIsoDate(String(t.date || '')), fait: false }))
-        .filter((t: ProjetTache) => t.description)
-      if (nouvelles.length) onChange([...items, ...nouvelles])
-      else alert('Aucune tâche détectée sur la photo.')
-    } catch (err) {
-      alert('Analyse impossible : ' + (err instanceof Error ? err.message : ''))
-    }
-    setOcr(false)
   }
   return (
     <div className="space-y-1.5">
@@ -239,10 +214,6 @@ function TachesEditor({ items, onChange }: { items: ProjetTache[]; onChange: (v:
       ))}
       <div className="flex items-center gap-3 flex-wrap">
         <button type="button" onClick={() => onChange([...items, { description: '', date: '', fait: false }])} className={addBtn}><PlusIcon className="w-3.5 h-3.5" /> Ajouter une tâche</button>
-        <label className={`flex items-center gap-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 px-2 py-1 rounded-lg transition cursor-pointer ${ocr ? 'opacity-50 pointer-events-none' : ''}`}>
-          <CameraIcon className="w-3.5 h-3.5" /> {ocr ? 'Analyse de la photo…' : 'Photo → tâches'}
-          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onPhoto} disabled={ocr} />
-        </label>
       </div>
       <details className="group">
         <summary className="cursor-pointer text-[11px] font-medium text-indigo-700 list-none flex items-center gap-1.5">
