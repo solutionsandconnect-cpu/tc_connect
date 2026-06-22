@@ -66,6 +66,22 @@ export const HORS_PERIMETRE_DEFAUT = [
 // Responsables possibles d'une étape de planning (chips)
 export const RESPONSABLES_PLANNING = ['Développeur', 'Client', 'Développeur / Client'] as const
 
+// Étapes-types proposées par défaut dans le planning (liste déroulante, éditable et persistée dans pilotage_settings)
+export const DEFAULT_PLANNING_ETAPES = [
+  'Rendez-vous de cadrage',
+  'Maquette',
+  'Ajustements de la maquette',
+  'Validation de la maquette',
+  "Développement de l'outil",
+  'Réunion bilan',
+  'Développement et corrections',
+  'Phase de tests',
+  'Recette avec le client',
+  'Formation',
+  'Mise en service',
+  'Validation projet',
+]
+
 // ── Planning en cascade : la date de chaque étape = date précédente + son délai (en jours) ──
 // Une étape « ancrée » (date saisie à la main) n'est jamais recalculée ; les suivantes repartent d'elle.
 export function addDaysIso(iso: string, days: number): string {

@@ -10,11 +10,12 @@ import { usePilotageContrats } from '@/hooks/usePilotageContrats'
 import { useClients } from '@/hooks/useClients'
 import { useCompanies } from '@/hooks/useCompanies'
 import { usePilotageDocuments } from '@/hooks/usePilotageDocuments'
+import { usePilotageSettings } from '@/hooks/usePilotageSettings'
 import { uploadBlob } from '@/lib/uploadImage'
 import SignaturePad from '@/components/ui/SignaturePad'
 import { generatePilotageDocPdf, PILOTAGE_DOC_TYPES, STATUT_DOC_LABELS } from '@/lib/pilotageDocPdf'
 import { defaultLegalFields, legalFieldGroupsAll, type LegalFields } from '@/lib/pilotageLegalTemplates'
-import { defaultProjetContent, type ProjetContent } from '@/lib/pilotageProjetTemplates'
+import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, type ProjetContent } from '@/lib/pilotageProjetTemplates'
 import { StringListEditor, FonctionsEditor, PlanningEditor, HorsPerimetreEditor, TachesEditor, TachesApercu, PlanningApercu, ProjetApercu } from '@/components/pilotage/ProjetUI'
 import type { PilotageDocument, PilotageDocumentType } from '@/types'
 import {
@@ -108,6 +109,12 @@ export default function ContratPage() {
     [companies])
   const contrat = useMemo(() => contrats.find((c) => c.id === id) ?? null, [contrats, id])
   const { documents, addDocument, updateDocument, deleteDocument } = usePilotageDocuments(id)
+  const { settings, saveSettings } = usePilotageSettings()
+  // Étapes-types du planning (liste déroulante, persistées dans pilotage_settings et éditables)
+  const etapesTypes = settings?.planningEtapes ?? DEFAULT_PLANNING_ETAPES
+  const [etapesDraft, setEtapesDraft] = useState<string[] | null>(null)
+  const etapesManaged = etapesDraft ?? etapesTypes
+  const saveEtapes = () => { saveSettings({ planningEtapes: etapesManaged }); setEtapesDraft(null) }
 
   const [tab, setTab] = useState<TabKey>('documents')
   const [editing, setEditing] = useState(false)
@@ -353,11 +360,26 @@ export default function ContratPage() {
             <EditBar editing={editing} onEdit={() => setEditing(true)} onCancel={cancelEdit} onSave={save} saveState={saveState} />
             {editing ? (
               <div className="space-y-2">
-                <p className="text-[11px] text-gray-400 mb-2">La date de chaque étape se calcule depuis la précédente + le délai en jours. Saisis une date à la main pour la <strong>fixer</strong> (les suivantes s'y adaptent). Réordonne avec les flèches.</p>
-                <PlanningEditor items={formProjet.planning} onChange={(v) => updP({ planning: v })} />
+                <p className="text-[11px] text-gray-400 mb-2">Le champ « Étape » propose une liste déroulante (tape pour filtrer, ou saisis librement). La date se calcule depuis la précédente + le délai en jours ; saisis une date à la main pour la <strong>fixer</strong>. Réordonne avec les flèches.</p>
+                <PlanningEditor items={formProjet.planning} onChange={(v) => updP({ planning: v })} etapesTypes={etapesTypes} />
+                <details className="group pt-2">
+                  <summary className="cursor-pointer text-[11px] font-medium text-indigo-700 list-none flex items-center gap-1.5">
+                    <span className="inline-block transition group-open:rotate-90">▸</span> Gérer les étapes-types (liste déroulante)
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    <p className="text-[11px] text-gray-400">Ces étapes alimentent la liste déroulante du champ « Étape », pour tous tes contrats.</p>
+                    <StringListEditor items={etapesManaged} onChange={setEtapesDraft} placeholder="Étape-type…" />
+                    {etapesDraft && (
+                      <button type="button" onClick={saveEtapes}
+                        className="flex items-center gap-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition">
+                        Enregistrer la liste
+                      </button>
+                    )}
+                  </div>
+                </details>
               </div>
             ) : (
-              <PlanningApercu planning={formProjet.planning} onChange={(v) => persistProjet({ planning: v })} />
+              <PlanningApercu planning={formProjet.planning} onChange={(v) => persistProjet({ planning: v })} etapesTypes={etapesTypes} />
             )}
           </div>
         )}

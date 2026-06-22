@@ -354,6 +354,8 @@ export interface PilotageSettings {
   prixReventeMensuel?: number  // prix de revente par client final /mois
   // Liste de fonctionnalités de départ du calculateur (durée/complexité par défaut)
   features?: { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl' }[]
+  // Étapes-types proposées dans le planning prévisionnel (liste déroulante éditable)
+  planningEtapes?: string[]
 }
 
 // Collection : Notifications

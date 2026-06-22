@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { PlusIcon, TrashIcon, ChevronUpIcon, ChevronDownIcon, CheckIcon, PencilIcon } from '@heroicons/react/24/outline'
 import type { ProjetFonction, ProjetPlanning, ProjetTache, ProjetContent } from '@/types'
-import { RESPONSABLES_PLANNING, recalcPlanning, HORS_PERIMETRE_DEFAUT } from '@/lib/pilotageProjetTemplates'
+import { RESPONSABLES_PLANNING, recalcPlanning, HORS_PERIMETRE_DEFAUT, DEFAULT_PLANNING_ETAPES } from '@/lib/pilotageProjetTemplates'
 
 const inputCls = 'flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const delBtn = 'p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition shrink-0'
@@ -54,10 +54,11 @@ export function FonctionsEditor({ items, onChange }: { items: ProjetFonction[]; 
   )
 }
 
-export function PlanningEditor({ items, onChange }: { items: ProjetPlanning[]; onChange: (v: ProjetPlanning[]) => void }) {
+export function PlanningEditor({ items, onChange, etapesTypes }: { items: ProjetPlanning[]; onChange: (v: ProjetPlanning[]) => void; etapesTypes?: string[] }) {
   // Toute modification repasse par recalcPlanning : les dates en aval suivent les délais (sauf étapes ancrées).
   const commit = (next: ProjetPlanning[]) => onChange(recalcPlanning(next))
   const [confirmDel, setConfirmDel] = useState<number | null>(null)
+  const etapes = etapesTypes ?? DEFAULT_PLANNING_ETAPES
   const upd = (i: number, patch: Partial<ProjetPlanning>) => commit(items.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   const move = (i: number, dir: -1 | 1) => {
     const j = i + dir
@@ -68,6 +69,7 @@ export function PlanningEditor({ items, onChange }: { items: ProjetPlanning[]; o
   }
   return (
     <div className="space-y-2">
+      <datalist id="planning-etapes-edit">{etapes.map((e) => <option key={e} value={e} />)}</datalist>
       {items.map((p, i) => {
         const isLast = i === items.length - 1
         const auto = i > 0 && !p.ancre // date calculée automatiquement depuis l'étape précédente
@@ -78,7 +80,7 @@ export function PlanningEditor({ items, onChange }: { items: ProjetPlanning[]; o
                 <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="text-gray-300 enabled:text-gray-500 enabled:hover:text-blue-600 disabled:opacity-40"><ChevronUpIcon className="w-4 h-4" /></button>
                 <button type="button" onClick={() => move(i, 1)} disabled={isLast} className="text-gray-300 enabled:text-gray-500 enabled:hover:text-blue-600 disabled:opacity-40"><ChevronDownIcon className="w-4 h-4" /></button>
               </div>
-              <input value={p.etape} placeholder="Étape" onChange={(e) => upd(i, { etape: e.target.value })} className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input list="planning-etapes-edit" value={p.etape} placeholder="Étape" onChange={(e) => upd(i, { etape: e.target.value })} className="w-40 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <input value={p.description} placeholder="Description" onChange={(e) => upd(i, { description: e.target.value })} className={inputCls} />
               {confirmDel === i ? (
                 <span className="flex items-center gap-1 shrink-0">
@@ -408,10 +410,11 @@ const respColor = (r: string) =>
     : 'bg-purple-100 text-purple-700'
 
 // Vue lecture seule du planning (timeline) avec édition/suppression par ligne (sauvegarde immédiate via onChange)
-export function PlanningApercu({ planning, onChange }: { planning: ProjetPlanning[]; onChange?: (v: ProjetPlanning[]) => void }) {
+export function PlanningApercu({ planning, onChange, etapesTypes }: { planning: ProjetPlanning[]; onChange?: (v: ProjetPlanning[]) => void; etapesTypes?: string[] }) {
   const [editIdx, setEditIdx] = useState<number | null>(null)
   const [draft, setDraft] = useState<ProjetPlanning | null>(null)
   const [confirmIdx, setConfirmIdx] = useState<number | null>(null)
+  const etapes = etapesTypes ?? DEFAULT_PLANNING_ETAPES
   if (!planning || planning.length === 0)
     return <p className="text-sm text-gray-400 text-center py-10">Aucune étape pour l'instant.<br />Clique sur « Modifier » pour en ajouter.</p>
   const today = todayIso()
@@ -425,12 +428,13 @@ export function PlanningApercu({ planning, onChange }: { planning: ProjetPlannin
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" /> Aujourd'hui</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300" /> À venir</span>
       </div>
+      <datalist id="planning-etapes-ro">{etapes.map((e) => <option key={e} value={e} />)}</datalist>
       <ol className="relative border-l border-gray-200 ml-1.5 space-y-3">
       {planning.map((s, i) => {
         if (editIdx === i && draft) return (
           <li key={i} className="ml-4 relative border border-gray-200 rounded-lg p-2 space-y-1.5 bg-gray-50">
             <div className="flex gap-2 flex-wrap items-center">
-              <input autoFocus value={draft.etape} placeholder="Étape" onChange={(e) => setDraft({ ...draft, etape: e.target.value })} className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input list="planning-etapes-ro" autoFocus value={draft.etape} placeholder="Étape" onChange={(e) => setDraft({ ...draft, etape: e.target.value })} className="w-40 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <input value={draft.description} placeholder="Description" onChange={(e) => setDraft({ ...draft, description: e.target.value })} className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div className="flex gap-2 flex-wrap items-center">
