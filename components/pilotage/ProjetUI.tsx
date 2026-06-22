@@ -2,7 +2,7 @@
 
 // Éditeurs & aperçu du « contenu projet » d'un contrat Pilotage.
 // Extraits pour être partagés entre la page /pilotage et la page dédiée /pilotage/contrat/[id].
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PlusIcon, TrashIcon, ChevronUpIcon, ChevronDownIcon, CheckIcon, PencilIcon } from '@heroicons/react/24/outline'
 import type { ProjetFonction, ProjetPlanning, ProjetTache, ProjetContent } from '@/types'
 import { RESPONSABLES_PLANNING, recalcPlanning, HORS_PERIMETRE_DEFAUT, DEFAULT_PLANNING_ETAPES } from '@/lib/pilotageProjetTemplates'
@@ -54,6 +54,46 @@ export function FonctionsEditor({ items, onChange }: { items: ProjetFonction[]; 
   )
 }
 
+// Combobox « Étape » : saisie libre + suggestions filtrées, dropdown stylé (pas de datalist natif)
+function EtapeCombobox({ value, onChange, options, autoFocus, className }: {
+  value: string; onChange: (v: string) => void; options: string[]; autoFocus?: boolean; className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+  const q = value.trim().toLowerCase()
+  const exact = options.some((o) => o.toLowerCase() === q)
+  const filtered = (!q || exact) ? options : options.filter((o) => o.toLowerCase().includes(q))
+  return (
+    <div ref={ref} className={`relative ${className ?? ''}`}>
+      <input autoFocus={autoFocus} value={value} placeholder="Étape"
+        onChange={(e) => { onChange(e.target.value); setOpen(true) }} onFocus={() => setOpen(true)}
+        className="w-full border border-gray-300 rounded-lg pl-2 pr-7 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+      <button type="button" tabIndex={-1} onClick={() => setOpen((v) => !v)}
+        className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+        <ChevronDownIcon className={`w-4 h-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && filtered.length > 0 && (
+        <div className="absolute z-30 left-0 mt-1 min-w-full w-max max-w-[18rem] bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+          <div className="max-h-56 overflow-y-auto py-1">
+            {filtered.map((o) => (
+              <button key={o} type="button" onMouseDown={(e) => { e.preventDefault(); onChange(o); setOpen(false) }}
+                className={`w-full text-left px-3 py-1.5 text-sm whitespace-nowrap hover:bg-blue-50 transition ${value === o ? 'text-blue-700 font-medium bg-blue-50/60' : 'text-gray-700'}`}>
+                {o}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function PlanningEditor({ items, onChange, etapesTypes }: { items: ProjetPlanning[]; onChange: (v: ProjetPlanning[]) => void; etapesTypes?: string[] }) {
   // Toute modification repasse par recalcPlanning : les dates en aval suivent les délais (sauf étapes ancrées).
   const commit = (next: ProjetPlanning[]) => onChange(recalcPlanning(next))
@@ -69,7 +109,6 @@ export function PlanningEditor({ items, onChange, etapesTypes }: { items: Projet
   }
   return (
     <div className="space-y-2">
-      <datalist id="planning-etapes-edit">{etapes.map((e) => <option key={e} value={e} />)}</datalist>
       {items.map((p, i) => {
         const isLast = i === items.length - 1
         const auto = i > 0 && !p.ancre // date calculée automatiquement depuis l'étape précédente
@@ -80,7 +119,7 @@ export function PlanningEditor({ items, onChange, etapesTypes }: { items: Projet
                 <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="text-gray-300 enabled:text-gray-500 enabled:hover:text-blue-600 disabled:opacity-40"><ChevronUpIcon className="w-4 h-4" /></button>
                 <button type="button" onClick={() => move(i, 1)} disabled={isLast} className="text-gray-300 enabled:text-gray-500 enabled:hover:text-blue-600 disabled:opacity-40"><ChevronDownIcon className="w-4 h-4" /></button>
               </div>
-              <input list="planning-etapes-edit" value={p.etape} placeholder="Étape" onChange={(e) => upd(i, { etape: e.target.value })} className="w-40 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <EtapeCombobox value={p.etape} onChange={(v) => upd(i, { etape: v })} options={etapes} className="w-40 shrink-0" />
               <input value={p.description} placeholder="Description" onChange={(e) => upd(i, { description: e.target.value })} className={inputCls} />
               {confirmDel === i ? (
                 <span className="flex items-center gap-1 shrink-0">
@@ -428,13 +467,12 @@ export function PlanningApercu({ planning, onChange, etapesTypes }: { planning: 
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" /> Aujourd'hui</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300" /> À venir</span>
       </div>
-      <datalist id="planning-etapes-ro">{etapes.map((e) => <option key={e} value={e} />)}</datalist>
       <ol className="relative border-l border-gray-200 ml-1.5 space-y-3">
       {planning.map((s, i) => {
         if (editIdx === i && draft) return (
           <li key={i} className="ml-4 relative border border-gray-200 rounded-lg p-2 space-y-1.5 bg-gray-50">
             <div className="flex gap-2 flex-wrap items-center">
-              <input list="planning-etapes-ro" autoFocus value={draft.etape} placeholder="Étape" onChange={(e) => setDraft({ ...draft, etape: e.target.value })} className="w-40 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <EtapeCombobox value={draft.etape} onChange={(v) => setDraft({ ...draft, etape: v })} options={etapes} autoFocus className="w-40" />
               <input value={draft.description} placeholder="Description" onChange={(e) => setDraft({ ...draft, description: e.target.value })} className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <div className="flex gap-2 flex-wrap items-center">
