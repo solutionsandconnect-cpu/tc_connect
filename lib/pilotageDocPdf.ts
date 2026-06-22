@@ -258,25 +258,27 @@ export async function generatePilotageDocPdf(
       if (c.livrables.length === 0) emptyRow()
       else c.livrables.forEach((l) => drawRow([{ text: l, w: contentW, align: 'center' }]))
     }
+    if (cfg.horsPerimetre && (c.horsPerimetre?.length ?? 0) > 0) {
+      band('Hors-périmètre (non compris)', dark)
+      c.horsPerimetre.forEach((l) => drawRow([{ text: '•  ' + l, w: contentW }]))
+    }
     if (cfg.planning) {
       band('Planning prévisionnel', red)
       drawRow([
-        { text: 'Étape', w: 30, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Description', w: contentW - 30 - 25 - 33 - 12, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Date', w: 25, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Responsable', w: 33, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Fait', w: 12, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Étape', w: 32, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Description', w: contentW - 32 - 28 - 38, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Date', w: 28, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Responsable', w: 38, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
       ])
       if (c.planning.length === 0) emptyRow()
       else c.planning.forEach((p) => drawRow([
-        { text: p.etape, w: 30 },
-        { text: p.description, w: contentW - 30 - 25 - 33 - 12 },
-        { text: fmtD(p.date), w: 25, align: 'center' },
-        { text: p.responsable, w: 33, align: 'center' },
-        { w: 12, check: p.fait },
+        { text: p.etape, w: 32 },
+        { text: p.description, w: contentW - 32 - 28 - 38 },
+        { text: fmtD(p.date), w: 28, align: 'center' },
+        { text: p.responsable, w: 38, align: 'center' },
       ]))
     }
-    const tachesTable = (titre: string, list: ProjetContent['tachesClient']) => {
+    const tachesTable = (titre: string, list: ProjetContent['taches']) => {
       band(titre, dark)
       drawRow([
         { text: 'Fait', w: 14, fill: [55, 65, 81], color: [255, 255, 255], bold: true, align: 'center' },
@@ -290,8 +292,9 @@ export async function generatePilotageDocPdf(
         { text: fmtD(t.date), w: 30, align: 'center' },
       ]))
     }
-    if (cfg.tachesClient) tachesTable('Tâches à réaliser par le client', c.tachesClient)
-    if (cfg.tachesSC) tachesTable(`Tâches de ${fNom}`, c.tachesSC)
+    const taches = c.taches ?? []
+    if (cfg.tachesClient) tachesTable('Tâches à réaliser par le client', taches.filter((t) => t.pour === 'client'))
+    if (cfg.tachesSC) tachesTable(`Tâches de ${fNom}`, taches.filter((t) => (t.pour ?? 'sc') === 'sc'))
 
     footer()
     const safeP = (docu.titre || meta.label).replace(/[^a-z0-9]+/gi, '_')

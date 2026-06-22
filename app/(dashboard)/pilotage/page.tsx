@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Timestamp } from 'firebase/firestore'
 import { useAuth } from '@/context/AuthContext'
@@ -9,24 +9,16 @@ import { usePilotageContrats } from '@/hooks/usePilotageContrats'
 import { usePilotageCatalogue } from '@/hooks/usePilotageCatalogue'
 import { usePilotageSettings } from '@/hooks/usePilotageSettings'
 import { useClients } from '@/hooks/useClients'
-import { useCompanies } from '@/hooks/useCompanies'
 import { useAbonnementsByClientId } from '@/hooks/useAbonnementsByClientId'
-import { usePilotageDocuments } from '@/hooks/usePilotageDocuments'
-import { uploadBlob } from '@/lib/uploadImage'
-import SignaturePad from '@/components/ui/SignaturePad'
-import { generatePilotageDocPdf, PILOTAGE_DOC_TYPES, STATUT_DOC_LABELS } from '@/lib/pilotageDocPdf'
-import { defaultLegalFields, legalFieldGroupsAll, type LegalFields } from '@/lib/pilotageLegalTemplates'
-import {
-  defaultProjetContent, LIVRABLES_DEFAUT,
-  type ProjetContent, type ProjetFonction, type ProjetPlanning, type ProjetTache,
-} from '@/lib/pilotageProjetTemplates'
+import { defaultProjetContent, LIVRABLES_DEFAUT } from '@/lib/pilotageProjetTemplates'
 import Modal from '@/components/ui/Modal'
 import SearchSelect from '@/components/ui/SearchSelect'
-import type { PilotageContrat, PilotageContratStatut, PilotageDocument, PilotageDocumentType } from '@/types'
+import { randomUUID } from '@/lib/uuid'
+import type { PilotageContrat, PilotageContratStatut, PilotageEstimation } from '@/types'
 import {
   PlusIcon, PencilIcon, TrashIcon, DocumentTextIcon,
   ExclamationTriangleIcon, PresentationChartLineIcon, CalculatorIcon,
-  ArrowDownTrayIcon, CheckIcon,
+  ArrowDownTrayIcon, CheckIcon, EyeIcon,
 } from '@heroicons/react/24/outline'
 
 // Plafond micro-entreprise (prestations de services / BNC) — à ajuster si le barème change
@@ -57,6 +49,16 @@ const DEFAULT_FEATURES: Feature[] = [
   { id: 'f5', nom: 'Notifications / rappels', taille: 's' },
   { id: 'f6', nom: 'Back-office admin', taille: 'm' },
 ]
+
+// Catégorie par défaut des fonctionnalités de base (quand elles ne viennent pas du catalogue)
+const CATEGORIES_FEATURE_DEFAUT: Record<string, string> = {
+  'Cadrage & maquettes': 'Cadrage & conception',
+  'Authentification & comptes': 'Comptes & accès',
+  'Écran principal / tableau de bord': 'Interface',
+  'Module métier principal (CRUD)': 'Métier',
+  'Notifications / rappels': 'Notifications',
+  'Back-office admin': 'Administration',
+}
 
 // Catalogue par défaut (modèle initial — sert à amorcer ton catalogue personnel)
 const DEFAULT_CATALOGUE: { groupe: string; items: { nom: string; taille: TailleKey }[] }[] = [
@@ -123,116 +125,6 @@ const emptyForm: Form = {
   devisId: '', devisNumber: '',
 }
 
-// ── Éditeurs de listes pour les documents projet (au niveau module : évite la perte de focus) ──
-const inputCls = 'flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
-const delBtn = 'p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition shrink-0'
-const addBtn = 'flex items-center gap-1 text-xs font-medium text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-lg transition'
-
-function StringListEditor({ items, onChange, placeholder }: { items: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
-  return (
-    <div className="space-y-1.5">
-      {items.map((v, i) => (
-        <div key={i} className="flex gap-2">
-          <input value={v} placeholder={placeholder} onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))} className={inputCls} />
-          <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
-        </div>
-      ))}
-      <button type="button" onClick={() => onChange([...items, ''])} className={addBtn}><PlusIcon className="w-3.5 h-3.5" /> Ajouter</button>
-    </div>
-  )
-}
-
-function FonctionsEditor({ items, onChange }: { items: ProjetFonction[]; onChange: (v: ProjetFonction[]) => void }) {
-  const upd = (i: number, patch: Partial<ProjetFonction>) => onChange(items.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-  return (
-    <div className="space-y-1.5">
-      {items.map((f, i) => (
-        <div key={i} className="flex gap-2">
-          <input value={f.categorie} placeholder="Catégorie" onChange={(e) => upd(i, { categorie: e.target.value })} className="w-1/3 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <input value={f.description} placeholder="Description" onChange={(e) => upd(i, { description: e.target.value })} className={inputCls} />
-          <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
-        </div>
-      ))}
-      <button type="button" onClick={() => onChange([...items, { categorie: '', description: '' }])} className={addBtn}><PlusIcon className="w-3.5 h-3.5" /> Ajouter</button>
-    </div>
-  )
-}
-
-function PlanningEditor({ items, onChange }: { items: ProjetPlanning[]; onChange: (v: ProjetPlanning[]) => void }) {
-  const upd = (i: number, patch: Partial<ProjetPlanning>) => onChange(items.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-  return (
-    <div className="space-y-2">
-      {items.map((p, i) => (
-        <div key={i} className="flex gap-2 flex-wrap items-center border border-gray-100 rounded-lg p-2">
-          <input value={p.etape} placeholder="Étape" onChange={(e) => upd(i, { etape: e.target.value })} className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <input value={p.description} placeholder="Description" onChange={(e) => upd(i, { description: e.target.value })} className={inputCls} />
-          <input type="date" value={p.date} onChange={(e) => upd(i, { date: e.target.value })} className="w-36 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <input value={p.responsable} placeholder="Responsable" onChange={(e) => upd(i, { responsable: e.target.value })} className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <label className="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" checked={p.fait} onChange={(e) => upd(i, { fait: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Fait</label>
-          <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
-        </div>
-      ))}
-      <button type="button" onClick={() => onChange([...items, { etape: '', description: '', date: '', responsable: '', fait: false }])} className={addBtn}><PlusIcon className="w-3.5 h-3.5" /> Ajouter une étape</button>
-    </div>
-  )
-}
-
-// Normalise une date saisie librement (21/11, 21/11/2026…) vers AAAA-MM-JJ si possible
-function toIsoDate(s: string): string {
-  const v = s.trim()
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v
-  const m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/.exec(v)
-  if (m) {
-    const d = m[1].padStart(2, '0'), mo = m[2].padStart(2, '0')
-    let y = m[3] ?? String(new Date().getFullYear())
-    if (y.length === 2) y = '20' + y
-    return `${y}-${mo}-${d}`
-  }
-  return ''
-}
-
-function TachesEditor({ items, onChange }: { items: ProjetTache[]; onChange: (v: ProjetTache[]) => void }) {
-  const upd = (i: number, patch: Partial<ProjetTache>) => onChange(items.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-  const [bulk, setBulk] = useState('')
-  const addBulk = () => {
-    const rows = bulk.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
-      const [desc, date] = l.split('|').map((s) => s.trim())
-      return { description: desc, date: toIsoDate(date || ''), fait: false }
-    })
-    if (rows.length) onChange([...items, ...rows])
-    setBulk('')
-  }
-  return (
-    <div className="space-y-1.5">
-      {items.map((t, i) => (
-        <div key={i} className="flex gap-2 items-center">
-          <input type="checkbox" checked={t.fait} onChange={(e) => upd(i, { fait: e.target.checked })} className="w-4 h-4 accent-blue-600 shrink-0" />
-          <input value={t.description} placeholder="Description" onChange={(e) => upd(i, { description: e.target.value })} className={inputCls} />
-          <input type="date" value={t.date} onChange={(e) => upd(i, { date: e.target.value })} className="w-36 shrink-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
-        </div>
-      ))}
-      <div className="flex items-center gap-3 flex-wrap">
-        <button type="button" onClick={() => onChange([...items, { description: '', date: '', fait: false }])} className={addBtn}><PlusIcon className="w-3.5 h-3.5" /> Ajouter une tâche</button>
-      </div>
-      <details className="group">
-        <summary className="cursor-pointer text-[11px] font-medium text-indigo-700 list-none flex items-center gap-1.5">
-          <span className="inline-block transition group-open:rotate-90">▸</span> Ajout rapide (colle plusieurs lignes)
-        </summary>
-        <div className="mt-2">
-          <textarea rows={4} value={bulk} onChange={(e) => setBulk(e.target.value)}
-            placeholder={'Une tâche par ligne. Date en option après « | ».\nEx :\nEnvoyer la maquette | 21/11\nCréer la base de données\nFormation utilisateurs | 30/03'}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" />
-          <button type="button" onClick={addBulk} disabled={!bulk.trim()}
-            className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 px-3 py-1.5 rounded-lg transition">
-            <PlusIcon className="w-3.5 h-3.5" /> Ajouter ces lignes
-          </button>
-        </div>
-      </details>
-    </div>
-  )
-}
-
 export default function PilotagePage() {
   const router = useRouter()
   const { currentUser, userProfile } = useAuth()
@@ -240,11 +132,6 @@ export default function PilotagePage() {
   const { invoices } = useInvoices(currentUser?.uid ?? '')
   const { contrats, loading, addContrat, updateContrat, deleteContrat } = usePilotageContrats()
   const { clients } = useClients()
-  const { companies } = useCompanies()
-  // Société émettrice (par défaut « Solutions & Connect ») — pour logo, coordonnées et infos prestataire
-  const company = useMemo(
-    () => companies.find((c) => (c.nom ?? '').toLowerCase().includes('solutions')) ?? companies[0] ?? null,
-    [companies])
 
   const [showModal, setShowModal] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -252,95 +139,49 @@ export default function PilotagePage() {
   const [saving, setSaving] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
-  // Documents reliés à un contrat (cahier des charges, RGPD, CGV…)
-  const [docsContrat, setDocsContrat] = useState<PilotageContrat | null>(null)
-  const [newDocType, setNewDocType] = useState<PilotageDocumentType>('cahier_charges')
-  const { documents: contratDocs, addDocument, updateDocument, deleteDocument } = usePilotageDocuments(docsContrat?.id)
-  const [signDoc, setSignDoc] = useState<PilotageDocument | null>(null)
-  // Formulaire unique « Infos des documents » porté par le contrat
-  const [infosContrat, setInfosContrat] = useState<PilotageContrat | null>(null)
-  const [formLegal, setFormLegal] = useState<LegalFields>(defaultLegalFields())
-  const [formProjet, setFormProjet] = useState<ProjetContent>(defaultProjetContent())
-  const updL = (k: keyof LegalFields, v: string) => setFormLegal((f) => ({ ...f, [k]: v }))
-  const updP = (patch: Partial<ProjetContent>) => setFormProjet((p) => ({ ...p, ...patch }))
-
-  // Amorce le contenu projet depuis l'estimateur (fonctionnalités) + valeurs par défaut
-  const seedProjet = () => defaultProjetContent({
-    fonctionnalites: features.map((f) => ({ categorie: '', description: f.nom })),
-    livrables: [...LIVRABLES_DEFAUT],
-  })
-
-  const createDoc = async () => {
-    if (!docsContrat) return
-    const meta = PILOTAGE_DOC_TYPES.find((t) => t.value === newDocType)
-    await addDocument({
-      contratId: docsContrat.id,
-      clientNom: docsContrat.clientNom ?? '',
-      type: newDocType,
-      titre: `${meta?.label ?? 'Document'}${docsContrat.clientNom ? ' — ' + docsContrat.clientNom : ''}`,
-      version: '1.0',
-      statut: 'brouillon',
-    } as Omit<PilotageDocument, 'id' | 'createdAt'>)
-  }
-
-  // Ouvre le formulaire unique : pré-remplit prestataire (société) + client + montants, puis applique le sauvegardé
-  const openInfos = (c: PilotageContrat) => {
-    const cli = clients.find((x) => x.id === c.clientId)
-    // Côté client : on privilégie la section « Entreprise » de la fiche client si renseignée
-    const clientAdresse = cli?.adresseEntreprise || [cli?.adresse, cli?.codePostal, cli?.ville].filter(Boolean).join(', ')
-    const clientRepresentant = cli?.representantEntreprise || [cli?.prenom, cli?.nom].filter(Boolean).join(' ').trim()
-    const prestaAdresse = [company?.adresse, company?.codePostal, company?.ville].filter(Boolean).join(', ')
-    const prefill = defaultLegalFields({
-      prestataireNom: company?.nom || 'Solutions & Connect',
-      prestataireSiret: company?.siret || '',
-      prestataireAdresse: prestaAdresse,
-      prestataireEmail: company?.email || 'solutionsandconnect@gmail.com',
-      prestataireTel: company?.telephone || '+33 6 79 40 82 54',
-      prestataireRepresentant: company?.representant || '',
-      clientNom: cli?.nomEntreprise || c.clientNom || '',
-      clientAdresse,
-      clientSiret: cli?.siret || '',
-      clientRepresentant,
-      date: new Date().toLocaleDateString('fr-FR'),
-      prixCreation: c.fraisMiseEnPlace != null ? String(c.fraisMiseEnPlace) : '',
-      prixAbo: c.abonnementMensuel != null ? String(c.abonnementMensuel) : '',
+  // Amorce le contenu projet depuis l'estimateur (fonctionnalités) + valeurs par défaut.
+  // La catégorie est reprise du catalogue (groupe de la brique) quand la fonctionnalité y figure.
+  const seedProjet = () => {
+    const groupeParNom = new Map(catalogueItems.map((it) => [it.nom, it.groupe?.trim() || '']))
+    const categorie = (nom: string) => groupeParNom.get(nom) || CATEGORIES_FEATURE_DEFAUT[nom] || ''
+    return defaultProjetContent({
+      fonctionnalites: features.map((f) => ({ categorie: categorie(f.nom), description: f.nom })),
+      livrables: [...LIVRABLES_DEFAUT],
     })
-    const saved = c.legal
-    if (saved) for (const k of Object.keys(saved) as (keyof LegalFields)[]) { if (saved[k]) prefill[k] = saved[k] }
-    setFormLegal(prefill)
-    setFormProjet(c.projet ? defaultProjetContent(c.projet) : seedProjet())
-    setInfosContrat(c)
-  }
-  const saveInfos = async () => {
-    if (!infosContrat) return
-    await updateContrat(infosContrat.id, { legal: formLegal, projet: formProjet } as Partial<PilotageContrat>)
-    setDocsContrat((c) => (c && c.id === infosContrat.id ? { ...c, legal: formLegal, projet: formProjet } : c))
-    setInfosContrat(null)
   }
 
-  // Espace Tâches dédié (porté par le contrat, alimente besoins & bilan)
-  const [tachesContrat, setTachesContrat] = useState<PilotageContrat | null>(null)
-  const [tachesData, setTachesData] = useState<{ tachesClient: ProjetTache[]; tachesSC: ProjetTache[] }>({ tachesClient: [], tachesSC: [] })
-  const openTaches = (c: PilotageContrat) => {
-    setTachesData({ tachesClient: c.projet?.tachesClient ?? [], tachesSC: c.projet?.tachesSC ?? [] })
-    setTachesContrat(c)
+  // ── Estimation rattachée au contrat : snapshot des entrées du calculateur ──
+  const currentEstimation = (): PilotageEstimation => ({
+    mode, tjm, overheadPct, bufferPct, maintPct, infra: calcInfra, supportH,
+    heuresGagnees, coutHoraireClient, partCaptee,
+    premiumRevente, nbClientsFinaux, prixReventeMensuel,
+    features: features.map(({ nom, taille }) => ({ nom, taille })),
+  })
+  // Contrat dont on rejoue/ajuste l'estimation dans le calculateur
+  const [linkedContrat, setLinkedContrat] = useState<PilotageContrat | null>(null)
+  // Estimation à enregistrer à la création d'un contrat « avec ces tarifs »
+  const [pendingEstimation, setPendingEstimation] = useState<PilotageEstimation | null>(null)
+  const estimateurRef = useRef<HTMLDetailsElement>(null)
+  const loadEstimation = (c: PilotageContrat) => {
+    const e = c.estimation
+    if (!e) return
+    setMode(e.mode); setTjm(e.tjm); setOverheadPct(e.overheadPct); setBufferPct(e.bufferPct)
+    setMaintPct(e.maintPct); setCalcInfra(e.infra); setSupportH(e.supportH)
+    setHeuresGagnees(e.heuresGagnees); setCoutHoraireClient(e.coutHoraireClient); setPartCaptee(e.partCaptee)
+    setPremiumRevente(e.premiumRevente); setNbClientsFinaux(e.nbClientsFinaux); setPrixReventeMensuel(e.prixReventeMensuel)
+    setFeatures(e.features.map((f) => ({ id: randomUUID(), nom: f.nom, taille: f.taille })))
+    setLinkedContrat(c)
+    setTimeout(() => estimateurRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }
-  const saveTaches = async () => {
-    if (!tachesContrat) return
-    const merged = { ...(tachesContrat.projet ?? seedProjet()), tachesClient: tachesData.tachesClient, tachesSC: tachesData.tachesSC }
-    await updateContrat(tachesContrat.id, { projet: merged } as Partial<PilotageContrat>)
-    setDocsContrat((c) => (c && c.id === tachesContrat.id ? { ...c, projet: merged } : c))
-    setTachesContrat(null)
-  }
-
-  const handleSign = async (dataUrl: string) => {
-    if (!signDoc || !currentUser) return
-    try {
-      const blob = await (await fetch(dataUrl)).blob()
-      const url = await uploadBlob(blob, `users/${currentUser.uid}/pilotage_signatures/${signDoc.id}.png`)
-      await updateDocument(signDoc.id, { signe: true, statut: 'signe', signeLe: Timestamp.now(), signatureUrl: url })
-    } catch (e) { console.error('[pilotage sign]', e) }
-    setSignDoc(null)
+  const updateLinkedContrat = async () => {
+    if (!linkedContrat) return
+    await updateContrat(linkedContrat.id, {
+      estimation: currentEstimation(),
+      fraisMiseEnPlace: tarif.setup,
+      abonnementMensuel: tarif.abo,
+      coutFirebaseMensuel: calcInfra,
+    } as Partial<PilotageContrat>)
+    setLinkedContrat(null)
   }
 
   // Cascade client → abonnement → devis pour le formulaire de contrat
@@ -390,7 +231,7 @@ export default function PilotagePage() {
   const [editCatalogue, setEditCatalogue] = useState(false)
   const { items: catalogueItems, addItem: addCatItem, updateItem: updCatItem, deleteItem: delCatItem } = usePilotageCatalogue()
 
-  const addFeature = () => setFeatures((f) => [...f, { id: crypto.randomUUID(), nom: '', taille: 'm' }])
+  const addFeature = () => setFeatures((f) => [...f, { id: randomUUID(), nom: '', taille: 'm' }])
   const updFeature = (id: string, patch: Partial<Feature>) =>
     setFeatures((f) => f.map((x) => (x.id === id ? { ...x, ...patch } : x)))
   const delFeature = (id: string) => setFeatures((f) => f.filter((x) => x.id !== id))
@@ -398,7 +239,7 @@ export default function PilotagePage() {
     setFeatures((f) =>
       f.some((x) => x.nom.trim().toLowerCase() === nom.toLowerCase())
         ? f
-        : [...f, { id: crypto.randomUUID(), nom, taille }])
+        : [...f, { id: randomUUID(), nom, taille }])
 
   // Catalogue groupé (par « groupe », dans l'ordre d'apparition)
   const catalogueGroupes = useMemo(() => {
@@ -437,7 +278,7 @@ export default function PilotagePage() {
     if (settings.nbClientsFinaux != null) setNbClientsFinaux(settings.nbClientsFinaux)
     if (settings.prixReventeMensuel != null) setPrixReventeMensuel(settings.prixReventeMensuel)
     if (settings.features && settings.features.length)
-      setFeatures(settings.features.map((f) => ({ id: crypto.randomUUID(), nom: f.nom, taille: f.taille })))
+      setFeatures(settings.features.map((f) => ({ id: randomUUID(), nom: f.nom, taille: f.taille })))
     setHydrated(true)
   }, [settings, hydrated])
 
@@ -537,9 +378,10 @@ export default function PilotagePage() {
   }, [stats])
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  const openAdd = () => { setEditId(null); setForm(emptyForm); setShowModal(true) }
+  const openAdd = () => { setEditId(null); setPendingEstimation(null); setForm(emptyForm); setShowModal(true) }
   const openAddWithPricing = () => {
     setEditId(null)
+    setPendingEstimation(currentEstimation())  // on attache le calcul courant au futur contrat
     setForm({
       ...emptyForm,
       abonnementMensuel: String(tarif.abo),
@@ -550,6 +392,7 @@ export default function PilotagePage() {
   }
   const openEdit = (c: PilotageContrat) => {
     setEditId(c.id)
+    setPendingEstimation(c.estimation ?? null)
     setForm({
       clientId: c.clientId ?? '', clientNom: c.clientNom ?? '',
       abonnementId: c.abonnementId ?? '', abonnementTitre: c.abonnementTitre ?? '',
@@ -586,8 +429,10 @@ export default function PilotagePage() {
         devisId: form.devisId || null,
         devisNumber: form.devisNumber || null,
       }
+      // À la création « avec ces tarifs » : on enregistre le snapshot du calcul + un contenu projet amorcé.
+      const extra = !editId && pendingEstimation ? { estimation: pendingEstimation, projet: seedProjet() } : {}
       if (editId) await updateContrat(editId, payload as Partial<PilotageContrat>)
-      else await addContrat(payload as Omit<PilotageContrat, 'id' | 'createdAt'>)
+      else await addContrat({ ...payload, ...extra } as Omit<PilotageContrat, 'id' | 'createdAt'>)
       setShowModal(false)
     } catch (err) { console.error('[pilotage submit]', err) }
     setSaving(false)
@@ -621,11 +466,27 @@ export default function PilotagePage() {
       </div>
 
       {/* Estimateur de tarif (création sur-mesure) */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h2 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
+      <details ref={estimateurRef} open className="group bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-semibold text-gray-700">
+          <span className="inline-block transition group-open:rotate-90 text-gray-400">▸</span>
           <CalculatorIcon className="w-4 h-4 text-blue-600" /> Estimateur de tarif (création sur-mesure)
-        </h2>
-        <p className="text-xs text-gray-400 mb-3">
+        </summary>
+        {linkedContrat && (
+          <div className="flex items-center justify-between gap-2 flex-wrap bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 mt-2">
+            <p className="text-xs text-blue-800">
+              Tu ajustes l'estimation de <strong>{linkedContrat.clientNom || 'ce contrat'}</strong>. Modifie les valeurs ci-dessous, puis enregistre.
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={updateLinkedContrat}
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">
+                <CheckIcon className="w-3.5 h-3.5" /> Mettre à jour le contrat
+              </button>
+              <button onClick={() => setLinkedContrat(null)}
+                className="text-xs font-medium text-blue-700 hover:underline">Détacher</button>
+            </div>
+          </div>
+        )}
+        <p className="text-xs text-gray-400 mb-3 mt-2">
           Découpe l'app en fonctionnalités et estime l'effort de chacune. Le prix se calcule façon freelance :
           jours × TJM + frais de structure + marge d'incertitude. La maintenance se déduit en % du coût de création.
         </p>
@@ -944,14 +805,15 @@ export default function PilotagePage() {
             )}
           </button>
         </div>
-      </div>
+      </details>
 
       {/* Analyse inversée — d'un contrat déjà signé vers le taux réalisé */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h2 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
+      <details open className="group bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-semibold text-gray-700">
+          <span className="inline-block transition group-open:rotate-90 text-gray-400">▸</span>
           <CalculatorIcon className="w-4 h-4 text-emerald-600" /> Analyse d'un contrat signé (calcul inversé)
-        </h2>
-        <p className="text-xs text-gray-400 mb-4">
+        </summary>
+        <p className="text-xs text-gray-400 mb-4 mt-2">
           Tu connais déjà ce que tu as facturé ? Saisis-le pour voir à combien ça revient en taux journalier/horaire réel.
         </p>
 
@@ -1001,7 +863,7 @@ export default function PilotagePage() {
             </p>
           </div>
         </div>
-      </div>
+      </details>
 
       {/* Prévisionnel (d'après tes contrats) */}
       <p className="text-xs text-gray-400 -mb-1">Prévisionnel — d'après tes contrats actifs. Distinct de ton CA réel (qui vient de ta facturation).</p>
@@ -1104,14 +966,24 @@ export default function PilotagePage() {
               </div>
               {c.notes && <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">{c.notes}</p>}
               <div className="flex gap-2 mt-3 pt-3 border-t border-gray-50 flex-wrap">
-                <button onClick={() => setDocsContrat(c)}
+                <button onClick={() => router.push(`/pilotage/contrat/${c.id}`)}
                   className="flex items-center gap-1.5 text-xs font-medium text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition">
                   <DocumentTextIcon className="w-3.5 h-3.5" /> Documents
                 </button>
-                <button onClick={() => openTaches(c)}
+                <button onClick={() => router.push(`/pilotage/contrat/${c.id}?tab=taches`)}
                   className="flex items-center gap-1.5 text-xs font-medium text-purple-700 border border-purple-200 bg-purple-50 hover:bg-purple-100 px-3 py-1.5 rounded-lg transition">
                   <CheckIcon className="w-3.5 h-3.5" /> Tâches
                 </button>
+                <button onClick={() => router.push(`/pilotage/contrat/${c.id}?tab=apercu`)}
+                  className="flex items-center gap-1.5 text-xs font-medium text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg transition">
+                  <EyeIcon className="w-3.5 h-3.5" /> Aperçu
+                </button>
+                {c.estimation && (
+                  <button onClick={() => loadEstimation(c)}
+                    className="flex items-center gap-1.5 text-xs font-medium text-blue-700 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition">
+                    <CalculatorIcon className="w-3.5 h-3.5" /> Estimation
+                  </button>
+                )}
                 {c.devisId && (
                   <button onClick={() => router.push(`/facturation/${c.devisId}`)}
                     className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition">
@@ -1280,195 +1152,6 @@ export default function PilotagePage() {
         </div>
       </Modal>
 
-      {/* Documents reliés au contrat */}
-      <Modal isOpen={!!docsContrat} onClose={() => setDocsContrat(null)} title={`Documents${docsContrat?.clientNom ? ' — ' + docsContrat.clientNom : ''}`}>
-        <div className="space-y-4">
-          {/* Formulaire unique : toutes les infos des documents */}
-          <button onClick={() => docsContrat && openInfos(docsContrat)}
-            className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition">
-            <PencilIcon className="w-4 h-4" /> Remplir / éditer les infos des documents
-          </button>
-          <p className="text-[11px] text-gray-400 -mt-1">Saisis une seule fois ici toutes les infos (projet + officiels) ; chaque document les reprend automatiquement.</p>
-
-          {/* Ajouter un document */}
-          <div className="flex items-end gap-2 flex-wrap">
-            <div className="flex-1 min-w-[180px]">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Type de document</label>
-              <select value={newDocType} onChange={(e) => setNewDocType(e.target.value as PilotageDocumentType)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <optgroup label="Documents projet">
-                  {PILOTAGE_DOC_TYPES.filter((t) => t.famille === 'projet').map((t) => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="Contrats légaux">
-                  {PILOTAGE_DOC_TYPES.filter((t) => t.famille === 'legal').map((t) => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </optgroup>
-              </select>
-            </div>
-            <button onClick={createDoc}
-              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
-              <PlusIcon className="w-4 h-4" /> Créer
-            </button>
-          </div>
-
-          {/* Liste des documents */}
-          {contratDocs.length === 0 ? (
-            <div className="text-center py-8 text-gray-400 text-sm">Aucun document pour ce contrat.</div>
-          ) : (
-            <div className="space-y-2">
-              {contratDocs.map((d) => (
-                <div key={d.id} className="flex items-center justify-between gap-2 border border-gray-100 rounded-xl p-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">{d.titre}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-gray-400">v{d.version}</span>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                        d.statut === 'signe' ? 'bg-green-100 text-green-700'
-                          : d.statut === 'finalise' ? 'bg-blue-100 text-blue-700'
-                            : 'bg-gray-100 text-gray-500'
-                      }`}>{STATUT_DOC_LABELS[d.statut] ?? d.statut}</span>
-                    </div>
-                  </div>
-                  <div className="flex gap-1 shrink-0">
-                    {!d.signe && (
-                      <button onClick={() => setSignDoc(d)} title="Signer"
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition">
-                        <CheckIcon className="w-4 h-4" />
-                      </button>
-                    )}
-                    <button onClick={() => generatePilotageDocPdf(d, { company, projet: docsContrat?.projet, legal: docsContrat?.legal })} title="Télécharger le PDF"
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition">
-                      <ArrowDownTrayIcon className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => deleteDocument(d.id)} title="Supprimer"
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition">
-                      <TrashIcon className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <p className="text-[11px] text-gray-400">
-            ✎ éditer · ✔ signer · ⬇ exporter en PDF. Les documents projet (cahier des charges, bilan, besoins) partagent un même contenu saisi une seule fois sur le contrat. Le logo et les coordonnées viennent de ta société « {company?.nom ?? 'Solutions & Connect'} ».
-          </p>
-        </div>
-      </Modal>
-
-      {/* Formulaire unique : toutes les infos des documents (porté par le contrat) */}
-      <Modal isOpen={!!infosContrat} onClose={() => setInfosContrat(null)} title={`Infos documents${infosContrat?.clientNom ? ' — ' + infosContrat.clientNom : ''}`}>
-        <div className="space-y-5">
-          <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
-            <ExclamationTriangleIcon className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-            <p className="text-xs text-blue-800">
-              Saisis ici <strong>une seule fois</strong> toutes les infos : chaque document reprend automatiquement ce qui le concerne. Prestataire et logo viennent de ta société.
-            </p>
-          </div>
-
-          {/* Contenu projet */}
-          <details open className="group">
-            <summary className="cursor-pointer text-sm font-semibold text-gray-700 list-none flex items-center gap-1.5">
-              <span className="inline-block transition group-open:rotate-90">▸</span> Contenu projet (cahier des charges · bilan · besoins)
-            </summary>
-            <div className="mt-3 space-y-4">
-              <div>
-                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Contexte</p>
-                <textarea rows={3} value={formProjet.contexte} onChange={(e) => updP({ contexte: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-              </div>
-              <div><p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Fonctionnalités</p>
-                <FonctionsEditor items={formProjet.fonctionnalites} onChange={(v) => updP({ fonctionnalites: v })} /></div>
-              <div><p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Livrables</p>
-                <StringListEditor items={formProjet.livrables} onChange={(v) => updP({ livrables: v })} placeholder="Livrable…" /></div>
-              <div><p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Planning prévisionnel</p>
-                <PlanningEditor items={formProjet.planning} onChange={(v) => updP({ planning: v })} /></div>
-              <p className="text-[11px] text-gray-400">Les <strong>tâches</strong> (client &amp; Solutions &amp; Connect) se gèrent dans l'espace dédié « Tâches » du contrat.</p>
-            </div>
-          </details>
-
-          {/* Documents officiels (légaux) */}
-          <details className="group">
-            <summary className="cursor-pointer text-sm font-semibold text-gray-700 list-none flex items-center gap-1.5">
-              <span className="inline-block transition group-open:rotate-90">▸</span> Documents officiels (prestation · RGPD · licence)
-            </summary>
-            <div className="mt-3 space-y-4">
-              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-                <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                <p className="text-xs text-amber-800">Modèles types — <strong>à faire valider par un juriste</strong>. Champs vides → « [à compléter] » dans le PDF.</p>
-              </div>
-              {legalFieldGroupsAll().map((grp) => (
-                <div key={grp.titre}>
-                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">{grp.titre}</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {grp.champs.map((ch) => (
-                      <div key={ch.key} className={ch.multiline ? 'sm:col-span-2' : ''}>
-                        <label className="block text-[11px] font-medium text-gray-600 mb-1">{ch.label}</label>
-                        {ch.multiline ? (
-                          <textarea rows={2} value={formLegal[ch.key]} placeholder={ch.placeholder}
-                            onChange={(e) => updL(ch.key, e.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-                        ) : (
-                          <input type="text" value={formLegal[ch.key]} placeholder={ch.placeholder}
-                            onChange={(e) => updL(ch.key, e.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                        )}
-                        {ch.help && <p className="text-[10px] text-gray-400 mt-0.5">{ch.help}</p>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </details>
-
-          <div className="flex gap-3 pt-1">
-            <button onClick={() => setInfosContrat(null)}
-              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Fermer</button>
-            <button onClick={saveInfos}
-              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">Enregistrer</button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Pavé de signature */}
-      {signDoc && (
-        <SignaturePad
-          title={`Signer — ${signDoc.titre}`}
-          subtitle="Dessinez ci-dessous ou importez une image de signature."
-          onConfirm={handleSign}
-          onCancel={() => setSignDoc(null)}
-        />
-      )}
-
-      {/* Espace Tâches dédié */}
-      <Modal isOpen={!!tachesContrat} onClose={() => setTachesContrat(null)} title={`Tâches${tachesContrat?.clientNom ? ' — ' + tachesContrat.clientNom : ''}`}>
-        <div className="space-y-5">
-          <div className="flex items-start gap-2 bg-purple-50 border border-purple-100 rounded-xl px-3 py-2.5">
-            <CheckIcon className="w-4 h-4 text-purple-500 shrink-0 mt-0.5" />
-            <p className="text-xs text-purple-800">
-              Tes tâches du projet, indépendantes des documents mais <strong>reliées</strong> : elles alimentent le « Besoins client » (tâches client) et le « Bilan d'avancement » (les deux). Coche au fur et à mesure. Astuce : « Ajout rapide » pour coller toutes tes notes d'un coup.
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Tâches du client</p>
-            <TachesEditor items={tachesData.tachesClient} onChange={(v) => setTachesData((d) => ({ ...d, tachesClient: v }))} />
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Mes tâches (Solutions &amp; Connect)</p>
-            <TachesEditor items={tachesData.tachesSC} onChange={(v) => setTachesData((d) => ({ ...d, tachesSC: v }))} />
-          </div>
-          <div className="flex gap-3 pt-1">
-            <button onClick={() => setTachesContrat(null)}
-              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Fermer</button>
-            <button onClick={saveTaches}
-              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">Enregistrer</button>
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }

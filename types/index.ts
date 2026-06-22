@@ -240,15 +240,41 @@ export interface LegalFields {
 
 // Contenu structuré « projet » (partagé par le contrat, réutilisé par les documents)
 export interface ProjetFonction { categorie: string; description: string }
-export interface ProjetPlanning { etape: string; description: string; date: string; responsable: string; fait: boolean }
-export interface ProjetTache { description: string; date: string; fait: boolean }
+export interface ProjetPlanning {
+  etape: string
+  description: string
+  date: string            // date résolue (AAAA-MM-JJ) ; statut dérivé de la date (passée = faite)
+  dureeJours?: number     // délai en jours jusqu'à l'étape suivante (cascade)
+  ancre?: boolean         // true = date fixée à la main (non recalculée)
+  responsable: string     // 'Développeur' | 'Client' | 'Les deux' (chips ; texte libre toléré pour l'existant)
+}
+export interface ProjetTache { description: string; date: string; fait: boolean; pour: 'client' | 'sc' } // pour = qui réalise la tâche (client ou moi/S&C)
 export interface ProjetContent {
   contexte: string
   fonctionnalites: ProjetFonction[]
   livrables: string[]
+  horsPerimetre: string[]   // ce qui n'est PAS compris dans la prestation
   planning: ProjetPlanning[]
-  tachesClient: ProjetTache[]
-  tachesSC: ProjetTache[]
+  taches: ProjetTache[]     // liste unique ; chaque tâche indique si elle est « pour » le client ou pour moi
+}
+
+// Snapshot des entrées du calculateur de tarif, attaché au contrat pour pouvoir rouvrir/ajuster le calcul.
+export interface PilotageEstimationFeature { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl' }
+export interface PilotageEstimation {
+  mode: 'metier' | 'revente'
+  tjm: number
+  overheadPct: number
+  bufferPct: number
+  maintPct: number
+  infra: number
+  supportH: number
+  heuresGagnees: number
+  coutHoraireClient: number
+  partCaptee: number
+  premiumRevente: number
+  nbClientsFinaux: number
+  prixReventeMensuel: number
+  features: PilotageEstimationFeature[]
 }
 
 // Collection : pilotage_contrats (pilotage de l'activité — contrats clients pro)
@@ -273,6 +299,7 @@ export interface PilotageContrat {
   notes?: string
   projet?: ProjetContent       // contenu projet partagé (rempli une fois, réutilisé par les documents)
   legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)
+  estimation?: PilotageEstimation // snapshot du calculateur de tarif (pour rouvrir/ajuster le calcul)
   createdAt: Timestamp
   updatedAt?: Timestamp
 }
