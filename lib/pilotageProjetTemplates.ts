@@ -34,15 +34,15 @@ export function defaultProjetContent(over: Partial<ProjetContent> = {}): ProjetC
 // Quelles sections selon le type de document
 export interface ProjetSectionsConfig {
   contexte: boolean; fonctionnalites: boolean; livrables: boolean; horsPerimetre: boolean
-  planning: boolean; tachesClient: boolean; tachesSC: boolean
+  planning: boolean; tachesClient: boolean; tachesSC: boolean; charte: boolean
 }
 export function projetSections(type: PilotageDocumentType): ProjetSectionsConfig {
   if (type === 'cahier_charges')
-    return { contexte: true, fonctionnalites: true, livrables: true, horsPerimetre: true, planning: true, tachesClient: false, tachesSC: false }
+    return { contexte: true, fonctionnalites: true, livrables: true, horsPerimetre: true, planning: true, tachesClient: false, tachesSC: false, charte: true }
   if (type === 'besoins_client')
-    return { contexte: true, fonctionnalites: false, livrables: false, horsPerimetre: false, planning: false, tachesClient: true, tachesSC: false }
+    return { contexte: true, fonctionnalites: false, livrables: false, horsPerimetre: false, planning: false, tachesClient: true, tachesSC: false, charte: false }
   // bilan
-  return { contexte: true, fonctionnalites: true, livrables: true, horsPerimetre: false, planning: true, tachesClient: true, tachesSC: true }
+  return { contexte: true, fonctionnalites: true, livrables: true, horsPerimetre: false, planning: true, tachesClient: true, tachesSC: true, charte: false }
 }
 
 // Valeurs par défaut reprises de tes modèles

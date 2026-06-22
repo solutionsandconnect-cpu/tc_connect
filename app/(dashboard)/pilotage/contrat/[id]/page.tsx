@@ -11,20 +11,28 @@ import { useClients } from '@/hooks/useClients'
 import { useCompanies } from '@/hooks/useCompanies'
 import { usePilotageDocuments } from '@/hooks/usePilotageDocuments'
 import { usePilotageSettings } from '@/hooks/usePilotageSettings'
-import { uploadBlob } from '@/lib/uploadImage'
+import { uploadBlob, deleteImage } from '@/lib/uploadImage'
 import SignaturePad from '@/components/ui/SignaturePad'
+import Modal from '@/components/ui/Modal'
 import { generatePilotageDocPdf, PILOTAGE_DOC_TYPES, STATUT_DOC_LABELS } from '@/lib/pilotageDocPdf'
 import { defaultLegalFields, legalFieldGroupsAll, type LegalFields } from '@/lib/pilotageLegalTemplates'
 import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, DEFAULT_PLANNING_TEMPLATE, generatePlanningFromTemplate, type ProjetContent } from '@/lib/pilotageProjetTemplates'
 import { StringListEditor, FonctionsEditor, PlanningEditor, HorsPerimetreEditor, TacheAjoutForm, TachesApercu, PlanningApercu, ProjetApercu, tauxHoraireFromTjm, prixFacture, estEnRetard } from '@/components/pilotage/ProjetUI'
-import type { PilotageDocument, PilotageDocumentType } from '@/types'
+import { CharteEditor, CharteApercu, defaultCharte } from '@/components/pilotage/CharteUI'
+import EstimateurTarif from '@/components/pilotage/EstimateurTarif'
+import { computeTarif, stateFromEstimation, fmtEur, type TarifResult } from '@/lib/pilotageEstimateur'
+import { randomUUID } from '@/lib/uuid'
+import type { PilotageContrat, PilotageDocument, PilotageDocumentType, ChartGraphique, PilotageEstimation, SavedEstimation } from '@/types'
 import {
   ArrowLeftIcon, TrashIcon, PlusIcon, CheckIcon, ArrowDownTrayIcon, ExclamationTriangleIcon, PencilIcon,
+  EyeIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline'
 
 const TABS = [
   { key: 'documents', label: 'Documents' },
+  { key: 'calculateur', label: 'Calculateur' },
   { key: 'projet', label: 'Contenu projet' },
+  { key: 'charte', label: 'Charte & cadrage' },
   { key: 'planning', label: 'Planning' },
   { key: 'legal', label: 'Mentions légales' },
   { key: 'taches', label: 'Tâches' },
@@ -129,6 +137,7 @@ export default function ContratPage() {
   const [editing, setEditing] = useState(false)
   const [formProjet, setFormProjet] = useState<ProjetContent>(defaultProjetContent())
   const [formLegal, setFormLegal] = useState<LegalFields>(defaultLegalFields())
+  const [formCharte, setFormCharte] = useState<ChartGraphique>(defaultCharte())
   const [newDocType, setNewDocType] = useState<PilotageDocumentType>('cahier_charges')
   const [signDoc, setSignDoc] = useState<PilotageDocument | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'done'>('idle')
@@ -136,8 +145,8 @@ export default function ContratPage() {
 
   const updP = (patch: Partial<ProjetContent>) => setFormProjet((p) => ({ ...p, ...patch }))
   const updL = (k: keyof LegalFields, v: string) => setFormLegal((f) => ({ ...f, [k]: v }))
-  // Taux horaire (TJM ÷ 7) — TJM de CE contrat (estimation rattachée) en priorité, sinon valeur par défaut globale
-  const tauxHoraire = tauxHoraireFromTjm(contrat?.estimation?.tjm ?? settings?.tjm ?? 500)
+  // Taux horaire (TJM ÷ 7) — TJM saisi sur le contrat en priorité, sinon estimation rattachée, sinon réglage global
+  const tauxHoraire = tauxHoraireFromTjm(contrat?.tjm ?? contrat?.estimation?.tjm ?? settings?.tjm ?? 500)
   const aFacturer = (formProjet.taches ?? []).filter((t) => t.facturation === 'facturer' && !t.facturee)
   const totalAFacturer = aFacturer.reduce((s, t) => s + (prixFacture(t, tauxHoraire) ?? 0), 0)
   const aujourdhui = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` })()
@@ -169,6 +178,7 @@ export default function ContratPage() {
     if (saved) for (const k of Object.keys(saved) as (keyof LegalFields)[]) { if (saved[k]) prefill[k] = saved[k] }
     setFormLegal(prefill)
     setFormProjet(contrat.projet ? defaultProjetContent(contrat.projet) : defaultProjetContent())
+    setFormCharte(contrat.charte ? defaultCharte(contrat.charte) : defaultCharte())
   }, [contrat, clients, company])
 
   // Onglet initial depuis ?tab=… (lu côté client pour éviter une frontière Suspense)
@@ -192,7 +202,7 @@ export default function ContratPage() {
     if (!contrat) return
     setSaveState('saving')
     try {
-      await updateContrat(contrat.id, { projet: formProjet, legal: formLegal })
+      await updateContrat(contrat.id, { projet: formProjet, legal: formLegal, charte: formCharte })
       setEditing(false)
       setSaveState('done'); setTimeout(() => setSaveState('idle'), 2000)
     } catch (e) { console.error('[contrat save]', e); setSaveState('idle') }
@@ -205,8 +215,17 @@ export default function ContratPage() {
     if (contrat) { try { await updateContrat(contrat.id, { projet: next }) } catch (e) { console.error('[contrat persist]', e) } }
   }
 
+  // Un seul document de chaque type par contrat : on masque les types déjà créés.
+  const usedTypes = useMemo(() => new Set(documents.map((d) => d.type)), [documents])
+  const availableDocTypes = useMemo(() => PILOTAGE_DOC_TYPES.filter((t) => !usedTypes.has(t.value)), [usedTypes])
+  // Garde le type sélectionné valide (parmi ceux encore disponibles)
+  useEffect(() => {
+    if (availableDocTypes.length === 0) return
+    if (!availableDocTypes.some((t) => t.value === newDocType)) setNewDocType(availableDocTypes[0].value)
+  }, [availableDocTypes, newDocType])
+
   const createDoc = async () => {
-    if (!contrat) return
+    if (!contrat || usedTypes.has(newDocType)) return
     const meta = PILOTAGE_DOC_TYPES.find((t) => t.value === newDocType)
     await addDocument({
       contratId: contrat.id,
@@ -218,6 +237,45 @@ export default function ContratPage() {
     } as Omit<PilotageDocument, 'id' | 'createdAt'>)
   }
 
+  // ── PDF : génération → stockage Storage → ouverture/téléchargement ──
+  const [pdfBusy, setPdfBusy] = useState<string | null>(null)
+  const [delDoc, setDelDoc] = useState<PilotageDocument | null>(null)
+
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  }
+
+  // Génère (ou régénère) le PDF, le stocke sur le contrat et le télécharge.
+  const genererPdf = async (d: PilotageDocument) => {
+    if (!currentUser) return
+    setPdfBusy(d.id)
+    try {
+      const { blob, filename } = await generatePilotageDocPdf(d, { company, projet: formProjet, legal: formLegal, charte: formCharte })
+      const url = await uploadBlob(blob, `users/${currentUser.uid}/pilotage_pdf/${d.contratId}/${d.id}.pdf`)
+      await updateDocument(d.id, { pdfUrl: url, pdfNom: filename, pdfGeneeLe: Timestamp.now() })
+      triggerDownload(blob, filename)
+    } catch (e) { console.error('[pilotage pdf]', e) }
+    setPdfBusy(null)
+  }
+
+  // Ouvre le PDF déjà stocké, sans en régénérer un.
+  const ouvrirPdf = (d: PilotageDocument) => { if (d.pdfUrl) window.open(d.pdfUrl, '_blank', 'noopener,noreferrer') }
+
+  // Suppression d'un document (après confirmation) : enlève aussi PDF + signature du Storage.
+  const confirmDeleteDoc = async () => {
+    const target = delDoc
+    if (!target) return
+    setDelDoc(null)
+    try {
+      await Promise.all([target.pdfUrl, target.signatureUrl].filter(Boolean).map((u) => deleteImage(u as string)))
+      await deleteDocument(target.id)
+    } catch (e) { console.error('[pilotage doc delete]', e) }
+  }
+
   const handleSign = async (dataUrl: string) => {
     if (!signDoc || !currentUser) return
     try {
@@ -226,6 +284,84 @@ export default function ContratPage() {
       await updateDocument(signDoc.id, { signe: true, statut: 'signe', signeLe: Timestamp.now(), signatureUrl: url })
     } catch (e) { console.error('[pilotage sign]', e) }
     setSignDoc(null)
+  }
+
+  // Upload d'un fichier de charte (logo, image…) vers Storage
+  const uploadCharteFile = async (file: File) => {
+    if (!currentUser || !contrat) throw new Error('Contexte manquant')
+    const safe = file.name.replace(/[^a-z0-9._-]/gi, '_')
+    const url = await uploadBlob(file, `users/${currentUser.uid}/pilotage_charte/${contrat.id}/${Date.now()}-${safe}`)
+    return { name: file.name, url }
+  }
+
+  // ── Onglet Calculateur : plusieurs estimations nommées + sélection « validée » ──
+  const [estEditingId, setEstEditingId] = useState<string | null>(null) // null = liste ; 'new' ou id = édition
+  const [estLabel, setEstLabel] = useState('')
+  const [estSeed, setEstSeed] = useState<PilotageEstimation | null>(null)
+  const [estLive, setEstLive] = useState<{ est: PilotageEstimation; tarif: TarifResult } | null>(null)
+  const [delEstId, setDelEstId] = useState<string | null>(null)
+
+  const estimations: SavedEstimation[] = contrat?.estimations ?? []
+  const estSelectedId = contrat?.estimationSelectedId ?? null
+
+  // Migration douce : ancienne estimation unique → liste (une seule fois)
+  const migratedEst = useRef(false)
+  useEffect(() => {
+    if (migratedEst.current || !contrat) return
+    if (!contrat.estimations && contrat.estimation) {
+      migratedEst.current = true
+      const id = randomUUID()
+      updateContrat(contrat.id, {
+        estimations: [{ id, label: 'Estimation initiale', ...contrat.estimation }],
+        estimationSelectedId: contrat.estimationSelectedId ?? id,
+      } as Partial<PilotageContrat>).catch((e) => console.error('[pilotage est migrate]', e))
+    }
+  }, [contrat])
+
+  const newEst = () => { setEstEditingId('new'); setEstLabel(''); setEstSeed(null); setEstLive(null) }
+  const editEst = (e: SavedEstimation) => { setEstEditingId(e.id); setEstLabel(e.label); setEstSeed(e); setEstLive(null) }
+  const cancelEst = () => { setEstEditingId(null); setEstLive(null) }
+
+  const saveEst = async () => {
+    if (!contrat || !estLive) return
+    const label = estLabel.trim() || `Estimation ${estimations.length + 1}`
+    let next: SavedEstimation[]
+    let selId = estSelectedId
+    if (estEditingId === 'new') {
+      const id = randomUUID()
+      next = [...estimations, { id, label, ...estLive.est }]
+      if (!selId) selId = id   // première estimation → validée par défaut
+    } else {
+      next = estimations.map((e) => (e.id === estEditingId ? { id: e.id, label, ...estLive.est } : e))
+    }
+    try {
+      await updateContrat(contrat.id, { estimations: next, estimationSelectedId: selId ?? null } as Partial<PilotageContrat>)
+      setEstEditingId(null); setEstLive(null)
+    } catch (e) { console.error('[pilotage est save]', e) }
+  }
+
+  // « Valider » : ne change QUE le TJM du contrat (utilisé pour le prix des tâches à facturer)
+  const validerEst = async (e: SavedEstimation) => {
+    if (!contrat) return
+    try { await updateContrat(contrat.id, { estimationSelectedId: e.id, tjm: e.tjm } as Partial<PilotageContrat>) }
+    catch (err) { console.error('[pilotage est select]', err) }
+  }
+
+  const confirmDeleteEst = async () => {
+    if (!contrat || !delEstId) return
+    const id = delEstId; setDelEstId(null)
+    const next = estimations.filter((e) => e.id !== id)
+    const selId = estSelectedId === id ? (next[0]?.id ?? null) : estSelectedId
+    try { await updateContrat(contrat.id, { estimations: next, estimationSelectedId: selId } as Partial<PilotageContrat>) }
+    catch (err) { console.error('[pilotage est delete]', err) }
+  }
+
+  // Optionnel : aligner les autres chiffres du contrat sur l'estimation validée
+  const alignerContrat = async (e: SavedEstimation) => {
+    if (!contrat) return
+    const t = computeTarif(stateFromEstimation(e))
+    try { await updateContrat(contrat.id, { fraisMiseEnPlace: t.setup, abonnementMensuel: t.abo, coutFirebaseMensuel: e.infra } as Partial<PilotageContrat>) }
+    catch (err) { console.error('[pilotage est align]', err) }
   }
 
   if (!isAdmin) return <div className="flex items-center justify-center py-20"><p className="text-gray-500">Accès réservé.</p></div>
@@ -257,48 +393,56 @@ export default function ContratPage() {
         </div>
       </div>
 
-      {/* Onglets — tout visible, pas de défilement ; reste en place au scroll */}
-      <div className="flex flex-wrap gap-1 border-b border-gray-200 sticky top-0 bg-white z-10 pt-1">
+      {/* Onglets — une seule ligne : défilement latéral sur mobile (desktop : tout tient), reste en place au scroll vertical */}
+      <div className="flex flex-nowrap gap-1 border-b border-gray-200 sticky top-0 bg-white z-10 pt-1 overflow-x-auto overflow-y-hidden touch-pan-x overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {TABS.map((t) => (
           <button key={t.key} onClick={() => goTab(t.key)}
-            className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition ${tab === t.key ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            className={`shrink-0 px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition ${tab === t.key ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {t.label}
           </button>
         ))}
       </div>
 
       {/* Contenu de l'onglet */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 sm:p-5">
         {tab === 'documents' && (
           <div className="space-y-4">
-            <div className="flex items-end gap-2 flex-wrap">
-              <div className="flex-1 min-w-[180px]">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Type de document</label>
-                <select value={newDocType} onChange={(e) => setNewDocType(e.target.value as PilotageDocumentType)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <optgroup label="Documents projet">
-                    {PILOTAGE_DOC_TYPES.filter((t) => t.famille === 'projet').map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Contrats légaux">
-                    {PILOTAGE_DOC_TYPES.filter((t) => t.famille === 'legal').map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </optgroup>
-                </select>
+            {availableDocTypes.length === 0 ? (
+              <p className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                Tous les types de documents ont été créés pour ce contrat. Chaque document n'existe qu'en un seul exemplaire (modifie-le ou régénère son PDF ci-dessous).
+              </p>
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                <div className="w-full sm:flex-1 sm:min-w-[180px]">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Type de document</label>
+                  <select value={newDocType} onChange={(e) => setNewDocType(e.target.value as PilotageDocumentType)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    {(['projet', 'legal'] as const).map((fam) => {
+                      const opts = availableDocTypes.filter((t) => t.famille === fam)
+                      if (opts.length === 0) return null
+                      return (
+                        <optgroup key={fam} label={fam === 'projet' ? 'Documents projet' : 'Contrats légaux'}>
+                          {opts.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        </optgroup>
+                      )
+                    })}
+                  </select>
+                </div>
+                <button onClick={createDoc}
+                  className="flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition w-full sm:w-auto shrink-0">
+                  <PlusIcon className="w-4 h-4" /> Créer
+                </button>
               </div>
-              <button onClick={createDoc}
-                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
-                <PlusIcon className="w-4 h-4" /> Créer
-              </button>
-            </div>
+            )}
 
             {documents.length === 0 ? (
               <div className="text-center py-8 text-gray-400 text-sm">Aucun document pour ce contrat.</div>
             ) : (
               <div className="space-y-2">
-                {documents.map((d) => (
+                {documents.map((d) => {
+                  // PDF obsolète : le contenu du contrat a changé après la dernière génération
+                  const pdfStale = !!d.pdfUrl && !!d.pdfGeneeLe && (contrat.updatedAt?.toMillis?.() ?? 0) > d.pdfGeneeLe.toMillis()
+                  return (
                   <div key={d.id} className="flex items-center justify-between gap-2 border border-gray-100 rounded-xl p-3">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-800 truncate">{d.titre}</p>
@@ -309,6 +453,16 @@ export default function ContratPage() {
                             : d.statut === 'finalise' ? 'bg-blue-100 text-blue-700'
                               : 'bg-gray-100 text-gray-500'
                         }`}>{STATUT_DOC_LABELS[d.statut] ?? d.statut}</span>
+                        {d.pdfUrl && !pdfStale && (
+                          <span className="text-[10px] text-gray-400">
+                            PDF {d.pdfGeneeLe ? 'du ' + new Date(d.pdfGeneeLe.toMillis()).toLocaleDateString('fr-FR') : 'prêt'}
+                          </span>
+                        )}
+                        {pdfStale && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                            <ExclamationTriangleIcon className="w-3 h-3" /> Contenu modifié — à régénérer
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-1 shrink-0">
@@ -318,23 +472,140 @@ export default function ContratPage() {
                           <CheckIcon className="w-4 h-4" />
                         </button>
                       )}
-                      <button onClick={() => generatePilotageDocPdf(d, { company, projet: formProjet, legal: formLegal })} title="Télécharger le PDF"
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition">
-                        <ArrowDownTrayIcon className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => deleteDocument(d.id)} title="Supprimer"
+                      {d.pdfUrl ? (
+                        <>
+                          <button onClick={() => ouvrirPdf(d)} title="Ouvrir le PDF"
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition">
+                            <EyeIcon className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => genererPdf(d)} disabled={pdfBusy === d.id} title="Mettre à jour le PDF (régénérer)"
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition disabled:opacity-40">
+                            <ArrowPathIcon className={`w-4 h-4 ${pdfBusy === d.id ? 'animate-spin' : ''}`} />
+                          </button>
+                        </>
+                      ) : (
+                        <button onClick={() => genererPdf(d)} disabled={pdfBusy === d.id} title="Générer le PDF"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition disabled:opacity-40">
+                          <ArrowDownTrayIcon className={`w-4 h-4 ${pdfBusy === d.id ? 'animate-pulse' : ''}`} />
+                        </button>
+                      )}
+                      <button onClick={() => setDelDoc(d)} title="Supprimer"
                         className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition">
                         <TrashIcon className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
             <p className="text-[11px] text-gray-400">
-              Les documents projet (cahier des charges, bilan, besoins) partagent le <strong>contenu projet</strong> saisi sous l'onglet dédié. Le logo et les coordonnées viennent de ta société « {company?.nom ?? 'Solutions & Connect'} ». Pense à <strong>enregistrer</strong> le contenu avant d'exporter.
+              Les documents projet (cahier des charges, bilan, besoins) partagent le <strong>contenu projet</strong> saisi sous l'onglet dédié. Le logo et les coordonnées viennent de ta société « {company?.nom ?? 'Solutions & Connect'} ». Le PDF généré est <strong>conservé</strong> : <strong>Ouvrir</strong> ré-affiche le même fichier, <strong>Mettre à jour</strong> le régénère depuis le contenu actuel (pense à <strong>enregistrer</strong> tes modifications avant).
             </p>
+          </div>
+        )}
+
+        {tab === 'calculateur' && (
+          <div className="space-y-4">
+            {estEditingId === null ? (
+              <>
+                {/* Alerte : l'estimation validée n'est pas alignée avec les chiffres du contrat */}
+                {(() => {
+                  const sel = estimations.find((e) => e.id === estSelectedId)
+                  if (!sel) return null
+                  const t = computeTarif(stateFromEstimation(sel))
+                  const diffs: string[] = []
+                  if ((contrat.fraisMiseEnPlace ?? null) !== t.setup) diffs.push(`création contrat ${contrat.fraisMiseEnPlace != null ? fmtEur(contrat.fraisMiseEnPlace) : '—'} ≠ estimation ${fmtEur(t.setup)}`)
+                  if ((contrat.abonnementMensuel ?? null) !== t.abo) diffs.push(`abonnement contrat ${contrat.abonnementMensuel != null ? fmtEur(contrat.abonnementMensuel) : '—'} ≠ estimation ${fmtEur(t.abo)}`)
+                  if ((contrat.coutFirebaseMensuel ?? null) !== sel.infra) diffs.push(`coût infra contrat ${contrat.coutFirebaseMensuel != null ? fmtEur(contrat.coutFirebaseMensuel) : '—'} ≠ estimation ${fmtEur(sel.infra)}`)
+                  if (diffs.length === 0) return null
+                  return (
+                    <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                      <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                      <div className="text-xs text-amber-800">
+                        <p>L'estimation validée <strong>« {sel.label} »</strong> n'est pas identique aux chiffres saisis sur le contrat (seul le <strong>TJM</strong> est repris). Pour info :</p>
+                        <ul className="list-disc ml-4 mt-1 space-y-0.5 text-amber-700">{diffs.map((d, i) => <li key={i}>{d}</li>)}</ul>
+                        <button onClick={() => alignerContrat(sel)} className="mt-1.5 text-[11px] font-medium text-amber-800 underline hover:no-underline">Aligner les chiffres du contrat sur cette estimation</button>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {estimations.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400 text-sm">
+                    Aucune estimation. Crée-en une pour chiffrer ce contrat — tu peux en enregistrer plusieurs (ex. « client final » et « revendeur ») et comparer.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {estimations.map((e) => {
+                      const t = computeTarif(stateFromEstimation(e))
+                      const sel = e.id === estSelectedId
+                      return (
+                        <div key={e.id} className={`rounded-xl p-3 border ${sel ? 'border-blue-300 bg-blue-50/40' : 'border-gray-100'}`}>
+                          <div className="flex items-start justify-between gap-2 flex-wrap">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-semibold text-gray-800">{e.label}</p>
+                                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${e.mode === 'revente' ? 'bg-violet-100 text-violet-700' : 'bg-amber-100 text-amber-700'}`}>{e.mode === 'revente' ? 'Revendeur' : 'Client final'}</span>
+                                {sel && <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-600 text-white"><CheckIcon className="w-3 h-3" /> Validée</span>}
+                              </div>
+                              <p className="text-[11px] text-gray-500 mt-1">
+                                TJM <strong>{fmtEur(e.tjm)}</strong> · création <strong>{fmtEur(t.setup)}</strong> · {e.mode === 'revente' ? 'redevance' : 'abonnement'} <strong>{fmtEur(t.abo)}</strong>/mois
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {!sel && (
+                                <button onClick={() => validerEst(e)} title="Valider (pilote le TJM des tâches)"
+                                  className="text-xs font-medium text-blue-700 border border-blue-200 hover:bg-blue-50 px-2.5 py-1 rounded-lg transition">Valider</button>
+                              )}
+                              <button onClick={() => editEst(e)} title="Modifier"
+                                className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition"><PencilIcon className="w-4 h-4" /></button>
+                              <button onClick={() => setDelEstId(e.id)} title="Supprimer"
+                                className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition"><TrashIcon className="w-4 h-4" /></button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <button onClick={newEst}
+                    className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+                    <PlusIcon className="w-4 h-4" /> Nouvelle estimation
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400">
+                  <strong>Valider</strong> une estimation fixe le <strong>TJM</strong> utilisé pour chiffrer les tâches « à facturer ». Les autres chiffres du contrat (frais, abonnement, infra) ne changent pas automatiquement — une alerte s'affiche s'ils diffèrent.
+                </p>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Nom de l'estimation</label>
+                  <input value={estLabel} onChange={(e) => setEstLabel(e.target.value)} placeholder="ex : Client final, Revendeur…"
+                    className="w-full sm:max-w-xs border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <EstimateurTarif
+                  key={estEditingId}
+                  initial={estSeed}
+                  defaults={settings}
+                  onChange={(est, t) => setEstLive({ est, tarif: t })}
+                  footer={(
+                    <div className="mt-3 flex items-center gap-2">
+                      <button onClick={cancelEst}
+                        className="text-sm font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-4 py-1.5 rounded-lg transition">Annuler</button>
+                      <button onClick={saveEst} disabled={!estLive}
+                        className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition">
+                        <CheckIcon className="w-4 h-4" /> {estEditingId === 'new' ? 'Enregistrer l\'estimation' : 'Enregistrer les modifications'}
+                      </button>
+                    </div>
+                  )}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -370,25 +641,32 @@ export default function ContratPage() {
           </div>
         )}
 
+        {tab === 'charte' && (
+          <div className="space-y-4">
+            <EditBar editing={editing} onEdit={() => setEditing(true)} onCancel={cancelEdit} onSave={save} saveState={saveState} />
+            {editing ? <CharteEditor value={formCharte} onChange={setFormCharte} onUpload={uploadCharteFile} /> : <CharteApercu value={formCharte} />}
+          </div>
+        )}
+
         {tab === 'planning' && (
           <div className="space-y-4">
             <EditBar editing={editing} onEdit={() => setEditing(true)} onCancel={cancelEdit} onSave={save} saveState={saveState} />
             {editing ? (
               <div className="space-y-2">
                 <p className="text-[11px] text-gray-400 mb-2">Le champ « Étape » propose une liste déroulante (tape pour filtrer, ou saisis librement). La date se calcule depuis la précédente + le délai en jours ; saisis une date à la main pour la <strong>fixer</strong>. Réordonne avec les flèches.</p>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
                   {genConfirm ? (
-                    <span className="flex items-center gap-2 text-xs text-gray-600">
+                    <span className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
                       Remplacer le planning actuel ?
                       <button type="button" onClick={doGenerate} className="text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1.5 rounded-lg transition">Oui, générer</button>
                       <button type="button" onClick={() => setGenConfirm(false)} className="text-xs font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-2.5 py-1.5 rounded-lg transition">Annuler</button>
                     </span>
                   ) : (
-                    <button type="button" onClick={onGenerate} className="flex items-center gap-1.5 text-xs font-medium text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition">
+                    <button type="button" onClick={onGenerate} className="flex items-center justify-center gap-1.5 text-xs font-medium text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition w-full sm:w-auto">
                       <PlusIcon className="w-3.5 h-3.5" /> Générer un planning type
                     </button>
                   )}
-                  <button type="button" onClick={savePlanningModele} className="text-xs font-medium text-gray-600 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition">
+                  <button type="button" onClick={savePlanningModele} className="text-xs font-medium text-gray-600 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition w-full sm:w-auto">
                     {modeleSaved ? '✓ Modèle enregistré' : 'Enregistrer ce planning comme modèle'}
                   </button>
                 </div>
@@ -513,6 +791,34 @@ export default function ContratPage() {
           onCancel={() => setSignDoc(null)}
         />
       )}
+
+      <Modal isOpen={!!delDoc} onClose={() => setDelDoc(null)} title="Supprimer le document" size="sm">
+        <p className="text-sm text-gray-600">
+          Supprimer définitivement <strong>{delDoc?.titre}</strong> ? Le PDF généré et la signature éventuelle seront aussi effacés. Cette action est irréversible.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={() => setDelDoc(null)}
+            className="text-sm font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-4 py-1.5 rounded-lg transition">Annuler</button>
+          <button onClick={confirmDeleteDoc}
+            className="flex items-center gap-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 px-4 py-1.5 rounded-lg transition">
+            <TrashIcon className="w-4 h-4" /> Supprimer
+          </button>
+        </div>
+      </Modal>
+
+      <Modal isOpen={!!delEstId} onClose={() => setDelEstId(null)} title="Supprimer l'estimation" size="sm">
+        <p className="text-sm text-gray-600">
+          Supprimer définitivement l'estimation <strong>{estimations.find((e) => e.id === delEstId)?.label}</strong> ? Cette action est irréversible.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={() => setDelEstId(null)}
+            className="text-sm font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-4 py-1.5 rounded-lg transition">Annuler</button>
+          <button onClick={confirmDeleteEst}
+            className="flex items-center gap-1.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 px-4 py-1.5 rounded-lg transition">
+            <TrashIcon className="w-4 h-4" /> Supprimer
+          </button>
+        </div>
+      </Modal>
     </div>
   )
 }

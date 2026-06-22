@@ -1,4 +1,4 @@
-import type { PilotageDocument, PilotageDocumentType, Company } from '@/types'
+import type { PilotageDocument, PilotageDocumentType, Company, ChartGraphique } from '@/types'
 import { buildLegalDoc, defaultLegalFields, type LegalFields } from '@/lib/pilotageLegalTemplates'
 import { emptyProjetContent, projetSections, type ProjetContent } from '@/lib/pilotageProjetTemplates'
 
@@ -64,11 +64,17 @@ export function pilotageDocTypeLabel(t: PilotageDocumentType) {
 // Générateur PDF brandé S&C (logo + coordonnées société ; contenu projet partagé par le contrat)
 export async function generatePilotageDocPdf(
   docu: PilotageDocument,
-  opts: { company?: Company | null; projet?: ProjetContent | null; legal?: LegalFields | null } = {},
-) {
+  opts: { company?: Company | null; projet?: ProjetContent | null; legal?: LegalFields | null; charte?: ChartGraphique | null } = {},
+): Promise<{ blob: Blob; filename: string }> {
   const company = opts.company
   const { jsPDF } = await import('jspdf')
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' })
+  // Le PDF n'est plus téléchargé directement : on renvoie le blob + le nom de fichier.
+  // L'appelant décide de le stocker (Storage) et/ou de le télécharger.
+  const finalize = (name: string) => {
+    const safe = (name || 'document').replace(/[^a-z0-9]+/gi, '_')
+    return { blob: pdf.output('blob') as Blob, filename: `SC_${safe}_v${docu.version || '1.0'}.pdf` }
+  }
   const W = 210, margin = 18
   const teal: [number, number, number] = [21, 89, 110]
   const dark: [number, number, number] = [17, 24, 39]
@@ -147,9 +153,7 @@ export async function generatePilotageDocPdf(
         ensure(5); pdf.text(`Signé${docu.signatairePar ? ' par ' + docu.signatairePar : ''}${when}.`, margin, y)
       }
       footer()
-      const safeL = (docu.titre || meta.label).replace(/[^a-z0-9]+/gi, '_')
-      pdf.save(`SC_${safeL}_v${docu.version || '1.0'}.pdf`)
-      return
+      return finalize(docu.titre || meta.label)
     }
   }
 
@@ -248,6 +252,99 @@ export async function generatePilotageDocPdf(
       para('Contexte', { bold: true, size: 11 }); y += 1
       para(c.contexte || '[à compléter]'); y += 2
     }
+
+    // ── Charte & cadrage (cahier des charges) ──
+    const ch = opts.charte
+    const hasCharte = !!ch && (
+      (ch.objectifs?.length ?? 0) > 0 || ch.typeProjet || ch.nomApp || ch.publicCible ||
+      ch.usersMin != null || ch.usersMax != null || (ch.plateformes?.length ?? 0) > 0 || ch.domaine ||
+      (ch.langues?.length ?? 0) > 0 || (ch.couleurs?.length ?? 0) > 0 || (ch.typographie?.length ?? 0) > 0 ||
+      (ch.ton?.length ?? 0) > 0 || (ch.liens?.length ?? 0) > 0 || (ch.contraintes?.length ?? 0) > 0 ||
+      !!ch.notes || !!ch.logo?.url
+    )
+    if (cfg.charte && ch && hasCharte) {
+      const hexToRgb = (hex: string): [number, number, number] | null => {
+        const m = /^#?([0-9a-f]{6})$/i.exec((hex || '').trim())
+        if (!m) return null
+        const n = parseInt(m[1], 16)
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+      }
+      const typeLabel = !ch.typeProjet ? '' : ch.typeProjet === 'autre' ? (ch.typeAutre || 'Autre') : ch.typeProjet === 'site_web' ? 'Site web' : 'Application'
+      const PLAT: Record<string, string> = { ios: 'iOS', android: 'Android', web: 'Web' }
+      const plats = (ch.plateformes ?? []).map((p) => PLAT[p] ?? p).join(', ')
+      const users = ch.usersMin != null || ch.usersMax != null ? `${ch.usersMin ?? '?'} – ${ch.usersMax ?? '?'} utilisateurs` : ''
+
+      band('Charte & cadrage', dark)
+
+      if ((ch.objectifs?.length ?? 0) > 0) {
+        para('Objectifs du projet', { bold: true, size: 10 }); y += 1
+        ch.objectifs!.forEach((o) => drawRow([{ text: '•  ' + o, w: contentW }]))
+        y += 1
+      }
+
+      // Logo (image du projet/app, distincte du logo S&C en en-tête)
+      if (ch.logo?.url) {
+        const logoCharte = await fetchImageAsDataUrl(ch.logo.url)
+        if (logoCharte) {
+          try {
+            const lp = pdf.getImageProperties(logoCharte)
+            const rr = Math.min(40 / lp.width, 22 / lp.height)
+            const w = lp.width * rr, h = lp.height * rr
+            ensure(h + 4)
+            para('Logo', { bold: true, size: 10 })
+            pdf.addImage(logoCharte, 'PNG', margin, y, w, h)
+            y += h + 3
+          } catch { /* logo charte ignoré si illisible */ }
+        }
+      }
+
+      // Caractéristiques (clé / valeur)
+      const kv = ([
+        ['Type de projet', typeLabel],
+        ["Nom de l'application", ch.nomApp ?? ''],
+        ['Public cible', ch.publicCible ?? ''],
+        ['Utilisateurs envisagés', users],
+        ['Plateformes', plats],
+        ['Domaine souhaité', ch.domaine ?? ''],
+        ['Langues', (ch.langues ?? []).join(', ')],
+        ['Typographie(s)', (ch.typographie ?? []).join(', ')],
+        ['Ton / style', (ch.ton ?? []).join(', ')],
+      ] as [string, string][]).filter(([, v]) => v)
+      kv.forEach(([l, v]) => drawRow([
+        { text: l, w: 55, fill: teal, color: [255, 255, 255], bold: true },
+        { text: v, w: contentW - 55, fill: light },
+      ]))
+
+      // Couleurs (pastilles)
+      if ((ch.couleurs?.length ?? 0) > 0) {
+        y += 2
+        para('Couleurs', { bold: true, size: 10 }); y += 1
+        ch.couleurs!.forEach((co) => {
+          ensure(8)
+          const rgb = hexToRgb(co.hex)
+          if (rgb) { setFill(rgb); setDraw(border); pdf.rect(margin, y + 0.5, 6, 5, 'FD') }
+          setText(dark); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9)
+          pdf.text(`${co.label || 'Couleur'}   ${co.hex || ''}`, margin + 9, y + 4.5)
+          y += 8
+        })
+      }
+
+      // Listes
+      if ((ch.contraintes?.length ?? 0) > 0) {
+        y += 1; para('Contraintes & spécifications techniques', { bold: true, size: 10 }); y += 1
+        ch.contraintes!.forEach((l) => drawRow([{ text: '•  ' + l, w: contentW }]))
+      }
+      if ((ch.liens?.length ?? 0) > 0) {
+        y += 1; para('Liens / références', { bold: true, size: 10 }); y += 1
+        ch.liens!.forEach((l) => drawRow([{ text: '•  ' + l, w: contentW }]))
+      }
+      if (ch.notes) {
+        y += 2; para('Notes / contraintes de marque', { bold: true, size: 10 }); y += 1
+        para(ch.notes)
+      }
+      y += 2
+    }
+
     if (cfg.fonctionnalites) {
       band('Fonctionnalités', dark)
       if (c.fonctionnalites.length === 0) emptyRow()
@@ -297,9 +394,7 @@ export async function generatePilotageDocPdf(
     if (cfg.tachesSC) tachesTable(`Tâches de ${fNom}`, taches.filter((t) => (t.pour ?? 'sc') === 'sc'))
 
     footer()
-    const safeP = (docu.titre || meta.label).replace(/[^a-z0-9]+/gi, '_')
-    pdf.save(`SC_${safeP}_v${docu.version || '1.0'}.pdf`)
-    return
+    return finalize(docu.titre || meta.label)
   }
 
   // Titre
@@ -359,6 +454,5 @@ export async function generatePilotageDocPdf(
   setText(gray); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8)
   pdf.text(footerLine, W / 2, footY + 4, { align: 'center' })
 
-  const safe = (docu.titre || meta?.label || 'document').replace(/[^a-z0-9]+/gi, '_')
-  pdf.save(`SC_${safe}_v${docu.version || '1.0'}.pdf`)
+  return finalize(docu.titre || meta?.label || 'document')
 }

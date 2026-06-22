@@ -266,6 +266,29 @@ export interface ProjetContent {
   taches: ProjetTache[]     // liste unique ; chaque tâche indique si elle est « pour » le client ou pour moi
 }
 
+// Charte graphique & cadrage du projet (onglet dédié du contrat)
+export interface ChartCouleur { label: string; hex: string }
+export interface ChartGraphique {
+  objectifs?: string[]                                          // objectifs du projet (liste)
+  typeProjet?: 'application' | 'site_web' | 'autre' | 'app_mobile' | 'app_web'  // application / site / autre (app_mobile & app_web = legacy)
+  typeAutre?: string                                            // précision libre si typeProjet === 'autre'
+  nomApp?: string
+  publicCible?: string
+  usersMin?: number                                             // nb d'utilisateurs envisagé (bornes)
+  usersMax?: number
+  plateformes?: string[]                                        // 'ios' | 'android' | 'web'
+  domaine?: string                                              // nom de domaine souhaité
+  langues?: string[]                                            // liste (avec drapeaux), présélections
+  couleurs?: ChartCouleur[]                                     // primaire / secondaire / accent…
+  typographie?: string[]                                        // liste de polices
+  ton?: string[]                                                // liste : moderne, sobre, fun…
+  liens?: string[]                                              // références / inspirations
+  contraintes?: string[]                                        // contraintes & spécifications techniques (liste)
+  notes?: string                                                // contraintes de marque, do/don't…
+  logo?: { name: string; url: string }                         // logo (élément à part entière, Storage)
+  fichiers?: { name: string; url: string }[]                   // autres images/fichiers (Storage)
+}
+
 // Snapshot des entrées du calculateur de tarif, attaché au contrat pour pouvoir rouvrir/ajuster le calcul.
 export interface PilotageEstimationFeature { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl' }
 export interface PilotageEstimation {
@@ -282,7 +305,15 @@ export interface PilotageEstimation {
   premiumRevente: number
   nbClientsFinaux: number
   prixReventeMensuel: number
+  outilsMensuel?: number   // coût mensuel des outils/abonnements (ex : Claude Code) — dilué dans le prix
+  joursFactures?: number   // jours facturés / an (pour répartir le coût des outils sur la journée)
   features: PilotageEstimationFeature[]
+}
+
+// Estimation nommée enregistrée sur un contrat (plusieurs possibles, ex : « client final » / « revendeur »)
+export interface SavedEstimation extends PilotageEstimation {
+  id: string
+  label: string
 }
 
 // Collection : pilotage_contrats (pilotage de l'activité — contrats clients pro)
@@ -298,6 +329,7 @@ export interface PilotageContrat {
   fraisMiseEnPlace?: number     // frais ponctuels au démarrage
   abonnementMensuel?: number    // revenu récurrent /mois
   coutFirebaseMensuel?: number  // coût d'infra estimé /mois (pour la marge)
+  tjm?: number                  // TJM du contrat (sert au prix des tâches « à facturer ») ; sinon estimation.tjm puis réglage global
   dateDebut?: Timestamp
   premiereAnnee?: boolean       // tarif « 1ère année » → à revoir ensuite
   tarifAnnee2Defini?: boolean   // le tarif année 2 a-t-il été décidé ?
@@ -307,7 +339,10 @@ export interface PilotageContrat {
   notes?: string
   projet?: ProjetContent       // contenu projet partagé (rempli une fois, réutilisé par les documents)
   legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)
-  estimation?: PilotageEstimation // snapshot du calculateur de tarif (pour rouvrir/ajuster le calcul)
+  charte?: ChartGraphique      // charte graphique & cadrage (type, couleurs, utilisateurs, contraintes…)
+  estimation?: PilotageEstimation // (legacy) snapshot unique du calculateur — voir `estimations`
+  estimations?: SavedEstimation[] // plusieurs estimations nommées à comparer (calculateur de la fiche contrat)
+  estimationSelectedId?: string | null // estimation « validée » → son TJM pilote les tâches à facturer
   createdAt: Timestamp
   updatedAt?: Timestamp
 }
@@ -341,6 +376,9 @@ export interface PilotageDocument {
   signeLe?: Timestamp | null
   signatairePar?: string | null
   signatureUrl?: string | null        // image de la signature (Storage)
+  pdfUrl?: string | null               // PDF généré stocké (Storage) — ouvert tel quel, régénérable
+  pdfNom?: string                      // nom de fichier du PDF stocké
+  pdfGeneeLe?: Timestamp | null        // date de génération du PDF stocké
   createdAt: Timestamp
   updatedAt?: Timestamp
 }
@@ -360,6 +398,8 @@ export interface PilotageSettings {
   premiumRevente?: number      // % en plus sur la création (droits commerciaux)
   nbClientsFinaux?: number     // clients finaux visés par le revendeur
   prixReventeMensuel?: number  // prix de revente par client final /mois
+  outilsMensuel?: number       // coût mensuel des outils/abonnements (ex : Claude Code), dilué dans le prix
+  joursFactures?: number       // jours facturés / an (pour répartir le coût des outils)
   // Liste de fonctionnalités de départ du calculateur (durée/complexité par défaut)
   features?: { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl' }[]
   // Étapes-types proposées dans le planning prévisionnel (liste déroulante éditable)
