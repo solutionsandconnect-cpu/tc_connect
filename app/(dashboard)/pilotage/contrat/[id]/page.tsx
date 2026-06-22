@@ -16,7 +16,7 @@ import SignaturePad from '@/components/ui/SignaturePad'
 import { generatePilotageDocPdf, PILOTAGE_DOC_TYPES, STATUT_DOC_LABELS } from '@/lib/pilotageDocPdf'
 import { defaultLegalFields, legalFieldGroupsAll, type LegalFields } from '@/lib/pilotageLegalTemplates'
 import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, DEFAULT_PLANNING_TEMPLATE, generatePlanningFromTemplate, type ProjetContent } from '@/lib/pilotageProjetTemplates'
-import { StringListEditor, FonctionsEditor, PlanningEditor, HorsPerimetreEditor, TachesEditor, TachesApercu, PlanningApercu, ProjetApercu } from '@/components/pilotage/ProjetUI'
+import { StringListEditor, FonctionsEditor, PlanningEditor, HorsPerimetreEditor, TacheAjoutForm, TachesApercu, PlanningApercu, ProjetApercu, tauxHoraireFromTjm, prixFacture, estEnRetard } from '@/components/pilotage/ProjetUI'
 import type { PilotageDocument, PilotageDocumentType } from '@/types'
 import {
   ArrowLeftIcon, TrashIcon, PlusIcon, CheckIcon, ArrowDownTrayIcon, ExclamationTriangleIcon, PencilIcon,
@@ -119,6 +119,7 @@ export default function ContratPage() {
   const planningTemplate = settings?.planningTemplate?.length ? settings.planningTemplate : DEFAULT_PLANNING_TEMPLATE
   const [genConfirm, setGenConfirm] = useState(false)
   const [modeleSaved, setModeleSaved] = useState(false)
+  const [showAjout, setShowAjout] = useState(false)   // onglet Tâches : afficher le formulaire d'ajout
   const todayStr = () => { const d = new Date(); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` }
   const doGenerate = () => { updP({ planning: generatePlanningFromTemplate(planningTemplate, todayStr()) }); setGenConfirm(false) }
   const onGenerate = () => { if (formProjet.planning.length > 0) setGenConfirm(true); else doGenerate() }
@@ -135,6 +136,12 @@ export default function ContratPage() {
 
   const updP = (patch: Partial<ProjetContent>) => setFormProjet((p) => ({ ...p, ...patch }))
   const updL = (k: keyof LegalFields, v: string) => setFormLegal((f) => ({ ...f, [k]: v }))
+  // Taux horaire (TJM ÷ 7) — TJM de CE contrat (estimation rattachée) en priorité, sinon valeur par défaut globale
+  const tauxHoraire = tauxHoraireFromTjm(contrat?.estimation?.tjm ?? settings?.tjm ?? 500)
+  const aFacturer = (formProjet.taches ?? []).filter((t) => t.facturation === 'facturer' && !t.facturee)
+  const totalAFacturer = aFacturer.reduce((s, t) => s + (prixFacture(t, tauxHoraire) ?? 0), 0)
+  const aujourdhui = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` })()
+  const enRetard = (formProjet.taches ?? []).filter((t) => estEnRetard(t, aujourdhui))
 
   // (Ré)initialise les formulaires depuis le contrat enregistré (prestataire = société, client = fiche client, puis sauvegardé)
   const resetForms = useCallback(() => {
@@ -264,16 +271,6 @@ export default function ContratPage() {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
         {tab === 'documents' && (
           <div className="space-y-4">
-            <details className="group bg-indigo-50/50 border border-indigo-100 rounded-xl">
-              <summary className="cursor-pointer list-none flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-indigo-800">
-                <span className="inline-block text-indigo-400 transition group-open:rotate-90">▸</span> Une demande du client : inclus, maintenance ou avenant ?
-              </summary>
-              <div className="px-3 pb-3 text-xs text-indigo-900/80 space-y-1.5">
-                <p>✅ <strong>Compris</strong> (gratuit) : ajustements de la maquette validée, corrections de bugs, retouches mineures dans le périmètre.</p>
-                <p>🔧 <strong>Maintenance / abonnement</strong> (déjà payé) : petites évolutions récurrentes, mises à jour techniques, support.</p>
-                <p>💶 <strong>Avenant</strong> (facturé en plus) : nouvelle fonctionnalité hors périmètre validé. Regroupe les petites demandes en <strong>un lot</strong> — jamais à l'unité, minimum ½ journée à ton TJM. Crée un document « Avenant (évolutions) » ci-dessous.</p>
-              </div>
-            </details>
             <div className="flex items-end gap-2 flex-wrap">
               <div className="flex-1 min-w-[180px]">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Type de document</label>
@@ -467,18 +464,41 @@ export default function ContratPage() {
 
         {tab === 'taches' && (
           <div className="space-y-4">
-            <EditBar editing={editing} onEdit={() => setEditing(true)} onCancel={cancelEdit} onSave={save} saveState={saveState} />
-            {editing ? (
-              <div className="space-y-4">
-                <div className="flex items-start gap-2 bg-purple-50 border border-purple-100 rounded-xl px-3 py-2.5">
-                  <CheckIcon className="w-4 h-4 text-purple-500 shrink-0 mt-0.5" />
-                  <p className="text-xs text-purple-800">Une seule liste : pour chaque tâche, indique avec les pastilles si c'est à <strong>toi</strong> ou au <strong>client</strong> de la faire. Les tâches « client » alimentent le « Besoins client », toutes alimentent le « Bilan ».</p>
-                </div>
-                <TachesEditor items={formProjet.taches} onChange={(v) => updP({ taches: v })} />
+            <details className="group bg-indigo-50/50 border border-indigo-100 rounded-xl">
+              <summary className="cursor-pointer list-none flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-indigo-800">
+                <span className="inline-block text-indigo-400 transition group-open:rotate-90">▸</span> Une demande du client : inclus, maintenance ou à facturer ?
+              </summary>
+              <div className="px-3 pb-3 text-xs text-indigo-900/80 space-y-1.5">
+                <p>✅ <strong>Inclus</strong> (gratuit) : ajustements de la maquette validée, corrections de bugs, retouches mineures dans le périmètre.</p>
+                <p>🔧 <strong>Maintenance</strong> (déjà payé via l'abo) : petites évolutions récurrentes, mises à jour techniques, support.</p>
+                <p>💶 <strong>À facturer</strong> (en plus) : nouvelle fonctionnalité hors périmètre validé. Mets la pastille « Facturer » sur la tâche + le temps → le prix est proposé, puis facture-la dans ta section <strong>Facturation</strong> et coche « facturée ».</p>
               </div>
-            ) : (
-              <TachesApercu taches={formProjet.taches} onChange={(v) => persistProjet({ taches: v })} />
+            </details>
+            {enRetard.length > 0 && (
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-800">
+                  <strong>{enRetard.length} tâche{enRetard.length > 1 ? 's' : ''} en retard</strong> (échéance dépassée, non terminée). Filtre « En retard » pour les voir, puis avance-les ou décale la date.
+                </p>
+              </div>
             )}
+            {aFacturer.length > 0 && (
+              <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2.5">
+                <ExclamationTriangleIcon className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-rose-800">
+                  <strong>{aFacturer.length} évolution{aFacturer.length > 1 ? 's' : ''} à facturer</strong>{totalAFacturer > 0 ? <> · ≈ <strong>{totalAFacturer} €</strong></>: null} — pense à les ajouter dans ta section <strong>Facturation</strong>, puis coche « facturée ».
+                </p>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button type="button" onClick={() => setShowAjout((v) => !v)}
+                className={`flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg transition ${showAjout ? 'border border-gray-300 text-gray-600 hover:bg-gray-50' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
+                {showAjout ? 'Fermer' : <><PlusIcon className="w-4 h-4" /> Ajouter une tâche</>}
+              </button>
+            </div>
+            {showAjout && <TacheAjoutForm items={formProjet.taches} onChange={(v) => persistProjet({ taches: v })} tauxHoraire={tauxHoraire} />}
+            <p className="text-[11px] text-gray-400">Modifie chaque tâche directement dans la liste (statut, Moi/Client, date, facturation, terminée…). Les changements sont enregistrés automatiquement.</p>
+            <TachesApercu taches={formProjet.taches} onChange={(v) => persistProjet({ taches: v })} tauxHoraire={tauxHoraire} />
           </div>
         )}
 

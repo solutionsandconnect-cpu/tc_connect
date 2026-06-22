@@ -50,7 +50,6 @@ export const PILOTAGE_DOC_TYPES: {
   { value: 'prestation', label: 'Contrat de prestation', famille: 'legal', titrePdf: 'Contrat de prestation de services' },
   { value: 'dpa_rgpd', label: 'Accord RGPD (DPA)', famille: 'legal', titrePdf: 'Accord de sous-traitance RGPD (DPA)' },
   { value: 'licence', label: 'Licence / cession de droits', famille: 'legal', titrePdf: 'Contrat de licence / cession de droits' },
-  { value: 'avenant', label: 'Avenant (évolutions)', famille: 'legal', titrePdf: 'Avenant au contrat de prestation' },
   // 'cgv' volontairement absent : tes CGV figurent déjà sur tes devis/factures (pas de doublon)
 ]
 

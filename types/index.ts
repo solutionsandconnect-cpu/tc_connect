@@ -238,10 +238,6 @@ export interface LegalFields {
   duree: string
   // Forfait d'ajustements inclus après validation de la maquette (clause du contrat de prestation)
   ajustementsInclus: string
-  // Avenant (lot d'évolutions hors périmètre, facturé en plus)
-  avenantObjet: string
-  avenantPrix: string
-  avenantDelai: string
 }
 
 // Contenu structuré « projet » (partagé par le contrat, réutilisé par les documents)
@@ -254,7 +250,13 @@ export interface ProjetPlanning {
   ancre?: boolean         // true = date fixée à la main (non recalculée)
   responsable: string     // 'Développeur' | 'Client' | 'Les deux' (chips ; texte libre toléré pour l'existant)
 }
-export interface ProjetTache { description: string; date: string; fait: boolean; pour: 'client' | 'sc' } // pour = qui réalise la tâche (client ou moi/S&C)
+export interface ProjetTache {
+  description: string; date: string; fait: boolean
+  pour: 'client' | 'sc'                                  // qui réalise la tâche (client ou moi/S&C)
+  facturation?: 'inclus' | 'maintenance' | 'facturer'    // statut de facturation (évolution payante ?)
+  tempsH?: number                                        // temps estimé en heures (si « à facturer ») → prix = tempsH × TJM/7
+  facturee?: boolean                                     // déjà facturée (sort de l'alerte « à facturer »)
+}
 export interface ProjetContent {
   contexte: string
   fonctionnalites: ProjetFonction[]
@@ -322,7 +324,7 @@ export interface PilotageCatalogueItem {
 // Collection : pilotage_documents (documents projet & contrats légaux reliés à un contrat)
 export type PilotageDocumentType =
   | 'cahier_charges' | 'besoins_client' | 'bilan'   // documents projet
-  | 'prestation' | 'dpa_rgpd' | 'cgv' | 'licence' | 'avenant'   // contrats légaux
+  | 'prestation' | 'dpa_rgpd' | 'cgv' | 'licence'   // contrats légaux
 
 export type PilotageDocumentStatut = 'brouillon' | 'finalise' | 'signe'
 

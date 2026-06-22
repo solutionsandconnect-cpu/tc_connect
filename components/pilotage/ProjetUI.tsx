@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { PlusIcon, TrashIcon, ChevronUpIcon, ChevronDownIcon, CheckIcon, PencilIcon } from '@heroicons/react/24/outline'
 import type { ProjetFonction, ProjetPlanning, ProjetTache, ProjetContent } from '@/types'
 import { RESPONSABLES_PLANNING, recalcPlanning, HORS_PERIMETRE_DEFAUT, DEFAULT_PLANNING_ETAPES } from '@/lib/pilotageProjetTemplates'
+import Modal from '@/components/ui/Modal'
 
 const inputCls = 'flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const delBtn = 'p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition shrink-0'
@@ -23,6 +24,20 @@ function planningDotColor(dateIso: string, today: string): string {
   if (dateIso === today) return 'bg-amber-400'  // aujourd'hui
   return 'bg-gray-300'                            // à venir
 }
+// Date ISO calculée à partir d'aujourd'hui (+ jours / + mois) — pour la date par défaut et les chips rapides
+function isoFromToday(days: number, months = 0): string {
+  const d = new Date()
+  d.setMonth(d.getMonth() + months)
+  d.setDate(d.getDate() + days)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+const DATE_CHIPS = [
+  { l: '+1 j', days: 1, months: 0 },
+  { l: '+7 j', days: 7, months: 0 },
+  { l: '+2 sem', days: 14, months: 0 },
+  { l: '+1 mois', days: 0, months: 1 },
+] as const
 
 export function StringListEditor({ items, onChange, placeholder }: { items: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
   return (
@@ -229,118 +244,150 @@ function PourChips({ value, onChange }: { value: 'client' | 'sc'; onChange: (v: 
 
 const FILTRES_POUR = [{ k: 'tous', l: 'Tous' }, { k: 'sc', l: 'Moi' }, { k: 'client', l: 'Client' }] as const
 
-export function TachesEditor({ items, onChange }: { items: ProjetTache[]; onChange: (v: ProjetTache[]) => void }) {
-  const upd = (i: number, patch: Partial<ProjetTache>) => onChange(items.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-  // Formulaire d'ajout (en haut), une seule liste : chaque tâche indique qui la réalise (Moi / Client).
+// Statut de facturation d'une tâche : Inclus (gratuit) / Maintenance (abo) / À facturer (évolution payante)
+type Facturation = 'inclus' | 'maintenance' | 'facturer'
+const FACTURATION_OPTS = [
+  { k: 'inclus', l: 'Inclus', title: 'Compris dans le devis (gratuit)', on: 'bg-emerald-500 border-emerald-500 text-white' },
+  { k: 'maintenance', l: 'Maint.', title: 'Couvert par la maintenance / abonnement', on: 'bg-slate-500 border-slate-500 text-white' },
+  { k: 'facturer', l: 'Facturer', title: 'Évolution payante — à facturer en plus', on: 'bg-rose-500 border-rose-500 text-white' },
+] as const
+
+function FacturationChips({ value, onChange }: { value?: Facturation; onChange: (v?: Facturation) => void }) {
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      {FACTURATION_OPTS.map((f) => {
+        const on = value === f.k
+        return (
+          <button key={f.k} type="button" title={f.title} onClick={() => onChange(on ? undefined : f.k)}
+            className={`text-[11px] px-2 py-0.5 rounded-full border transition ${on ? f.on : 'bg-white border-gray-300 text-gray-500 hover:border-gray-400'}`}>{f.l}</button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Badge (lecture seule) du statut de facturation
+const FAC_BADGE: Record<Facturation, { l: string; c: string }> = {
+  inclus: { l: 'Inclus', c: 'bg-emerald-100 text-emerald-700' },
+  maintenance: { l: 'Maint.', c: 'bg-slate-100 text-slate-600' },
+  facturer: { l: 'À facturer', c: 'bg-rose-100 text-rose-700' },
+}
+
+// Taux horaire facturable (jour ≈ 7 h, comme l'estimateur) et prix proposé d'une tâche « à facturer »
+export const tauxHoraireFromTjm = (tjm: number) => Math.round(tjm / 7)
+export function prixFacture(t: ProjetTache, tauxHoraire: number): number | null {
+  if (t.facturation !== 'facturer' || !t.tempsH) return null
+  return Math.round(t.tempsH * tauxHoraire)
+}
+
+// Tâche en retard : date passée et non terminée
+export const estEnRetard = (t: ProjetTache, today: string) => !!t.date && t.date < today && !t.fait
+
+// Filtres par date des tâches
+const FILTRES_DATE = [
+  { k: 'toutes', l: 'Toutes' },
+  { k: 'retard', l: 'En retard' },
+  { k: 'passe', l: 'Passé' },
+  { k: 'aujourdhui', l: "Aujourd'hui" },
+  { k: 'demain', l: 'Demain' },
+  { k: 'semaine', l: '7 jours' },
+  { k: 'mois', l: '30 jours' },
+  { k: 'avenir', l: 'À venir' },
+  { k: 'sansdate', l: 'Sans date' },
+] as const
+type FiltreDate = typeof FILTRES_DATE[number]['k']
+function matchDateFilter(t: ProjetTache, f: FiltreDate): boolean {
+  const today = isoFromToday(0)
+  if (f === 'toutes') return true
+  if (f === 'sansdate') return !t.date
+  if (f === 'retard') return estEnRetard(t, today)
+  if (f === 'passe') return !!t.date && t.date < today    // toute échéance passée (terminée ou non)
+  if (f === 'aujourdhui') return t.date === today
+  if (f === 'demain') return t.date === isoFromToday(1)
+  if (f === 'semaine') return !!t.date && t.date >= today && t.date <= isoFromToday(7)
+  if (f === 'mois') return !!t.date && t.date >= today && t.date <= isoFromToday(30)
+  if (f === 'avenir') return !!t.date && t.date > today
+  return true
+}
+
+// Formulaire d'ajout de tâches (uniquement : une tâche ou collage en masse). La modification se fait dans la liste lecture seule.
+export function TacheAjoutForm({ items, onChange, tauxHoraire = 71 }: { items: ProjetTache[]; onChange: (v: ProjetTache[]) => void; tauxHoraire?: number }) {
   const [newDesc, setNewDesc] = useState('')
-  const [newDate, setNewDate] = useState('')
+  const [newDate, setNewDate] = useState(isoFromToday(0))
   const [newPour, setNewPour] = useState<'client' | 'sc'>('sc')
+  const [newFact, setNewFact] = useState<Facturation | undefined>('inclus')
+  const [newTempsH, setNewTempsH] = useState('')
   const addOne = () => {
     const d = newDesc.trim()
     if (!d) return
-    onChange([{ description: d, date: newDate, fait: false, pour: newPour }, ...items]) // ajoutée en tête
-    setNewDesc(''); setNewDate('')  // on garde « pour » sélectionné pour enchaîner
+    const t: ProjetTache = { description: d, date: newDate, fait: false, pour: newPour }
+    if (newFact) t.facturation = newFact
+    if (newFact === 'facturer' && newTempsH) t.tempsH = Math.max(0, parseFloat(newTempsH) || 0)
+    onChange([t, ...items])
+    setNewDesc(''); setNewDate(isoFromToday(0)); setNewTempsH('')
   }
-  const [search, setSearch] = useState('')
-  const [filtre, setFiltre] = useState<'tous' | 'client' | 'sc'>('tous')
-  const [confirmIdx, setConfirmIdx] = useState<number | null>(null)
   const [bulk, setBulk] = useState('')
   const [bulkPour, setBulkPour] = useState<'client' | 'sc'>('sc')
+  const [bulkFact, setBulkFact] = useState<Facturation | undefined>('inclus')
+  const [bulkTempsH, setBulkTempsH] = useState('')
   const addBulk = () => {
-    const rows = bulk.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const tempsH = bulkFact === 'facturer' && bulkTempsH ? Math.max(0, parseFloat(bulkTempsH) || 0) : undefined
+    const rows: ProjetTache[] = bulk.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
       const [desc, date] = l.split('|').map((s) => s.trim())
-      return { description: desc, date: toIsoDate(date || ''), fait: false, pour: bulkPour }
+      return { description: desc, date: toIsoDate(date || '') || isoFromToday(0), fait: false, pour: bulkPour, facturation: bulkFact, tempsH }
     })
     if (rows.length) onChange([...items, ...rows])
     setBulk('')
   }
-
-  const q = search.trim().toLowerCase()
-  const indexed = items.map((t, idx) => ({ t, idx }))
-    .filter(({ t }) => filtre === 'tous' || (t.pour ?? 'sc') === filtre)
-    .filter(({ t }) => !q || t.description.toLowerCase().includes(q))
-  const todo = indexed.filter(({ t }) => !t.fait)
-  const done = indexed.filter(({ t }) => t.fait)
-
-  const renderRow = (t: ProjetTache, idx: number) => (
-    <div key={idx} className="flex flex-wrap gap-2 items-center">
-      <button type="button" onClick={() => upd(idx, { fait: !t.fait })} title={t.fait ? 'Marquer à faire' : 'Marquer terminée'}
-        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 border-2 transition ${t.fait ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 hover:border-emerald-400'}`}>
-        {t.fait && <CheckIcon className="w-3 h-3" />}
-      </button>
-      <input value={t.description} placeholder="Description" onChange={(e) => upd(idx, { description: e.target.value })}
-        className={`flex-1 min-w-[140px] border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${t.fait ? 'text-gray-400' : ''}`} />
-      <PourChips value={t.pour ?? 'sc'} onChange={(v) => upd(idx, { pour: v })} />
-      <input type="date" value={t.date} onChange={(e) => upd(idx, { date: e.target.value })} className="w-36 shrink-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-      {confirmIdx === idx ? (
-        <span className="flex items-center gap-1 shrink-0">
-          <span className="text-[11px] text-gray-500">Supprimer ?</span>
-          <button type="button" onClick={() => { onChange(items.filter((_, j) => j !== idx)); setConfirmIdx(null) }} className="text-xs font-medium text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-lg transition">Oui</button>
-          <button type="button" onClick={() => setConfirmIdx(null)} className="text-xs font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-2 py-1 rounded-lg transition">Non</button>
-        </span>
-      ) : (
-        <button type="button" onClick={() => setConfirmIdx(idx)} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
-      )}
-    </div>
-  )
-
   return (
-    <div className="space-y-3">
-      {/* Formulaire d'ajout — en haut */}
-      <div className="flex flex-wrap gap-2 items-center rounded-lg border border-dashed border-gray-300 bg-gray-50 p-2">
-        <input value={newDesc} placeholder="Nouvelle tâche…" onChange={(e) => setNewDesc(e.target.value)}
+    <div className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+      <div className="flex flex-wrap gap-2 items-center">
+        <input value={newDesc} placeholder="Nouvelle tâche…" autoFocus onChange={(e) => setNewDesc(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addOne() } }}
           className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
         <PourChips value={newPour} onChange={setNewPour} />
+        <FacturationChips value={newFact} onChange={setNewFact} />
+        {newFact === 'facturer' && (
+          <span className="flex items-center gap-1.5 shrink-0">
+            <input type="number" min={0} step={0.5} value={newTempsH} placeholder="h" title="Temps estimé (heures)"
+              onChange={(e) => setNewTempsH(e.target.value)}
+              className="w-14 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            {newTempsH && <span className="text-[11px] font-medium text-rose-600">≈ {Math.round((parseFloat(newTempsH) || 0) * tauxHoraire)} €</span>}
+          </span>
+        )}
         <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)}
           className="w-36 shrink-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        <div className="flex items-center gap-1">
+          {DATE_CHIPS.map((c) => (
+            <button key={c.l} type="button" onClick={() => setNewDate(isoFromToday(c.days, c.months))}
+              className="text-[11px] px-2 py-1 rounded-full border border-gray-300 bg-white text-gray-600 hover:border-blue-400 transition">{c.l}</button>
+          ))}
+        </div>
         <button type="button" onClick={addOne} disabled={!newDesc.trim()}
           className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 px-3 py-1.5 rounded-lg transition shrink-0">
           <PlusIcon className="w-4 h-4" /> Ajouter
         </button>
       </div>
-
-      {/* Recherche + filtre par responsable */}
-      {items.length > 0 && (
-        <div className="flex flex-wrap gap-2 items-center">
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher une tâche…"
-            className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          <div className="flex items-center gap-1 shrink-0">
-            {FILTRES_POUR.map((f) => (
-              <button key={f.k} type="button" onClick={() => setFiltre(f.k)}
-                className={`text-xs px-2.5 py-1 rounded-full border transition ${filtre === f.k ? 'bg-gray-800 border-gray-800 text-white' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}>{f.l}</button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* À faire */}
-      {items.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">À faire ({todo.length})</p>
-          {todo.length === 0 ? <p className="text-xs text-gray-400">Aucune.</p> : todo.map(({ t, idx }) => renderRow(t, idx))}
-        </div>
-      )}
-
-      {/* Terminées (repliable) */}
-      {done.length > 0 && (
-        <details className="group">
-          <summary className="cursor-pointer text-[11px] font-semibold text-gray-500 uppercase tracking-wide list-none flex items-center gap-1.5">
-            <span className="inline-block transition group-open:rotate-90">▸</span> Terminées ({done.length})
-          </summary>
-          <div className="space-y-1.5 mt-1.5">{done.map(({ t, idx }) => renderRow(t, idx))}</div>
-        </details>
-      )}
-
-      {/* Ajout rapide (plusieurs lignes) */}
       <details className="group">
         <summary className="cursor-pointer text-[11px] font-medium text-indigo-700 list-none flex items-center gap-1.5">
           <span className="inline-block transition group-open:rotate-90">▸</span> Ajout rapide (colle plusieurs lignes)
         </summary>
         <div className="mt-2 space-y-1.5">
-          <div className="flex items-center gap-2 text-xs text-gray-500">Pour : <PourChips value={bulkPour} onChange={setBulkPour} /></div>
+          <p className="text-[11px] text-gray-400">Ces réglages s'appliquent à <strong>toutes</strong> les lignes collées (tu ajustes ensuite chaque tâche si besoin).</p>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+            <span className="flex items-center gap-2">Pour : <PourChips value={bulkPour} onChange={setBulkPour} /></span>
+            <span className="flex items-center gap-2">Statut : <FacturationChips value={bulkFact} onChange={setBulkFact} /></span>
+            {bulkFact === 'facturer' && (
+              <span className="flex items-center gap-1.5">
+                <input type="number" min={0} step={0.5} value={bulkTempsH} placeholder="h" title="Temps par tâche (heures)"
+                  onChange={(e) => setBulkTempsH(e.target.value)}
+                  className="w-14 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                {bulkTempsH && <span className="text-[11px] font-medium text-rose-600">≈ {Math.round((parseFloat(bulkTempsH) || 0) * tauxHoraire)} € / tâche</span>}
+              </span>
+            )}
+          </div>
           <textarea rows={4} value={bulk} onChange={(e) => setBulk(e.target.value)}
-            placeholder={'Une tâche par ligne. Date en option après « | ».\nEx :\nEnvoyer la maquette | 21/11\nCréer la base de données\nFormation utilisateurs | 30/03'}
+            placeholder={'Une tâche par ligne. Date en option après « | » (sinon aujourd\'hui).\nEx :\nEnvoyer la maquette | 21/11\nCréer la base de données\nFormation utilisateurs | 30/03'}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" />
           <button type="button" onClick={addBulk} disabled={!bulk.trim()}
             className="flex items-center gap-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 px-3 py-1.5 rounded-lg transition">
@@ -353,20 +400,24 @@ export function TachesEditor({ items, onChange }: { items: ProjetTache[]; onChan
 }
 
 // Vue lecture seule des tâches : recherche + filtres + sections, avec édition/suppression par ligne (sauvegarde immédiate via onChange)
-export function TachesApercu({ taches, onChange }: { taches: ProjetTache[]; onChange?: (v: ProjetTache[]) => void }) {
+export function TachesApercu({ taches, onChange, tauxHoraire = 71 }: { taches: ProjetTache[]; onChange?: (v: ProjetTache[]) => void; tauxHoraire?: number }) {
   const [search, setSearch] = useState('')
   const [filtre, setFiltre] = useState<'tous' | 'client' | 'sc'>('tous')
+  const [filtreDate, setFiltreDate] = useState<FiltreDate>('toutes')
+  const today = isoFromToday(0)
   const [editIdx, setEditIdx] = useState<number | null>(null)
   const [draft, setDraft] = useState<ProjetTache | null>(null)
   const [confirmIdx, setConfirmIdx] = useState<number | null>(null)
+  const [confirmFait, setConfirmFait] = useState<number | null>(null)
   if (!taches || taches.length === 0)
     return <p className="text-sm text-gray-400 text-center py-10">Aucune tâche pour l'instant.<br />Clique sur « Modifier » pour en ajouter.</p>
 
   const q = search.trim().toLowerCase()
   const indexed = taches.map((t, idx) => ({ t, idx }))
-    .filter(({ t }) => (filtre === 'tous' || (t.pour ?? 'sc') === filtre) && (!q || t.description.toLowerCase().includes(q)))
+    .filter(({ t }) => (filtre === 'tous' || (t.pour ?? 'sc') === filtre) && matchDateFilter(t, filtreDate) && (!q || t.description.toLowerCase().includes(q)))
   const todo = indexed.filter(({ t }) => !t.fait)
   const done = indexed.filter(({ t }) => t.fait)
+  const nbRetard = taches.filter((t) => estEnRetard(t, today)).length
 
   const toggleFait = (idx: number) => onChange?.(taches.map((x, j) => (j === idx ? { ...x, fait: !x.fait } : x)))
   const startEdit = (idx: number) => { setEditIdx(idx); setDraft({ ...taches[idx] }); setConfirmIdx(null) }
@@ -379,20 +430,36 @@ export function TachesApercu({ taches, onChange }: { taches: ProjetTache[]; onCh
         <input autoFocus value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })}
           className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
         <PourChips value={draft.pour ?? 'sc'} onChange={(v) => setDraft({ ...draft, pour: v })} />
+        <FacturationChips value={draft.facturation} onChange={(v) => setDraft({ ...draft, facturation: v })} />
+        {draft.facturation === 'facturer' && (
+          <span className="flex items-center gap-1.5 shrink-0">
+            <input type="number" min={0} step={0.5} value={draft.tempsH ?? ''} placeholder="h" title="Temps estimé (heures)"
+              onChange={(e) => setDraft({ ...draft, tempsH: e.target.value === '' ? undefined : Math.max(0, parseFloat(e.target.value) || 0) })}
+              className="w-14 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            {prixFacture(draft, tauxHoraire) != null && <span className="text-[11px] font-medium text-rose-600">≈ {prixFacture(draft, tauxHoraire)} €</span>}
+            <label className="flex items-center gap-1 text-[11px] text-gray-500"><input type="checkbox" checked={!!draft.facturee} onChange={(e) => setDraft({ ...draft, facturee: e.target.checked })} className="w-3.5 h-3.5 accent-emerald-600" /> facturée</label>
+          </span>
+        )}
         <input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })}
           className="w-36 shrink-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
         <button type="button" onClick={saveEdit} className="text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1.5 rounded-lg transition">Enregistrer</button>
         <button type="button" onClick={() => { setEditIdx(null); setDraft(null) }} className="text-xs font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-2.5 py-1.5 rounded-lg transition">Annuler</button>
       </div>
     )
+    const prix = prixFacture(t, tauxHoraire)
     return (
-      <div key={idx} className="flex items-center gap-2.5 py-1.5 border-b border-gray-50 last:border-0">
-        <button type="button" onClick={() => toggleFait(idx)} disabled={!onChange} title={t.fait ? 'Marquer à faire' : 'Marquer terminée'}
+      <div key={idx} className="flex flex-wrap items-center gap-x-2.5 gap-y-1 py-1.5 border-b border-gray-50 last:border-0">
+        <button type="button" onClick={() => { if (!onChange) return; if (t.fait) toggleFait(idx); else setConfirmFait(idx) }} disabled={!onChange} title={t.fait ? 'Marquer à faire' : 'Marquer terminée'}
           className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 border-2 transition ${t.fait ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 enabled:hover:border-emerald-400'}`}>
           {t.fait && <CheckIcon className="w-3 h-3" />}
         </button>
-        <span className={`flex-1 text-sm ${t.fait ? 'text-gray-400' : 'text-gray-700'}`}>{t.description || '—'}</span>
+        <span className={`flex-1 min-w-[120px] text-sm ${t.fait ? 'text-gray-400' : 'text-gray-700'}`}>{t.description || '—'}</span>
         <span className={`text-[10px] font-medium rounded-full px-2 py-0.5 shrink-0 ${(t.pour ?? 'sc') === 'client' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{(t.pour ?? 'sc') === 'client' ? 'Client' : 'Moi'}</span>
+        {t.facturation && (t.facturee
+          ? <span className="text-[10px] font-medium rounded-full px-2 py-0.5 shrink-0 bg-gray-100 text-gray-400">✓ facturée</span>
+          : <span className={`text-[10px] font-medium rounded-full px-2 py-0.5 shrink-0 ${FAC_BADGE[t.facturation].c}`}>{FAC_BADGE[t.facturation].l}</span>)}
+        {!t.facturee && prix != null && <span className="text-[10px] font-medium text-rose-600 shrink-0">≈ {prix} €</span>}
+        {estEnRetard(t, today) && <span className="text-[10px] font-medium rounded-full px-2 py-0.5 shrink-0 bg-rose-100 text-rose-700">En retard</span>}
         {t.date && <span className="text-xs text-gray-400 tabular-nums shrink-0">{fmtDateFr(t.date)}</span>}
         {onChange && (confirmIdx === idx ? (
           <span className="flex items-center gap-1 shrink-0">
@@ -411,14 +478,28 @@ export function TachesApercu({ taches, onChange }: { taches: ProjetTache[]; onCh
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2 items-center">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher une tâche…"
-          className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-        <div className="flex items-center gap-1 shrink-0">
-          {FILTRES_POUR.map((f) => (
-            <button key={f.k} type="button" onClick={() => setFiltre(f.k)}
-              className={`text-xs px-2.5 py-1 rounded-full border transition ${filtre === f.k ? 'bg-gray-800 border-gray-800 text-white' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}>{f.l}</button>
-          ))}
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap gap-2 items-center">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher une tâche…"
+            className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <div className="flex items-center gap-1 shrink-0">
+            {FILTRES_POUR.map((f) => (
+              <button key={f.k} type="button" onClick={() => setFiltre(f.k)}
+                className={`text-xs px-2.5 py-1 rounded-full border transition ${filtre === f.k ? 'bg-gray-800 border-gray-800 text-white' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}>{f.l}</button>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[11px] text-gray-400 mr-1">Échéance :</span>
+          {FILTRES_DATE.map((f) => {
+            const isRetard = f.k === 'retard'
+            return (
+              <button key={f.k} type="button" onClick={() => setFiltreDate(f.k)}
+                className={`text-xs px-2.5 py-1 rounded-full border transition ${filtreDate === f.k ? (isRetard ? 'bg-rose-500 border-rose-500 text-white' : 'bg-gray-800 border-gray-800 text-white') : isRetard && nbRetard > 0 ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}>
+                {f.l}{isRetard && nbRetard > 0 ? ` (${nbRetard})` : ''}
+              </button>
+            )
+          })}
         </div>
       </div>
       <div>
@@ -432,6 +513,15 @@ export function TachesApercu({ taches, onChange }: { taches: ProjetTache[]; onCh
           </summary>
           <div className="mt-1">{done.map(row)}</div>
         </details>
+      )}
+      {confirmFait !== null && (
+        <Modal isOpen onClose={() => setConfirmFait(null)} title="Marquer comme terminée ?" size="sm">
+          <p className="text-sm text-gray-600 mb-4">« <strong>{taches[confirmFait]?.description || '—'}</strong> » sera marquée comme <strong>terminée</strong>.</p>
+          <div className="flex gap-3">
+            <button type="button" onClick={() => setConfirmFait(null)} className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Annuler</button>
+            <button type="button" onClick={() => { toggleFait(confirmFait); setConfirmFait(null) }} className="flex-1 bg-emerald-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition">Oui, terminée</button>
+          </div>
+        </Modal>
       )}
     </div>
   )

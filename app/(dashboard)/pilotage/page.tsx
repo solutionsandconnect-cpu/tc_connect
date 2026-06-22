@@ -965,6 +965,19 @@ export default function PilotagePage() {
                 ))}
               </div>
               {c.notes && <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap">{c.notes}</p>}
+              {(() => {
+                const taches = c.projet?.taches ?? []
+                const d = new Date(); const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+                const nFact = taches.filter((t) => t.facturation === 'facturer' && !t.facturee).length
+                const nRetard = taches.filter((t) => t.date && t.date < today && !t.fait).length
+                if (!nFact && !nRetard) return null
+                return (
+                  <div className="flex flex-col gap-1 mt-2 text-xs font-medium">
+                    {nRetard > 0 && <div className="flex items-center gap-1.5 text-amber-700"><ExclamationTriangleIcon className="w-3.5 h-3.5 shrink-0" /><span>{nRetard} tâche{nRetard > 1 ? 's' : ''} en retard</span></div>}
+                    {nFact > 0 && <div className="flex items-center gap-1.5 text-rose-700"><ExclamationTriangleIcon className="w-3.5 h-3.5 shrink-0" /><span>{nFact} évolution{nFact > 1 ? 's' : ''} à facturer</span></div>}
+                  </div>
+                )
+              })()}
               <div className="flex gap-2 mt-3 pt-3 border-t border-gray-50 flex-wrap">
                 <button onClick={() => router.push(`/pilotage/contrat/${c.id}`)}
                   className="flex items-center gap-1.5 text-xs font-medium text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition">
