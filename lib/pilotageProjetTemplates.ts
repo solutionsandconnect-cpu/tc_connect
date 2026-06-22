@@ -94,6 +94,30 @@ export function addDaysIso(iso: string, days: number): string {
   return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`
 }
 
+// Modèle de planning par défaut (déroulé type : cadrage → maquette → validation → 3 phases de dev → tests → mise en service).
+// Éditable : l'utilisateur peut enregistrer son propre planning comme modèle (pilotage_settings.planningTemplate).
+export const DEFAULT_PLANNING_TEMPLATE: ProjetPlanning[] = [
+  { etape: 'Rendez-vous de cadrage', description: '', date: '', dureeJours: 7, responsable: 'Développeur / Client' },
+  { etape: 'Maquette', description: '', date: '', dureeJours: 7, responsable: 'Développeur' },
+  { etape: 'Ajustements de la maquette', description: '', date: '', dureeJours: 5, responsable: 'Développeur / Client' },
+  { etape: 'Validation de la maquette', description: 'Gel du périmètre — au-delà = avenant', date: '', dureeJours: 14, responsable: 'Client' },
+  { etape: 'Développement — phase 1', description: '', date: '', dureeJours: 14, responsable: 'Développeur' },
+  { etape: 'Réunion bilan', description: '', date: '', dureeJours: 14, responsable: 'Développeur / Client' },
+  { etape: 'Développement — phase 2', description: '', date: '', dureeJours: 14, responsable: 'Développeur' },
+  { etape: 'Réunion bilan', description: '', date: '', dureeJours: 10, responsable: 'Développeur / Client' },
+  { etape: 'Développement — phase 3', description: '', date: '', dureeJours: 10, responsable: 'Développeur' },
+  { etape: 'Phase de tests', description: '', date: '', dureeJours: 7, responsable: 'Développeur / Client' },
+  { etape: 'Mise en service', description: '', date: '', dureeJours: 0, responsable: 'Développeur' },
+]
+
+// Génère un planning daté à partir d'un modèle : la 1ère étape démarre à startIso, les suivantes en cascade (délais).
+export function generatePlanningFromTemplate(template: ProjetPlanning[], startIso: string): ProjetPlanning[] {
+  const steps = template.map((s, i) => ({
+    ...s, date: i === 0 ? startIso : '', ancre: i === 0 ? undefined : false,
+  }))
+  return recalcPlanning(steps)
+}
+
 export function recalcPlanning(items: ProjetPlanning[]): ProjetPlanning[] {
   const out = items.slice()
   for (let i = 1; i < out.length; i++) {

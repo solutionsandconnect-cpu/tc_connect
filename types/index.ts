@@ -236,6 +236,12 @@ export interface LegalFields {
   exclusivite: string
   territoire: string
   duree: string
+  // Forfait d'ajustements inclus après validation de la maquette (clause du contrat de prestation)
+  ajustementsInclus: string
+  // Avenant (lot d'évolutions hors périmètre, facturé en plus)
+  avenantObjet: string
+  avenantPrix: string
+  avenantDelai: string
 }
 
 // Contenu structuré « projet » (partagé par le contrat, réutilisé par les documents)
@@ -316,7 +322,7 @@ export interface PilotageCatalogueItem {
 // Collection : pilotage_documents (documents projet & contrats légaux reliés à un contrat)
 export type PilotageDocumentType =
   | 'cahier_charges' | 'besoins_client' | 'bilan'   // documents projet
-  | 'prestation' | 'dpa_rgpd' | 'cgv' | 'licence'   // contrats légaux
+  | 'prestation' | 'dpa_rgpd' | 'cgv' | 'licence' | 'avenant'   // contrats légaux
 
 export type PilotageDocumentStatut = 'brouillon' | 'finalise' | 'signe'
 
@@ -356,6 +362,8 @@ export interface PilotageSettings {
   features?: { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl' }[]
   // Étapes-types proposées dans le planning prévisionnel (liste déroulante éditable)
   planningEtapes?: string[]
+  // Modèle de planning prévisionnel (généré en un clic, éditable) — dates ignorées, recalculées à la génération
+  planningTemplate?: ProjetPlanning[]
 }
 
 // Collection : Notifications

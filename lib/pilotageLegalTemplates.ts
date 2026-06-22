@@ -16,6 +16,7 @@ export function defaultLegalFields(over: Partial<LegalFields> = {}): LegalFields
     date: '', lieu: '', objet: '', prixCreation: '', prixAbo: '',
     donneesTraitees: '', finalites: '', personnesConcernees: '', dureeConservation: '', sousTraitantsUlterieurs: '',
     etendueDroits: '', exclusivite: '', territoire: '', duree: '',
+    ajustementsInclus: '', avenantObjet: '', avenantPrix: '', avenantDelai: '',
     ...over,
   }
 }
@@ -106,6 +107,7 @@ export function legalFieldGroupsAll(): LegalFieldGroup[] {
         { key: 'prixCreation', label: 'Prix de création (€)', help: 'Montant total de la création (mise en place).' },
         { key: 'prixAbo', label: 'Abonnement / redevance mensuelle (€)', help: 'Le mensuel : maintenance + hébergement + support.' },
         { key: 'duree', label: 'Durée / délais', placeholder: 'ex : 4 mois ; 12 mois reconductible', help: 'Délai de réalisation ou durée d’engagement.' },
+        { key: 'ajustementsInclus', label: 'Ajustements inclus (après validation maquette)', placeholder: "ex : 2 jours d'ajustements inclus", help: 'Forfait de retouches compris ; au-delà, c’est un avenant.' },
         { key: 'lieu', label: 'Fait à (lieu)', help: 'La ville où le contrat est signé.' },
         { key: 'date', label: 'Date de signature', help: 'Date de signature du contrat.' },
       ],
@@ -128,6 +130,14 @@ export function legalFieldGroupsAll(): LegalFieldGroup[] {
         { key: 'territoire', label: 'Territoire', placeholder: 'ex : France / monde entier', help: 'Où le client peut exploiter l’app.' },
       ],
     },
+    {
+      titre: 'Avenant (lot d’évolutions facturé en plus)',
+      champs: [
+        { key: 'avenantObjet', label: 'Évolutions demandées', multiline: true, placeholder: 'ex : module facturation, export PDF des rapports, notifications SMS', help: 'Les fonctionnalités hors périmètre validé, regroupées en un lot.' },
+        { key: 'avenantPrix', label: 'Prix de l’avenant (€)', help: 'Montant du lot (jamais à l’unité ; minimum ½ journée à ton TJM).' },
+        { key: 'avenantDelai', label: 'Délai supplémentaire', placeholder: 'ex : +2 semaines', help: 'Le délai induit par ces évolutions.' },
+      ],
+    },
   ]
 }
 
@@ -146,7 +156,31 @@ export function buildLegalDoc(type: PilotageDocumentType, f: LegalFields): Legal
   if (type === 'prestation') return buildPrestation(f)
   if (type === 'dpa_rgpd') return buildDPA(f)
   if (type === 'licence') return buildLicence(f)
+  if (type === 'avenant') return buildAvenant(f)
   return null
+}
+
+function buildAvenant(f: LegalFields): LegalDocStruct {
+  return {
+    titre: 'Avenant au contrat de prestation',
+    intro: entreLesSoussignes(f, 'le Prestataire', 'le Client'),
+    articles: [
+      { titre: 'Article 1 — Objet de l’avenant', paragraphes: [
+        `Le présent avenant complète le contrat de prestation initial conclu entre les parties. Il a pour objet la réalisation des évolutions suivantes, situées hors du périmètre initialement validé :`,
+        g(f, 'avenantObjet'),
+      ] },
+      { titre: 'Article 2 — Prix', paragraphes: [
+        `Le prix de ces évolutions est fixé forfaitairement à ${g(f, 'avenantPrix')} €, facturé en complément du contrat initial et payable selon les mêmes modalités.`,
+      ] },
+      { titre: 'Article 3 — Délai', paragraphes: [
+        `Ces évolutions entraînent un délai supplémentaire de : ${g(f, 'avenantDelai')}.`,
+      ] },
+      { titre: 'Article 4 — Dispositions inchangées', paragraphes: [
+        `Toutes les autres stipulations du contrat de prestation initial demeurent inchangées et continuent de s’appliquer.`,
+      ] },
+    ],
+    cloture: clotureSignatures(f, 'Le Prestataire', 'Le Client'),
+  }
 }
 
 function entreLesSoussignes(f: LegalFields, rolePresta: string, roleClient: string): string[] {
@@ -167,9 +201,9 @@ function buildPrestation(f: LegalFields): LegalDocStruct {
         `Le présent contrat a pour objet la réalisation par le Prestataire, au profit du Client, de la prestation suivante : ${g(f, 'objet')}.`,
         `Le périmètre détaillé est défini dans le cahier des charges annexé, qui fait partie intégrante du présent contrat.`,
       ] },
-      { titre: 'Article 2 — Livrables', paragraphes: [
+      { titre: 'Article 2 — Livrables et périmètre', paragraphes: [
         `Le Prestataire s'engage à livrer une application fonctionnelle conforme au cahier des charges, accompagnée d'une documentation d'utilisation et d'une formation initiale.`,
-        `Toute demande hors du périmètre défini fera l'objet d'un avenant chiffré séparément.`,
+        `Après validation de la maquette, le périmètre est figé. Un forfait d'ajustements (${g(f, 'ajustementsInclus')}) est compris au titre des retouches mineures. Toute nouvelle fonctionnalité ou demande hors de ce périmètre fait l'objet d'un avenant chiffré séparément.`,
       ] },
       { titre: 'Article 3 — Durée et délais', paragraphes: [
         `Le planning prévisionnel est défini au cahier des charges. Délais : ${g(f, 'duree')}.`,

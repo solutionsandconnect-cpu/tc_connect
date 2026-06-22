@@ -15,7 +15,7 @@ import { uploadBlob } from '@/lib/uploadImage'
 import SignaturePad from '@/components/ui/SignaturePad'
 import { generatePilotageDocPdf, PILOTAGE_DOC_TYPES, STATUT_DOC_LABELS } from '@/lib/pilotageDocPdf'
 import { defaultLegalFields, legalFieldGroupsAll, type LegalFields } from '@/lib/pilotageLegalTemplates'
-import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, type ProjetContent } from '@/lib/pilotageProjetTemplates'
+import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, DEFAULT_PLANNING_TEMPLATE, generatePlanningFromTemplate, type ProjetContent } from '@/lib/pilotageProjetTemplates'
 import { StringListEditor, FonctionsEditor, PlanningEditor, HorsPerimetreEditor, TachesEditor, TachesApercu, PlanningApercu, ProjetApercu } from '@/components/pilotage/ProjetUI'
 import type { PilotageDocument, PilotageDocumentType } from '@/types'
 import {
@@ -115,6 +115,14 @@ export default function ContratPage() {
   const [etapesDraft, setEtapesDraft] = useState<string[] | null>(null)
   const etapesManaged = etapesDraft ?? etapesTypes
   const saveEtapes = () => { saveSettings({ planningEtapes: etapesManaged }); setEtapesDraft(null) }
+  // Modèle de planning : génération en un clic + enregistrement du planning courant comme modèle
+  const planningTemplate = settings?.planningTemplate?.length ? settings.planningTemplate : DEFAULT_PLANNING_TEMPLATE
+  const [genConfirm, setGenConfirm] = useState(false)
+  const [modeleSaved, setModeleSaved] = useState(false)
+  const todayStr = () => { const d = new Date(); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` }
+  const doGenerate = () => { updP({ planning: generatePlanningFromTemplate(planningTemplate, todayStr()) }); setGenConfirm(false) }
+  const onGenerate = () => { if (formProjet.planning.length > 0) setGenConfirm(true); else doGenerate() }
+  const savePlanningModele = () => { saveSettings({ planningTemplate: formProjet.planning.map((s) => ({ ...s, date: '', ancre: undefined })) }); setModeleSaved(true); setTimeout(() => setModeleSaved(false), 2000) }
 
   const [tab, setTab] = useState<TabKey>('documents')
   const [editing, setEditing] = useState(false)
@@ -256,6 +264,16 @@ export default function ContratPage() {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
         {tab === 'documents' && (
           <div className="space-y-4">
+            <details className="group bg-indigo-50/50 border border-indigo-100 rounded-xl">
+              <summary className="cursor-pointer list-none flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-indigo-800">
+                <span className="inline-block text-indigo-400 transition group-open:rotate-90">▸</span> Une demande du client : inclus, maintenance ou avenant ?
+              </summary>
+              <div className="px-3 pb-3 text-xs text-indigo-900/80 space-y-1.5">
+                <p>✅ <strong>Compris</strong> (gratuit) : ajustements de la maquette validée, corrections de bugs, retouches mineures dans le périmètre.</p>
+                <p>🔧 <strong>Maintenance / abonnement</strong> (déjà payé) : petites évolutions récurrentes, mises à jour techniques, support.</p>
+                <p>💶 <strong>Avenant</strong> (facturé en plus) : nouvelle fonctionnalité hors périmètre validé. Regroupe les petites demandes en <strong>un lot</strong> — jamais à l'unité, minimum ½ journée à ton TJM. Crée un document « Avenant (évolutions) » ci-dessous.</p>
+              </div>
+            </details>
             <div className="flex items-end gap-2 flex-wrap">
               <div className="flex-1 min-w-[180px]">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Type de document</label>
@@ -361,6 +379,22 @@ export default function ContratPage() {
             {editing ? (
               <div className="space-y-2">
                 <p className="text-[11px] text-gray-400 mb-2">Le champ « Étape » propose une liste déroulante (tape pour filtrer, ou saisis librement). La date se calcule depuis la précédente + le délai en jours ; saisis une date à la main pour la <strong>fixer</strong>. Réordonne avec les flèches.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {genConfirm ? (
+                    <span className="flex items-center gap-2 text-xs text-gray-600">
+                      Remplacer le planning actuel ?
+                      <button type="button" onClick={doGenerate} className="text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1.5 rounded-lg transition">Oui, générer</button>
+                      <button type="button" onClick={() => setGenConfirm(false)} className="text-xs font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-2.5 py-1.5 rounded-lg transition">Annuler</button>
+                    </span>
+                  ) : (
+                    <button type="button" onClick={onGenerate} className="flex items-center gap-1.5 text-xs font-medium text-indigo-700 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition">
+                      <PlusIcon className="w-3.5 h-3.5" /> Générer un planning type
+                    </button>
+                  )}
+                  <button type="button" onClick={savePlanningModele} className="text-xs font-medium text-gray-600 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition">
+                    {modeleSaved ? '✓ Modèle enregistré' : 'Enregistrer ce planning comme modèle'}
+                  </button>
+                </div>
                 <PlanningEditor items={formProjet.planning} onChange={(v) => updP({ planning: v })} etapesTypes={etapesTypes} />
                 <details className="group pt-2">
                   <summary className="cursor-pointer text-[11px] font-medium text-indigo-700 list-none flex items-center gap-1.5">
