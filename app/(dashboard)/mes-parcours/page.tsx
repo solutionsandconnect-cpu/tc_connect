@@ -17,6 +17,9 @@ import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
 import Modal from '@/components/ui/Modal'
+import { useParcoursIndications } from '@/hooks/useParcoursIndications'
+import { indicationsForHeader, indicationsForSession } from '@/lib/parcoursIndications'
+import { IndicationList } from '@/components/parcours/IndicationBanner'
 import {
   CalendarIcon, MapPinIcon, CheckCircleIcon, XCircleIcon,
   FireIcon, BanknotesIcon, ClockIcon, UsersIcon, HeartIcon,
@@ -135,6 +138,9 @@ export default function MesParcoursPage() {
   const { currentUser, userProfile } = useAuth()
   const router = useRouter()
   const isAdmin = userProfile?.role_app === 'Admin'
+
+  // Indications / alertes (gérées depuis l'admin)
+  const { indications } = useParcoursIndications()
 
   useEffect(() => {
     if (userProfile && !isAdmin && userProfile.droits?.parcoursSportif === false) {
@@ -567,6 +573,10 @@ export default function MesParcoursPage() {
             </div>
           )}
         </div>
+        {(() => {
+          const ind = indicationsForSession(indications, session.id, session.date.toMillis())
+          return ind.length > 0 ? <div className="mb-3"><IndicationList indications={ind} compact /></div> : null
+        })()}
         <button
           onClick={() => openRegister(session)}
           disabled={isFull}
@@ -621,6 +631,11 @@ export default function MesParcoursPage() {
             )}
           </div>
         )}
+        {/* Indications / alertes pour cette séance (à venir uniquement) */}
+        {session && !isPast && (() => {
+          const ind = indicationsForSession(indications, session.id, session.date.toMillis())
+          return ind.length > 0 ? <div className="mb-3"><IndicationList indications={ind} compact /></div> : null
+        })()}
         {/* Badge impayé discret sur les séances à venir */}
         {isUpcomingUnpaid && (iban || bic) && (
           <div className="mb-3 bg-yellow-50 border border-yellow-100 rounded-xl px-3 py-2 space-y-2">
@@ -717,6 +732,9 @@ export default function MesParcoursPage() {
         </div>
         <FireIcon className="absolute -right-6 -bottom-6 w-44 h-44 text-white/10" />
       </div>
+
+      {/* Indications / alertes (gérées depuis l'admin) */}
+      <IndicationList indications={indicationsForHeader(indications)} />
 
       {/* Bénéfices / objectifs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1023,6 +1041,10 @@ export default function MesParcoursPage() {
                 <p>{sessionLocationLabel(selected)}</p>
                 {selected.price != null && <p className="font-semibold mt-0.5">{selected.price}€ / personne</p>}
               </div>
+            )}
+
+            {selected && (
+              <IndicationList indications={indicationsForSession(indications, selected.id, selected.date.toMillis())} compact />
             )}
 
             {/* Inscription à plusieurs dates en même temps */}

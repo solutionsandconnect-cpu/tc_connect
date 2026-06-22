@@ -97,6 +97,13 @@ service cloud.firestore {
       allow create, read, write, delete: if request.auth != null;
     }
 
+    // Indications / alertes du Parcours Sportif — lecture publique (page visiteur), écriture admin
+    match /parcours_indications/{document} {
+      allow read: if true;
+      allow create, write, delete: if request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
+    }
+
     // Pilotage de l'activité (contrats clients, MRR, marge) — réservé à l'admin
     match /pilotage_contrats/{document} {
       allow read, create, write, delete: if request.auth != null

@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useUsers } from '@/hooks/useUsers'
+import { useParcoursIndications } from '@/hooks/useParcoursIndications'
+import { statutIndication, fmtPlage } from '@/lib/parcoursIndications'
+import { IndicationBanner } from '@/components/parcours/IndicationBanner'
 import { collection, query, orderBy, onSnapshot, getDocs, where, Timestamp, doc, deleteDoc, updateDoc, runTransaction } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { copyText } from '@/lib/clipboard'
@@ -16,7 +19,7 @@ import {
   PlusIcon, CalendarIcon, MapPinIcon, UsersIcon, UserPlusIcon,
   ChevronRightIcon, BanknotesIcon, ClipboardDocumentIcon,
   CheckIcon, ShareIcon, ChatBubbleLeftIcon, FireIcon, TrashIcon,
-  EyeIcon, EyeSlashIcon, Cog6ToothIcon, ExclamationTriangleIcon, ClipboardDocumentListIcon,
+  EyeIcon, EyeSlashIcon, Cog6ToothIcon, ExclamationTriangleIcon, ClipboardDocumentListIcon, MegaphoneIcon,
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 
@@ -70,6 +73,7 @@ export default function AdminParcoursPage() {
   const highlightId = searchParams.get('highlight')
   const { userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
+  const { indications } = useParcoursIndications()
 
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
@@ -588,6 +592,14 @@ export default function AdminParcoursPage() {
             <span className="hidden sm:inline">Template</span>
           </button>
           <button
+            onClick={() => router.push('/admin/parcours-sportif/indications')}
+            className="flex items-center gap-2 shrink-0 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            title="Indications / informations affichées aux visiteurs"
+          >
+            <MegaphoneIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">Indications</span>
+          </button>
+          <button
             onClick={() => router.push('/admin/parcours-sportif/parametres')}
             className="flex items-center gap-2 shrink-0 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
             title="Paramètres"
@@ -612,6 +624,46 @@ export default function AdminParcoursPage() {
           </button>
         </div>
       </div>
+
+      {/* Indications actives / à venir (résumé) */}
+      {(() => {
+        const visibles = indications.filter((i) => statutIndication(i) !== 'expirée')
+        if (visibles.length === 0) return null
+        return (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+              <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <MegaphoneIcon className="w-4 h-4 text-gray-400" />
+                Indications affichées aux visiteurs ({visibles.length})
+              </h2>
+              <button onClick={() => router.push('/admin/parcours-sportif/indications')}
+                className="text-xs font-medium text-blue-700 hover:underline shrink-0">Gérer</button>
+            </div>
+            <div className="space-y-2">
+              {visibles.map((i) => {
+                const statut = statutIndication(i)
+                return (
+                  <div key={i.id} className="flex items-start gap-2">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 mt-0.5 ${
+                      statut === 'active' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      {statut === 'active' ? 'Active' : 'À venir'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <IndicationBanner indication={i} compact />
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        {i.portee === 'global'
+                          ? (i.surSeances === false ? 'En haut de la page seulement' : 'Tout le parcours')
+                          : 'Séance précise'} · {fmtPlage(i.dateDebut, i.dateFin)}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Bilan financier global */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

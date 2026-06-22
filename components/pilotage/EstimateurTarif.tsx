@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { TrashIcon, PlusIcon, PencilIcon, ExclamationTriangleIcon, InformationCircleIcon } from '@heroicons/react/24/outline'
+import { TrashIcon, PlusIcon, PencilIcon, ExclamationTriangleIcon, InformationCircleIcon, ChevronUpIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { randomUUID } from '@/lib/uuid'
 import { usePilotageCatalogue } from '@/hooks/usePilotageCatalogue'
 import type { PilotageEstimation, PilotageSettings } from '@/types'
@@ -87,6 +87,14 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
   const updFeature = (id: string, patch: Partial<Feature>) =>
     setFeatures((f) => f.map((x) => (x.id === id ? { ...x, ...patch } : x)))
   const delFeature = (id: string) => setFeatures((f) => f.filter((x) => x.id !== id))
+  const moveFeature = (i: number, dir: -1 | 1) =>
+    setFeatures((f) => {
+      const j = i + dir
+      if (j < 0 || j >= f.length) return f
+      const next = f.slice()
+      ;[next[i], next[j]] = [next[j], next[i]]
+      return next
+    })
   const addFromCatalogue = (nom: string, taille: TailleKey) =>
     setFeatures((f) =>
       f.some((x) => x.nom.trim().toLowerCase() === nom.toLowerCase())
@@ -116,6 +124,14 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
         jours × TJM + frais de structure + marge d'incertitude. La maintenance se déduit en % du coût de création.
       </p>
 
+      <div className="mb-4 flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5">
+        <InformationCircleIcon className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-blue-800/90 leading-relaxed">
+          Les jours saisis = <strong>l'effort de référence / la valeur</strong> du travail, pas ton temps réel.
+          Ta vitesse avec l'IA est <strong>ta marge</strong>, pas une remise à faire au client.
+        </p>
+      </div>
+
       {/* Mode : app métier (client final) vs app à revendre (revendeur / marque blanche) */}
       <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50 mb-1">
         {([
@@ -138,8 +154,16 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
 
       {/* Liste des fonctionnalités */}
       <div className="space-y-2">
-        {features.map((f) => (
+        {features.map((f, i) => (
           <div key={f.id} className="flex items-center gap-2">
+            <div className="flex flex-col shrink-0">
+              <button type="button" onClick={() => moveFeature(i, -1)} disabled={i === 0}
+                title="Monter"
+                className="text-gray-300 enabled:text-gray-500 enabled:hover:text-blue-600 disabled:opacity-40"><ChevronUpIcon className="w-4 h-4" /></button>
+              <button type="button" onClick={() => moveFeature(i, 1)} disabled={i === features.length - 1}
+                title="Descendre"
+                className="text-gray-300 enabled:text-gray-500 enabled:hover:text-blue-600 disabled:opacity-40"><ChevronDownIcon className="w-4 h-4" /></button>
+            </div>
             {FEATURE_AIDES[f.nom.trim()] && (
               <InformationCircleIcon className="w-4 h-4 text-gray-300 hover:text-blue-500 shrink-0 cursor-help" title={FEATURE_AIDES[f.nom.trim()]} />
             )}

@@ -11,6 +11,9 @@ import { randomUUID } from '@/lib/uuid'
 import { addParcoursActivite } from '@/lib/parcoursPlanning'
 import { useAuth } from '@/context/AuthContext'
 import Modal from '@/components/ui/Modal'
+import { useParcoursIndications } from '@/hooks/useParcoursIndications'
+import { indicationsForHeader, indicationsForSession } from '@/lib/parcoursIndications'
+import { IndicationList } from '@/components/parcours/IndicationBanner'
 import {
   MapPinIcon, CalendarIcon, ClockIcon, BanknotesIcon,
   UsersIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon,
@@ -188,6 +191,9 @@ export default function ParcoursPublicPage() {
   const [successWarning, setSuccessWarning] = useState('')
   const [showFullInfo, setShowFullInfo] = useState(false)
   const [showWhat, setShowWhat] = useState(false)
+
+  // Indications / alertes (gérées depuis l'admin)
+  const { indications } = useParcoursIndications()
 
   // Avis
   const [reviews, setReviews] = useState<Review[]>([])
@@ -571,6 +577,9 @@ export default function ParcoursPublicPage() {
           <FireIcon className="absolute -right-5 -bottom-5 w-28 h-28 sm:w-36 sm:h-36 text-white/10" />
         </div>
 
+        {/* ── Indications / alertes (gérées depuis l'admin) ── */}
+        <IndicationList indications={indicationsForHeader(indications)} />
+
         {/* ── Bénéfices / objectifs ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
           {BENEFITS.map((b) => {
@@ -651,6 +660,7 @@ export default function ParcoursPublicPage() {
                 const isFull = session.status === 'full' || spots <= 0
                 const showSpots = !isFull && spots <= 15
                 const mapsLink = sessionMapsLink(session)
+                const cardIndics = indicationsForSession(indications, session.id, session.date.toMillis())
                 return (
                   <div key={session.id}
                     onClick={() => { if (!isFull && !authLoading) handleRegisterClick(session) }}
@@ -700,6 +710,11 @@ export default function ParcoursPublicPage() {
                         )}
                       </div>
                     </div>
+                    {cardIndics.length > 0 && (
+                      <div className="mb-3" onClick={(e) => e.stopPropagation()}>
+                        <IndicationList indications={cardIndics} compact />
+                      </div>
+                    )}
                     <div
                       className={`w-full py-2.5 rounded-xl text-sm font-semibold text-center transition ${
                         isFull ? 'bg-gray-100 text-gray-400' : 'bg-blue-600 text-white'
@@ -953,6 +968,10 @@ export default function ParcoursPublicPage() {
                 <p className="capitalize">{fmtDate(selected.date)} · {sessionTimeRange(selected)}</p>
                 <p>{sessionLocationLabel(selected)}</p>
               </div>
+            )}
+
+            {selected && (
+              <IndicationList indications={indicationsForSession(indications, selected.id, selected.date.toMillis())} compact />
             )}
 
             {/* Inscription à plusieurs dates en même temps */}

@@ -209,6 +209,24 @@ export interface ParcoursNote {
   date_max_note_active?: Timestamp | null
 }
 
+// Collection : parcours_indications
+// Annonces / alertes affichées sur la page publique du Parcours Sportif (ex : alerte canicule).
+export type ParcoursIndicationNiveau = 'info' | 'avertissement' | 'urgent'
+
+export interface ParcoursIndication {
+  id: string
+  titre: string
+  message: string
+  niveau: ParcoursIndicationNiveau
+  portee: 'global' | 'session'   // global = tout le parcours ; session = une séance précise
+  sessionId?: string | null       // renseigné si portee === 'session'
+  surSeances?: boolean            // portée globale : afficher aussi sur les séances concernées (défaut true)
+  ordre?: number                  // ordre d'affichage manuel (croissant ; sans valeur = à la fin)
+  dateDebut: Timestamp            // début de la fenêtre d'affichage
+  dateFin: Timestamp              // fin de la fenêtre d'affichage (jour inclus)
+  createdAt: Timestamp
+}
+
 // Champs des contrats légaux (portés par le contrat, réutilisés par les documents officiels)
 export interface LegalFields {
   prestataireNom: string
