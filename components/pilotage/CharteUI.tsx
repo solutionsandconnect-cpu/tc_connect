@@ -140,6 +140,11 @@ export function CharteEditor({ value, onChange, onUpload }: {
         <StringListEditor items={value.objectifs ?? []} onChange={(v) => upd({ objectifs: v })} placeholder="Un objectif…" reorderable />
       </div>
 
+      <div>
+        <p className={lbl}>Nom du projet</p>
+        <input value={value.nomProjet ?? ''} onChange={(e) => upd({ nomProjet: e.target.value })} className={inp} placeholder="Ex : Refonte boutique en ligne" />
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <p className={lbl}>Type de projet</p>
@@ -155,8 +160,8 @@ export function CharteEditor({ value, onChange, onUpload }: {
           )}
         </div>
         <div>
-          <p className={lbl}>Nom de l'app / projet</p>
-          <input value={value.nomApp ?? ''} onChange={(e) => upd({ nomApp: e.target.value })} className={inp} />
+          <p className={lbl}>Nom de l'application</p>
+          <input value={value.nomApp ?? ''} onChange={(e) => upd({ nomApp: e.target.value })} className={inp} placeholder="Nom commercial de l'app" />
         </div>
       </div>
 
@@ -307,7 +312,7 @@ export function CharteApercu({ value: v }: { value: ChartGraphique }) {
   const tons = v.ton ?? []
   const typeTxt = v.typeProjet ? (v.typeProjet === 'autre' ? (v.typeAutre || 'Autre') : (TYPE_LABEL[v.typeProjet] ?? v.typeProjet)) : ''
   const users = v.usersMin != null || v.usersMax != null ? `${v.usersMin ?? '?'} – ${v.usersMax ?? '?'} utilisateurs` : ''
-  const vide = !(v.logo || objectifs.length || typeTxt || v.nomApp || v.publicCible || users || plateformes.length || v.domaine || langues.length || couleurs.length || typos.length || tons.length || liens.length || fichiers.length || contraintes.length || v.notes)
+  const vide = !(v.logo || objectifs.length || typeTxt || v.nomProjet || v.nomApp || v.publicCible || users || plateformes.length || v.domaine || langues.length || couleurs.length || typos.length || tons.length || liens.length || fichiers.length || contraintes.length || v.notes)
   if (vide)
     return <p className="text-sm text-gray-400 text-center py-10">Rien pour l'instant.<br />Clique sur « Modifier » pour remplir la charte.</p>
   return (
@@ -328,8 +333,9 @@ export function CharteApercu({ value: v }: { value: ChartGraphique }) {
       )}
 
       <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+        {v.nomProjet && <ApLabel t="Nom du projet">{v.nomProjet}</ApLabel>}
         {typeTxt && <ApLabel t="Type de projet">{typeTxt}</ApLabel>}
-        {v.nomApp && <ApLabel t="Nom de l'app">{v.nomApp}</ApLabel>}
+        {v.nomApp && <ApLabel t="Nom de l'application">{v.nomApp}</ApLabel>}
         {users && <ApLabel t="Utilisateurs envisagés">{users}</ApLabel>}
         {plateformes.length > 0 && <div><dt className="text-[11px] text-gray-400">Plateformes</dt><dd className="flex flex-wrap gap-1 mt-0.5">{plateformes.map((p, i) => badge(PLAT_LABEL[p] ?? p, i))}</dd></div>}
         {v.domaine && <ApLabel t="Domaine souhaité">{v.domaine}</ApLabel>}

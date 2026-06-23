@@ -124,6 +124,7 @@ export default function CreateFacturePage() {
     searchParams.get("type") === "devis" ? "devis" : "facture"
   );
   const [documentDate, setDocumentDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [validiteJours, setValiditeJours] = useState(30);
 
   // ── Étape 1 : client ──────────────────────────────────────
   const [clientSearch, setClientSearch] = useState("");
@@ -380,6 +381,7 @@ export default function CreateFacturePage() {
         abonnementTitre: aboDisplayName(selectedAbo),
         items, total, type: docType,
         notes: notes.trim() || undefined,
+        ...(docType === "devis" ? { validiteJours } : {}),
         ...(dateTs ? { date: dateTs } : {}),
         ...(builtEcheances ? { echeances: builtEcheances } : {}),
       });
@@ -419,10 +421,22 @@ export default function CreateFacturePage() {
                 </button>
               ))}
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Date du document</label>
-              <input type="date" value={documentDate} onChange={(e) => setDocumentDate(e.target.value)} className="border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition" />
-              <p className="text-xs text-gray-400 mt-1">Modifiable si envoi différé</p>
+            <div className="flex flex-wrap items-start gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Date du document</label>
+                <input type="date" value={documentDate} onChange={(e) => setDocumentDate(e.target.value)} className="h-[42px] border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition" />
+                <p className="text-xs text-gray-400 mt-1">Modifiable si envoi différé</p>
+              </div>
+              {docType === "devis" && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Validité du devis</label>
+                  <div className="flex items-center gap-2 h-[42px]">
+                    <input type="number" min="1" value={validiteJours} onChange={(e) => setValiditeJours(Math.max(1, Number(e.target.value)))} className="h-[42px] w-20 border rounded-lg px-3 py-2.5 text-sm text-right outline-none focus:border-blue-400 transition" />
+                    <span className="text-sm text-gray-500">jours</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">30 jours par défaut</p>
+                </div>
+              )}
             </div>
           </div>
 

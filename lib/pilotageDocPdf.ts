@@ -120,9 +120,11 @@ export async function generatePilotageDocPdf(
       }
       const ensure = (h: number) => { if (y + h > maxY) { footer(); pdf.addPage(); y = 20 } }
       const para = (txt: string, o: { bold?: boolean; size?: number; gap?: number; color?: [number, number, number] } = {}) => {
-        pdf.setFont('helvetica', o.bold ? 'bold' : 'normal'); pdf.setFontSize(o.size ?? 10); setText(o.color ?? dark)
+        const applyFont = () => { pdf.setFont('helvetica', o.bold ? 'bold' : 'normal'); pdf.setFontSize(o.size ?? 10); setText(o.color ?? dark) }
+        applyFont()
         const lns = pdf.splitTextToSize(txt, contentW) as string[]
-        for (const ln of lns) { ensure(lineH); pdf.text(ln, margin, y); y += lineH }
+        // applyFont() après ensure : un saut de page passe par footer() qui change la police.
+        for (const ln of lns) { ensure(lineH); applyFont(); pdf.text(ln, margin, y); y += lineH }
         y += o.gap ?? 2
       }
       drawLogo()
@@ -148,9 +150,10 @@ export async function generatePilotageDocPdf(
           pdf.addImage(signData, 'PNG', margin, y, sp.width * r, sp.height * r)
           y += sp.height * r + 2
         } catch { /* signature ignorée si illisible */ }
-        setText(gray); pdf.setFont('helvetica', 'italic'); pdf.setFontSize(8)
         const when = docu.signeLe ? ' le ' + new Date(docu.signeLe.toMillis()).toLocaleDateString('fr-FR') : ''
-        ensure(5); pdf.text(`Signé${docu.signatairePar ? ' par ' + docu.signatairePar : ''}${when}.`, margin, y)
+        ensure(5) // après ensure pour ne pas hériter de la police du footer
+        setText(gray); pdf.setFont('helvetica', 'italic'); pdf.setFontSize(8)
+        pdf.text(`Signé${docu.signatairePar ? ' par ' + docu.signatairePar : ''}${when}.`, margin, y)
       }
       footer()
       return finalize(docu.titre || meta.label)
@@ -162,7 +165,6 @@ export async function generatePilotageDocPdf(
     // Contenu partagé porté par le contrat (saisi une seule fois)
     const c = { ...emptyProjetContent(), ...(opts.projet ?? {}) }
     const cfg = projetSections(docu.type)
-    const red: [number, number, number] = [155, 28, 28]
     const border: [number, number, number] = [210, 213, 219]
     const maxY = 272, contentW = W - margin * 2
     const footer = () => {
@@ -186,7 +188,8 @@ export async function generatePilotageDocPdf(
         }
       })
       const h = Math.max(7, maxLines * 4.2 + 2.5)
-      ensure(h)
+      ensure(h) // peut sauter de page (footer() change la taille de police)
+      pdf.setFontSize(9) // ⇒ on la restaure avant de dessiner les cellules
       let x = margin
       cells.forEach((cell) => {
         if (cell.fill) { setFill(cell.fill); pdf.rect(x, y, cell.w, h, 'F') }
@@ -210,53 +213,119 @@ export async function generatePilotageDocPdf(
       })
       y += h
     }
-    const band = (title: string, color: [number, number, number]) => {
-      ensure(9)
-      y += 2
-      setFill(color); pdf.rect(margin, y, contentW, 7, 'F')
-      setText([255, 255, 255]); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9.5)
-      pdf.text(title, W / 2, y + 4.8, { align: 'center' })
-      y += 7
+    // Titre de section : libellé aligné à gauche + filet d'accent (plus léger et plus pro qu'une bande pleine).
+    const section = (title: string) => {
+      ensure(14)
+      y += 6 // séparation nette avant une nouvelle section
+      setText(teal); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11)
+      pdf.text(title.toUpperCase(), margin, y + 3.5)
+      y += 6
+      setDraw(teal); pdf.setLineWidth(0.5); pdf.line(margin, y, W - margin, y); pdf.setLineWidth(0.2)
+      y += 4 // air sous le filet avant le contenu
     }
+    // Élément de liste à puce, sans cadre, avec retrait suspendu (multi-lignes alignées).
+    const listItem = (txt: string) => {
+      const size = 10, lh = size * 0.4 + 0.9
+      const lns = pdf.splitTextToSize(txt, contentW - 6) as string[]
+      lns.forEach((ln, i) => {
+        ensure(lh)
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(size)
+        y += lh
+        if (i === 0) { setText(teal); pdf.text('•', margin + 1, y) }
+        setText(dark); pdf.text(ln, margin + 6, y)
+      })
+      y += 1.5
+    }
+    // y = HAUT du texte (cohérent avec drawRow) → la ligne de base est poussée vers le bas, jamais de chevauchement vers le haut.
     const para = (txt: string, o: { bold?: boolean; size?: number } = {}) => {
-      pdf.setFont('helvetica', o.bold ? 'bold' : 'normal'); pdf.setFontSize(o.size ?? 10); setText(o.bold ? dark : gray)
+      const size = o.size ?? 10
+      const applyFont = () => { pdf.setFont('helvetica', o.bold ? 'bold' : 'normal'); pdf.setFontSize(size); setText(o.bold ? dark : gray) }
+      applyFont()
+      const lh = size * 0.4 + 0.9
       const lns = pdf.splitTextToSize(txt, contentW) as string[]
-      for (const ln of lns) { ensure(5); pdf.text(ln, margin, y); y += 5 }
+      // applyFont() après ensure : un saut de page passe par footer() qui change la police.
+      for (const ln of lns) { ensure(lh); applyFont(); y += lh; pdf.text(ln, margin, y) }
     }
     const emptyRow = () => drawRow([{ text: '[à compléter]', w: contentW, align: 'center', color: gray }])
     const fmtD = (d: string) => { const mm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || ''); return mm ? `${mm[3]}/${mm[2]}/${mm[1]}` : (d || '') }
+    const panelBg: [number, number, number] = [248, 250, 252]
+    const zebra = (i: number): [number, number, number] | undefined => (i % 2 ? [250, 251, 252] : undefined)
+    // Grille clé/valeur en N colonnes (label gris au-dessus, valeur dessous) — casse l'effet « lignes empilées ».
+    const kvGrid = (pairs: [string, string][], cols = 2) => {
+      const gap = 6
+      const colW = (contentW - gap * (cols - 1)) / cols
+      for (let i = 0; i < pairs.length; i += cols) {
+        const line = pairs.slice(i, i + cols)
+        const cells = line.map(([l, v]) => { pdf.setFontSize(10); return { l, vlns: pdf.splitTextToSize(v, colW) as string[] } })
+        const blockH = Math.max(...cells.map((c) => 3.4 + c.vlns.length * 4.4)) + 3.5
+        ensure(blockH)
+        let x = margin
+        cells.forEach(({ l, vlns }) => {
+          setText(gray); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7.2); pdf.text(l.toUpperCase(), x, y + 3)
+          setText(dark); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.text(vlns, x, y + 7.4)
+          x += colW + gap
+        })
+        y += blockH
+      }
+    }
+    // Panneau d'identité (en-tête) : infos clé/valeur en 2 colonnes sur fond clair encadré.
+    const infoPanel = (pairs: [string, string][]) => {
+      const cols = 2, gap = 6, padX = 5, padY = 4
+      const colW = (contentW - padX * 2 - gap * (cols - 1)) / cols
+      let h = padY * 2
+      for (let i = 0; i < pairs.length; i += cols) {
+        pdf.setFontSize(10)
+        const lh = Math.max(...pairs.slice(i, i + cols).map(([, v]) => (pdf.splitTextToSize(v, colW) as string[]).length)) * 4.4
+        h += 3.4 + lh + 2
+      }
+      ensure(h)
+      setFill(panelBg); setDraw(border); pdf.setLineWidth(0.2); pdf.roundedRect(margin, y, contentW, h, 1.5, 1.5, 'FD')
+      let cy = y + padY
+      for (let i = 0; i < pairs.length; i += cols) {
+        let x = margin + padX, lineH = 0
+        pairs.slice(i, i + cols).forEach(([l, v]) => {
+          pdf.setFontSize(10); const vlns = pdf.splitTextToSize(v, colW) as string[]
+          setText(gray); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7.2); pdf.text(l.toUpperCase(), x, cy + 3)
+          setText(dark); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10); pdf.text(vlns, x, cy + 7.4)
+          lineH = Math.max(lineH, 3.4 + vlns.length * 4.4 + 2)
+          x += colW + gap
+        })
+        cy += lineH
+      }
+      y += h + 2
+    }
 
-    // Titre
+    // En-tête
     drawLogo()
     y = 18
-    setText(dark); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(18)
-    pdf.text(meta.titrePdf, W / 2, y, { align: 'center' }); y += 7
-    if (docu.clientNom) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(12); setText(gray); pdf.text(`Projet ${docu.clientNom}`, W / 2, y, { align: 'center' }) }
-    y += 8
+    const nomProjet = opts.charte?.nomProjet?.trim() || docu.clientNom || '—'
+    setText(dark); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(17)
+    pdf.text(meta.titrePdf, W / 2, y, { align: 'center' }); y += 6.5
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(11); setText(gray); pdf.text(nomProjet, W / 2, y, { align: 'center' }); y += 5
+    y += 1.5
+    setDraw(teal); pdf.setLineWidth(0.6); pdf.line(margin, y, W - margin, y); pdf.setLineWidth(0.2)
+    y += 7
 
-    // Tableau infos
-    const infoRows: [string, string][] = [
-      ['Nom du projet', docu.clientNom || '—'],
+    // Panneau infos (2 colonnes, fond clair)
+    infoPanel([
+      ['Nom du projet', nomProjet],
+      ['Client', docu.clientNom || '—'],
       ['Date', new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })],
       ['Prestataire', fNom],
       ['Version', docu.version || '1.0'],
       ['Réf', docu.id.slice(0, 8)],
-    ]
-    infoRows.forEach(([l, v]) => drawRow([
-      { text: l, w: 55, fill: teal, color: [255, 255, 255], bold: true },
-      { text: v, w: contentW - 55, fill: light },
-    ]))
-    y += 4
+    ])
+    y += 2
 
     if (cfg.contexte) {
-      para('Contexte', { bold: true, size: 11 }); y += 1
+      section('Contexte')
       para(c.contexte || '[à compléter]'); y += 2
     }
 
     // ── Charte & cadrage (cahier des charges) ──
     const ch = opts.charte
     const hasCharte = !!ch && (
-      (ch.objectifs?.length ?? 0) > 0 || ch.typeProjet || ch.nomApp || ch.publicCible ||
+      (ch.objectifs?.length ?? 0) > 0 || ch.typeProjet || ch.nomProjet || ch.nomApp || ch.publicCible ||
       ch.usersMin != null || ch.usersMax != null || (ch.plateformes?.length ?? 0) > 0 || ch.domaine ||
       (ch.langues?.length ?? 0) > 0 || (ch.couleurs?.length ?? 0) > 0 || (ch.typographie?.length ?? 0) > 0 ||
       (ch.ton?.length ?? 0) > 0 || (ch.liens?.length ?? 0) > 0 || (ch.contraintes?.length ?? 0) > 0 ||
@@ -274,11 +343,11 @@ export async function generatePilotageDocPdf(
       const plats = (ch.plateformes ?? []).map((p) => PLAT[p] ?? p).join(', ')
       const users = ch.usersMin != null || ch.usersMax != null ? `${ch.usersMin ?? '?'} – ${ch.usersMax ?? '?'} utilisateurs` : ''
 
-      band('Charte & cadrage', dark)
+      section('Charte & cadrage')
 
       if ((ch.objectifs?.length ?? 0) > 0) {
         para('Objectifs du projet', { bold: true, size: 10 }); y += 1
-        ch.objectifs!.forEach((o) => drawRow([{ text: '•  ' + o, w: contentW }]))
+        ch.objectifs!.forEach((o) => listItem(o))
         y += 1
       }
 
@@ -300,6 +369,7 @@ export async function generatePilotageDocPdf(
 
       // Caractéristiques (clé / valeur)
       const kv = ([
+        ['Nom du projet', ch.nomProjet ?? ''],
         ['Type de projet', typeLabel],
         ["Nom de l'application", ch.nomApp ?? ''],
         ['Public cible', ch.publicCible ?? ''],
@@ -310,33 +380,35 @@ export async function generatePilotageDocPdf(
         ['Typographie(s)', (ch.typographie ?? []).join(', ')],
         ['Ton / style', (ch.ton ?? []).join(', ')],
       ] as [string, string][]).filter(([, v]) => v)
-      kv.forEach(([l, v]) => drawRow([
-        { text: l, w: 55, fill: teal, color: [255, 255, 255], bold: true },
-        { text: v, w: contentW - 55, fill: light },
-      ]))
+      kvGrid(kv)
 
-      // Couleurs (pastilles)
+      // Couleurs (pastilles en ligne, côte à côte)
       if ((ch.couleurs?.length ?? 0) > 0) {
         y += 2
         para('Couleurs', { bold: true, size: 10 }); y += 1
+        ensure(9)
+        let cx = margin
         ch.couleurs!.forEach((co) => {
-          ensure(8)
           const rgb = hexToRgb(co.hex)
-          if (rgb) { setFill(rgb); setDraw(border); pdf.rect(margin, y + 0.5, 6, 5, 'FD') }
-          setText(dark); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9)
-          pdf.text(`${co.label || 'Couleur'}   ${co.hex || ''}`, margin + 9, y + 4.5)
-          y += 8
+          const label = `${co.label || 'Couleur'}  ${co.hex || ''}`
+          pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9)
+          const chipW = 6 + 2 + pdf.getTextWidth(label) + 6
+          if (cx + chipW > W - margin) { cx = margin; y += 8; ensure(9) }
+          if (rgb) { setFill(rgb); setDraw(border); pdf.rect(cx, y + 0.5, 6, 5, 'FD') }
+          setText(dark); pdf.text(label, cx + 8, y + 4.5)
+          cx += chipW
         })
+        y += 9
       }
 
       // Listes
       if ((ch.contraintes?.length ?? 0) > 0) {
         y += 1; para('Contraintes & spécifications techniques', { bold: true, size: 10 }); y += 1
-        ch.contraintes!.forEach((l) => drawRow([{ text: '•  ' + l, w: contentW }]))
+        ch.contraintes!.forEach((l) => listItem(l))
       }
       if ((ch.liens?.length ?? 0) > 0) {
         y += 1; para('Liens / références', { bold: true, size: 10 }); y += 1
-        ch.liens!.forEach((l) => drawRow([{ text: '•  ' + l, w: contentW }]))
+        ch.liens!.forEach((l) => listItem(l))
       }
       if (ch.notes) {
         y += 2; para('Notes / contraintes de marque', { bold: true, size: 10 }); y += 1
@@ -346,47 +418,47 @@ export async function generatePilotageDocPdf(
     }
 
     if (cfg.fonctionnalites) {
-      band('Fonctionnalités', dark)
+      section('Fonctionnalités')
       if (c.fonctionnalites.length === 0) emptyRow()
-      else c.fonctionnalites.forEach((f) => drawRow([{ text: f.categorie, w: 65, bold: true }, { text: f.description, w: contentW - 65 }]))
+      else c.fonctionnalites.forEach((f) => drawRow([{ text: f.categorie, w: 55, bold: true, fill: light }, { text: f.description, w: contentW - 55 }]))
     }
     if (cfg.livrables) {
-      band('Livrables', dark)
+      section('Livrables')
       if (c.livrables.length === 0) emptyRow()
-      else c.livrables.forEach((l) => drawRow([{ text: l, w: contentW, align: 'center' }]))
+      else c.livrables.forEach((l) => listItem(l))
     }
     if (cfg.horsPerimetre && (c.horsPerimetre?.length ?? 0) > 0) {
-      band('Hors-périmètre (non compris)', dark)
-      c.horsPerimetre.forEach((l) => drawRow([{ text: '•  ' + l, w: contentW }]))
+      section('Hors-périmètre (non compris)')
+      c.horsPerimetre.forEach((l) => listItem(l))
     }
     if (cfg.planning) {
-      band('Planning prévisionnel', red)
+      section('Planning prévisionnel')
       drawRow([
-        { text: 'Étape', w: 32, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Description', w: contentW - 32 - 28 - 38, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Date', w: 28, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Responsable', w: 38, fill: red, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Étape', w: 32, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Description', w: contentW - 32 - 28 - 38, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Date', w: 28, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Responsable', w: 38, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
       ])
       if (c.planning.length === 0) emptyRow()
-      else c.planning.forEach((p) => drawRow([
-        { text: p.etape, w: 32 },
-        { text: p.description, w: contentW - 32 - 28 - 38 },
-        { text: fmtD(p.date), w: 28, align: 'center' },
-        { text: p.responsable, w: 38, align: 'center' },
+      else c.planning.forEach((p, i) => drawRow([
+        { text: p.etape, w: 32, fill: zebra(i) },
+        { text: p.description, w: contentW - 32 - 28 - 38, fill: zebra(i) },
+        { text: fmtD(p.date), w: 28, align: 'center', fill: zebra(i) },
+        { text: p.responsable, w: 38, align: 'center', fill: zebra(i) },
       ]))
     }
     const tachesTable = (titre: string, list: ProjetContent['taches']) => {
-      band(titre, dark)
+      section(titre)
       drawRow([
-        { text: 'Fait', w: 14, fill: [55, 65, 81], color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Description', w: contentW - 14 - 30, fill: [55, 65, 81], color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Date', w: 30, fill: [55, 65, 81], color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Fait', w: 14, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Description', w: contentW - 14 - 30, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Date', w: 30, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
       ])
       if (list.length === 0) emptyRow()
-      else list.forEach((t) => drawRow([
+      else list.forEach((t, i) => drawRow([
         { w: 14, check: t.fait },
-        { text: t.description, w: contentW - 14 - 30 },
-        { text: fmtD(t.date), w: 30, align: 'center' },
+        { text: t.description, w: contentW - 14 - 30, fill: zebra(i) },
+        { text: fmtD(t.date), w: 30, align: 'center', fill: zebra(i) },
       ]))
     }
     const taches = c.taches ?? []

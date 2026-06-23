@@ -265,6 +265,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
   const [echeances, setEcheances] = useState<Echeance[]>([]);
   const [notes, setNotes] = useState("");
   const [documentDate, setDocumentDate] = useState("");
+  const [validiteJours, setValiditeJours] = useState<number>(30);
   const [saving, setSaving] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [pdfUploading, setPdfUploading] = useState(false);
@@ -293,6 +294,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       setEcheances(data.echeances ?? []);
       setNotes(data.notes ?? "");
       setDocumentDate(toDateInputValue(data.date ?? data.createdAt ?? null));
+      setValiditeJours(data.validiteJours ?? 30);
       setFactureNom(data.factureNom ?? "");
       setFactureAdresse(data.factureAdresse ?? "");
       setFactureCodePostal(data.factureCodePostal ?? "");
@@ -531,6 +533,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       const dateTs = documentDate ? Timestamp.fromDate(new Date(documentDate)) : undefined;
       await updateFacture(id, {
         items, total, echeances, notes,
+        ...(facture?.type === "devis" ? { validiteJours } : {}),
         ...(echeanceRef ? { echeanceRef } : {}),
         ...(dateTs ? { date: dateTs } : {}),
         factureNom: factureNom.trim() || undefined,
@@ -539,7 +542,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
         factureVille: factureVille.trim() || undefined,
         factureEmail: factureEmail.trim() || undefined,
       });
-      setFacture((p) => p ? { ...p, items, total, echeances, notes, factureNom: factureNom.trim() || undefined, factureEmail: factureEmail.trim() || undefined, ...(dateTs ? { date: dateTs } : {}) } : null);
+      setFacture((p) => p ? { ...p, items, total, echeances, notes, ...(p.type === "devis" ? { validiteJours } : {}), factureNom: factureNom.trim() || undefined, factureEmail: factureEmail.trim() || undefined, ...(dateTs ? { date: dateTs } : {}) } : null);
       showToast("Sauvegardé");
     } catch {
       showToast("Erreur lors de la sauvegarde", false);
@@ -603,7 +606,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
     if (!facture) return;
     setPdfUploading(true);
     try {
-      const snapshot: Facture = { ...facture, items, total, echeances, notes };
+      const snapshot: Facture = { ...facture, items, total, echeances, notes, ...(facture.type === "devis" ? { validiteJours } : {}) };
       const blob = await generateInvoicePDFBlob(snapshot, company);
       const pdfUrl = await uploadBlob(blob, `users/${currentUser!.uid}/factures/${id}.pdf`);
       const updates: Partial<Omit<Facture, "id">> = { pdfUrl };
@@ -629,7 +632,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
         newStatus = "sent";
       }
       const dateTs = documentDate ? Timestamp.fromDate(new Date(documentDate)) : undefined;
-      const snapshot: Facture = { ...facture, status: newStatus, items, total, echeances, notes, ...(dateTs ? { date: dateTs } : {}) };
+      const snapshot: Facture = { ...facture, status: newStatus, items, total, echeances, notes, ...(facture.type === "devis" ? { validiteJours } : {}), ...(dateTs ? { date: dateTs } : {}) };
       await downloadInvoicePDF(snapshot, company);
     } catch {
       showToast("Erreur lors de la génération du PDF", false);
@@ -902,14 +905,35 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
           {/* DATE */}
           <div className="bg-white border rounded-xl shadow-sm p-5">
             <h2 className="text-sm font-semibold text-gray-700 mb-3">Date du document</h2>
-            <input
-              type="date"
-              value={documentDate}
-              onChange={(e) => setDocumentDate(e.target.value)}
-              onBlur={save}
-              className="border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition"
-            />
-            <p className="text-xs text-gray-400 mt-1.5">Modifiable (ex : facturation groupée envoyée ultérieurement)</p>
+            <div className="flex flex-wrap items-start gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Date d'émission</label>
+                <input
+                  type="date"
+                  value={documentDate}
+                  onChange={(e) => setDocumentDate(e.target.value)}
+                  onBlur={save}
+                  className="h-[42px] border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition"
+                />
+                <p className="text-xs text-gray-400 mt-1.5">Modifiable (ex : facturation groupée envoyée ultérieurement)</p>
+              </div>
+              {isDevis && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Validité du devis</label>
+                  <div className="flex items-center gap-2 h-[42px]">
+                    <input
+                      type="number" min="1"
+                      value={validiteJours}
+                      onChange={(e) => setValiditeJours(Math.max(1, Number(e.target.value)))}
+                      onBlur={save}
+                      className="h-[42px] w-20 border rounded-lg px-3 py-2.5 text-sm text-right outline-none focus:border-blue-400 transition"
+                    />
+                    <span className="text-sm text-gray-500">jours</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1.5">30 jours par défaut</p>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* FACTURER À */}

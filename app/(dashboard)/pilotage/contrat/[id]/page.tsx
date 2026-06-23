@@ -15,6 +15,8 @@ import { uploadBlob, deleteImage } from '@/lib/uploadImage'
 import SignaturePad from '@/components/ui/SignaturePad'
 import Modal from '@/components/ui/Modal'
 import { generatePilotageDocPdf, PILOTAGE_DOC_TYPES, STATUT_DOC_LABELS } from '@/lib/pilotageDocPdf'
+import { buildDevisFromContrat } from '@/lib/pilotageDevis'
+import { createFacture } from '@/lib/facturationService'
 import { defaultLegalFields, legalFieldGroupsAll, type LegalFields } from '@/lib/pilotageLegalTemplates'
 import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, DEFAULT_PLANNING_TEMPLATE, generatePlanningFromTemplate, type ProjetContent } from '@/lib/pilotageProjetTemplates'
 import { StringListEditor, FonctionsEditor, PlanningEditor, HorsPerimetreEditor, TacheAjoutForm, TachesApercu, PlanningApercu, ProjetApercu, tauxHoraireFromTjm, prixFacture, estEnRetard } from '@/components/pilotage/ProjetUI'
@@ -22,7 +24,7 @@ import { CharteEditor, CharteApercu, defaultCharte } from '@/components/pilotage
 import EstimateurTarif from '@/components/pilotage/EstimateurTarif'
 import { computeTarif, stateFromEstimation, fmtEur, type TarifResult } from '@/lib/pilotageEstimateur'
 import { randomUUID } from '@/lib/uuid'
-import type { PilotageContrat, PilotageDocument, PilotageDocumentType, ChartGraphique, PilotageEstimation, SavedEstimation } from '@/types'
+import type { PilotageContrat, PilotageDocument, PilotageDocumentType, ChartGraphique, PilotageEstimation, SavedEstimation, DevisOption } from '@/types'
 import {
   ArrowLeftIcon, TrashIcon, PlusIcon, CheckIcon, ArrowDownTrayIcon, ExclamationTriangleIcon, PencilIcon,
   EyeIcon, ArrowPathIcon,
@@ -117,6 +119,27 @@ export default function ContratPage() {
     [companies])
   const contrat = useMemo(() => contrats.find((c) => c.id === id) ?? null, [contrats, id])
   const { documents, addDocument, updateDocument, deleteDocument } = usePilotageDocuments(id)
+
+  // Génère un devis de prestation pré-rempli depuis le contrat, puis ouvre la fiche devis.
+  const [genDevis, setGenDevis] = useState(false)
+  const generateDevis = async () => {
+    if (!contrat || !currentUser) return
+    setGenDevis(true)
+    try {
+      const client = clients.find((c) => c.id === contrat.clientId) ?? null
+      const payload = buildDevisFromContrat(contrat, {
+        userId: currentUser.uid,
+        client,
+        companyId: company?.id,
+        companyNom: company?.nom,
+      })
+      const ref = await createFacture(payload)
+      router.push(`/facturation/${ref.id}`)
+    } catch (e) {
+      console.error('[generateDevis]', e)
+      setGenDevis(false)
+    }
+  }
   const { settings, saveSettings } = usePilotageSettings()
   // Étapes-types du planning (liste déroulante, persistées dans pilotage_settings et éditables)
   const etapesTypes = settings?.planningEtapes ?? DEFAULT_PLANNING_ETAPES
@@ -138,6 +161,25 @@ export default function ContratPage() {
   const [formProjet, setFormProjet] = useState<ProjetContent>(defaultProjetContent())
   const [formLegal, setFormLegal] = useState<LegalFields>(defaultLegalFields())
   const [formCharte, setFormCharte] = useState<ChartGraphique>(defaultCharte())
+  const [formOptions, setFormOptions] = useState<DevisOption[]>([])
+  // Options à la carte du devis (hors flux Modifier/Enregistrer)
+  const persistOptions = async (next: DevisOption[]) => {
+    setFormOptions(next)
+    if (contrat) { try { await updateContrat(contrat.id, { optionsDevis: next } as Partial<PilotageContrat>) } catch (e) { console.error('[options persist]', e) } }
+  }
+  const updOpt = (i: number, patch: Partial<DevisOption>) => setFormOptions((p) => p.map((x, idx) => idx === i ? { ...x, ...patch } : x))
+  const saveOpts = () => { if (contrat) updateContrat(contrat.id, { optionsDevis: formOptions } as Partial<PilotageContrat>).catch((e) => console.error('[options persist]', e)) }
+  // Formulaire d'ajout d'une option (champs vidés après ajout)
+  const [optDraft, setOptDraft] = useState<DevisOption>({ label: '' })
+  const [editOptIdx, setEditOptIdx] = useState<number | null>(null) // option en cours d'édition (lecture seule par défaut)
+  const addOption = () => {
+    if (!optDraft.label.trim()) return
+    persistOptions([...formOptions, { ...optDraft, label: optDraft.label.trim() }])
+    setOptDraft({ label: '' })
+  }
+  const fmtOptPrice = (o: DevisOption) =>
+    o.prixMin != null && o.prixMax != null ? `${o.prixMin} – ${o.prixMax} €`
+      : o.prixMin != null ? `${o.prixMin} €` : 'sur devis'
   const [newDocType, setNewDocType] = useState<PilotageDocumentType>('cahier_charges')
   const [signDoc, setSignDoc] = useState<PilotageDocument | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'done'>('idle')
@@ -179,6 +221,7 @@ export default function ContratPage() {
     setFormLegal(prefill)
     setFormProjet(contrat.projet ? defaultProjetContent(contrat.projet) : defaultProjetContent())
     setFormCharte(contrat.charte ? defaultCharte(contrat.charte) : defaultCharte())
+    setFormOptions(contrat.optionsDevis ?? [])
   }, [contrat, clients, company])
 
   // Onglet initial depuis ?tab=… (lu côté client pour éviter une frontière Suspense)
@@ -391,6 +434,11 @@ export default function ContratPage() {
             <p className="text-xs text-gray-400">Documents · contenu projet · mentions légales</p>
           </div>
         </div>
+        <button onClick={generateDevis} disabled={genDevis}
+          title="Crée un devis de prestation pré-rempli depuis ce contrat (objet, lignes, inclus, options, modalités)"
+          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition shrink-0">
+          <PlusIcon className="w-4 h-4" /> {genDevis ? 'Génération…' : 'Générer un devis'}
+        </button>
       </div>
 
       {/* Onglets — une seule ligne : défilement latéral sur mobile (desktop : tout tient), reste en place au scroll vertical */}
@@ -638,6 +686,79 @@ export default function ContratPage() {
             ) : (
               <ProjetApercu projet={formProjet} only={['contexte', 'fonctionnalites', 'livrables', 'horsPerimetre']} />
             )}
+
+            {/* Options à la carte proposées sur le devis de prestation */}
+            <details className="border border-gray-200 rounded-xl">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-700 select-none">
+                Options à la carte du devis
+                <span className="ml-1 text-xs text-gray-400">({formOptions.length}) — chiffrées, hors total</span>
+              </summary>
+              <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
+                <p className="text-xs text-gray-500">Propositions supplémentaires affichées sur le devis (ex : module vidéo, publication stores…), non comptées dans le total. Reprises automatiquement par « Générer un devis ».</p>
+
+                {/* Options déjà créées — lecture seule par défaut (crayon = modifier) */}
+                {formOptions.length > 0 && (
+                  <div className="space-y-2">
+                    {formOptions.map((o, i) => editOptIdx === i ? (
+                      <div key={i} className="border border-blue-200 rounded-lg p-3 space-y-2 bg-blue-50/30">
+                        <input value={o.label} onChange={(e) => updOpt(i, { label: e.target.value })}
+                          placeholder="Intitulé de l'option" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <textarea value={o.description ?? ''} onChange={(e) => updOpt(i, { description: e.target.value })}
+                          rows={2} placeholder="Description (optionnel)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-gray-500">Prix</span>
+                          <input type="number" value={o.prixMin ?? ''} onChange={(e) => updOpt(i, { prixMin: e.target.value === '' ? undefined : Number(e.target.value) })}
+                            placeholder="min €" className="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                          <span className="text-xs text-gray-400">à</span>
+                          <input type="number" value={o.prixMax ?? ''} onChange={(e) => updOpt(i, { prixMax: e.target.value === '' ? undefined : Number(e.target.value) })}
+                            placeholder="max € (optionnel)" className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                          <span className="text-xs text-gray-400">vide = « sur devis »</span>
+                        </div>
+                        <div className="flex justify-end">
+                          <button onClick={() => { saveOpts(); setEditOptIdx(null) }}
+                            className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition">
+                            <CheckIcon className="w-4 h-4" /> Terminer
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={i} className="flex items-start gap-2 border border-gray-200 rounded-lg p-3 bg-white">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800">{o.label || <span className="text-gray-400">Sans titre</span>}</p>
+                          {o.description && <p className="text-xs text-gray-500 mt-0.5 whitespace-pre-line">{o.description}</p>}
+                        </div>
+                        <span className="text-sm font-semibold text-gray-700 shrink-0 whitespace-nowrap">{fmtOptPrice(o)}</span>
+                        <button onClick={() => setEditOptIdx(i)} className="p-1.5 text-gray-300 hover:text-blue-600 transition shrink-0" title="Modifier l'option"><PencilIcon className="w-4 h-4" /></button>
+                        <button onClick={() => { persistOptions(formOptions.filter((_, idx) => idx !== i)); setEditOptIdx(null) }} className="p-1.5 text-gray-300 hover:text-red-500 transition shrink-0" title="Supprimer l'option"><TrashIcon className="w-4 h-4" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Section d'ajout — vidée après « Ajouter » */}
+                <div className="border border-dashed border-blue-200 rounded-lg p-3 space-y-2 bg-blue-50/30">
+                  <p className="text-xs font-medium text-gray-600">Nouvelle option</p>
+                  <input value={optDraft.label} onChange={(e) => setOptDraft((d) => ({ ...d, label: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addOption() } }}
+                    placeholder="Intitulé de l'option" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <textarea value={optDraft.description ?? ''} onChange={(e) => setOptDraft((d) => ({ ...d, description: e.target.value }))}
+                    rows={2} placeholder="Description (optionnel)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-gray-500">Prix</span>
+                    <input type="number" value={optDraft.prixMin ?? ''} onChange={(e) => setOptDraft((d) => ({ ...d, prixMin: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                      placeholder="min €" className="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <span className="text-xs text-gray-400">à</span>
+                    <input type="number" value={optDraft.prixMax ?? ''} onChange={(e) => setOptDraft((d) => ({ ...d, prixMax: e.target.value === '' ? undefined : Number(e.target.value) }))}
+                      placeholder="max € (optionnel)" className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <span className="text-xs text-gray-400">vide = « sur devis »</span>
+                  </div>
+                  <button onClick={addOption} disabled={!optDraft.label.trim()}
+                    className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg transition">
+                    <PlusIcon className="w-4 h-4" /> Ajouter
+                  </button>
+                </div>
+              </div>
+            </details>
           </div>
         )}
 

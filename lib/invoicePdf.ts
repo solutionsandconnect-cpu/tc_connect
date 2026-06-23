@@ -130,11 +130,13 @@ async function buildPDF(facture: Facture, company?: Company | null) {
   doc.text(`N° ${facture.number}`, titleX, 26);
 
   const docDate = facture.date ?? facture.createdAt;
-  doc.text(`Date : ${fmtDate(docDate ?? null)}`, titleX, 32);
+  doc.text(`Date : ${fmtDate(docDate ?? null)}`, titleX, isDevis ? 31 : 32);
 
   if (isDevis) {
-    doc.setFontSize(7);
-    doc.text("Ce document est un devis et ne fait pas office de facture.", titleX, 38);
+    doc.setFontSize(9);
+    doc.text(`Validité : ${facture.validiteJours ?? 30} jours`, titleX, 36);
+    doc.setFontSize(6.5);
+    doc.text("Ce document est un devis et ne fait pas office de facture.", titleX, 40);
   }
 
   if (!isDevis && facture.devisNumber) {
@@ -221,9 +223,27 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     doc.text(`Issu du devis ${facture.devisNumber ?? facture.devisRef}`, rightX + 4, y + 22);
   }
 
-  // ── Tableau prestations ─────────────────────────────────────────
+  // ── Objet du devis (devis de prestation — optionnel) ────────────
   y += clientH + 10;
+  if (facture.objet) {
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...dark);
+    doc.text("Objet", margin, y);
+    y += 5;
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    const objLines = doc.splitTextToSize(facture.objet, contentW) as string[];
+    for (const ln of objLines) {
+      if (y > 272) { doc.addPage(); y = 20; }
+      doc.text(ln, margin, y);
+      y += 4.6;
+    }
+    y += 4;
+  }
 
+  // ── Tableau prestations ─────────────────────────────────────────
   // Colonnes : desc | qté | prix | remise | total
   const hasDiscount = facture.items.some((i) => i.discountType && i.discountValue);
   const cols = hasDiscount
@@ -233,25 +253,27 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     ? ["Description", "Qté", "Prix unit.", "Remise", "Total net"]
     : ["Description", "Qté", "Prix unit.", "Total"];
 
-  doc.setFillColor(...blue);
-  doc.rect(margin, y, contentW, 8, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(8.5);
-  doc.setFont("helvetica", "bold");
-  let cx = margin + 3;
-  for (let i = 0; i < headers.length; i++) {
-    if (i === 0) {
-      doc.text(headers[i], cx, y + 5.5, { align: "left" });
-    } else {
-      doc.text(headers[i], cx + cols[i] / 2, y + 5.5, { align: "center" });
+  const drawTableHeader = () => {
+    doc.setFillColor(...blue);
+    doc.rect(margin, y, contentW, 8, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "bold");
+    let hx = margin + 3;
+    for (let i = 0; i < headers.length; i++) {
+      if (i === 0) doc.text(headers[i], hx, y + 5.5, { align: "left" });
+      else doc.text(headers[i], hx + cols[i] / 2, y + 5.5, { align: "center" });
+      hx += cols[i];
     }
-    cx += cols[i];
-  }
+    y += 8;
+  };
+  drawTableHeader();
 
-  y += 8;
-  doc.setFontSize(8.5);
   let grandTotal = 0;
   let totalDiscount = 0;
+  let recurringYear1 = 0;   // contribution « année 1 » des lignes récurrentes (qté × prix net)
+  let recurringPerYear = 0; // coût annuel récurrent pour « années suivantes »
+  const recLabel = (r?: string) => (r === "mensuel" ? " /mois" : r === "annuel" ? " /an" : "");
 
   for (let i = 0; i < facture.items.length; i++) {
     const item = facture.items[i];
@@ -259,41 +281,56 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     const net = itemNetTotal(item);
     grandTotal += net;
     totalDiscount += gross - net;
+    if (item.recurrence === "mensuel") { recurringYear1 += net; recurringPerYear += item.price * 12; }
+    else if (item.recurrence === "annuel") { recurringYear1 += net; recurringPerYear += item.price; }
 
-    if (i % 2 === 0) {
-      doc.setFillColor(249, 250, 251);
-      doc.rect(margin, y, contentW, 8, "F");
-    }
+    // Hauteur de ligne variable : label multi-lignes + sous-description éventuelle
+    doc.setFontSize(8.5);
+    const labelLines = doc.splitTextToSize(item.label || "—", cols[0] - 6) as string[];
+    const descLines = item.description ? (doc.splitTextToSize(item.description, cols[0] - 6) as string[]) : [];
+    const rowH = Math.max(8, 4 + labelLines.length * 4 + (descLines.length ? descLines.length * 3.4 + 1.5 : 0));
 
-    cx = margin + 3;
-    doc.setFont("helvetica", "normal");
+    if (y + rowH > 276) { doc.addPage(); y = 20; drawTableHeader(); }
+
+    if (i % 2 === 0) { doc.setFillColor(249, 250, 251); doc.rect(margin, y, contentW, rowH, "F"); }
+
+    let cx = margin + 3;
+    // Label (gras) + sous-description (gris, plus petit)
+    doc.setFont("helvetica", "bold");
     doc.setTextColor(...dark);
-    // Description (truncate if too long)
-    const label = doc.splitTextToSize(item.label || "—", cols[0] - 6)[0];
-    doc.text(label, cx, y + 5.5);
+    doc.setFontSize(8.5);
+    let ty = y + 4.5;
+    for (const ln of labelLines) { doc.text(ln, cx, ty); ty += 4; }
+    if (descLines.length) {
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(...gray);
+      doc.setFontSize(7.5);
+      ty += 0.5;
+      for (const ln of descLines) { doc.text(ln, cx, ty); ty += 3.4; }
+    }
     cx += cols[0];
 
-    doc.text(String(item.quantity), cx + cols[1] / 2, y + 5.5, { align: "center" });
+    // Colonnes numériques — alignées sur la 1ère ligne
+    const ny = y + 4.5;
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...dark);
+    doc.setFontSize(8.5);
+    doc.text(String(item.quantity), cx + cols[1] / 2, ny, { align: "center" });
     cx += cols[1];
-
-    doc.text(fmt(item.price), cx + cols[2] / 2, y + 5.5, { align: "center" });
+    doc.text(fmt(item.price) + recLabel(item.recurrence), cx + cols[2] / 2, ny, { align: "center" });
     cx += cols[2];
-
     if (hasDiscount) {
       if (item.discountType && item.discountValue) {
         doc.setTextColor(...orange);
-        const dLabel = item.discountType === "percent"
-          ? `-${item.discountValue}%`
-          : `-${fmt(item.discountValue)}`;
-        doc.text(dLabel, cx + cols[3] / 2, y + 5.5, { align: "center" });
+        const dLabel = item.discountType === "percent" ? `-${item.discountValue}%` : `-${fmt(item.discountValue)}`;
+        doc.text(dLabel, cx + cols[3] / 2, ny, { align: "center" });
         doc.setTextColor(...dark);
       }
       cx += cols[3];
     }
-
     doc.setFont("helvetica", "bold");
-    doc.text(fmt(net), cx + cols[cols.length - 1] / 2, y + 5.5, { align: "center" });
-    y += 8;
+    doc.text(fmt(net), cx + cols[cols.length - 1] / 2, ny, { align: "center" });
+    y += rowH;
   }
 
   // Ligne séparateur
@@ -373,6 +410,38 @@ async function buildPDF(facture: Facture, company?: Company | null) {
       y += 9;
     }
     y += 6;
+  } else if (isDevis && recurringYear1 > 0) {
+    // Devis de prestation avec récurrent : one-off + abonnement → Total Année 1 + années suivantes
+    const oneOff = grandTotal - recurringYear1;
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text("Mise en service (one-off)", totalX + 4, y + 5);
+    doc.setTextColor(...dark);
+    doc.text(fmt(oneOff), totalX + totalW - 4, y + 5, { align: "right" });
+    y += 6;
+    doc.setTextColor(...gray);
+    doc.text("Abonnement (année 1)", totalX + 4, y + 5);
+    doc.setTextColor(...dark);
+    doc.text(fmt(recurringYear1), totalX + totalW - 4, y + 5, { align: "right" });
+    y += 7;
+    doc.setFillColor(...blue);
+    doc.roundedRect(totalX, y, totalW, 12, 2, 2, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10.5);
+    doc.setFont("helvetica", "bold");
+    doc.text("Total Année 1 HT", totalX + 4, y + 8);
+    doc.text(fmt(grandTotal), totalX + totalW - 4, y + 8, { align: "right" });
+    y += 14;
+    doc.setFillColor(239, 246, 255);
+    doc.roundedRect(totalX, y, totalW, 9, 2, 2, "F");
+    doc.setTextColor(...dark);
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.text("Années suivantes", totalX + 4, y + 5.8);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${fmt(recurringPerYear)} / an`, totalX + totalW - 4, y + 5.8, { align: "right" });
+    y += 16;
   } else {
     doc.setFillColor(...blue);
     doc.roundedRect(totalX, y, totalW, 13, 2, 2, "F");
@@ -489,6 +558,109 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     y += 5 + noteLines.length * 4.5 + 4;
   }
 
+  // ── Ce qui est inclus (devis de prestation — optionnel) ─────────
+  if (facture.inclus && facture.inclus.length > 0) {
+    if (y > 240) { doc.addPage(); y = 20; }
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...dark);
+    doc.text("Ce qui est inclus", margin, y);
+    y += 6;
+    const colW = contentW / 2;
+    const itemW = colW - 9;
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    for (let i = 0; i < facture.inclus.length; i += 2) {
+      const pair = facture.inclus.slice(i, i + 2);
+      const cellLines = pair.map((t) => doc.splitTextToSize(t, itemW) as string[]);
+      const rowH = Math.max(...cellLines.map((l) => l.length)) * 4 + 2.5;
+      if (y + rowH > 276) { doc.addPage(); y = 20; }
+      pair.forEach((_, c) => {
+        const x = margin + c * colW;
+        // petite coche dessinée (le glyphe ✓ n'est pas dans l'encodage standard)
+        doc.setDrawColor(...green);
+        doc.setLineWidth(0.4);
+        doc.line(x + 0.4, y + 2.4, x + 1.3, y + 3.3);
+        doc.line(x + 1.3, y + 3.3, x + 3, y + 1.1);
+        doc.setLineWidth(0.2);
+        doc.setTextColor(...dark);
+        doc.setFont("helvetica", "normal");
+        let ty = y + 3.4;
+        for (const ln of cellLines[c]) { doc.text(ln, x + 5, ty); ty += 4; }
+      });
+      y += rowH;
+    }
+    y += 4;
+  }
+
+  // ── Options à la carte (devis de prestation — optionnel) ────────
+  if (facture.options && facture.options.length > 0) {
+    if (y > 235) { doc.addPage(); y = 20; }
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...dark);
+    doc.text("Options à la carte", margin, y);
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text("(hors devis — sur commande ultérieure)", margin + doc.getTextWidth("Options à la carte") + 3, y);
+    y += 5;
+    for (const opt of facture.options) {
+      const priceTxt = opt.prixMin != null && opt.prixMax != null
+        ? `${fmt(opt.prixMin)} – ${fmt(opt.prixMax)}`
+        : opt.prixMin != null ? fmt(opt.prixMin) : "sur devis";
+      doc.setFontSize(9);
+      const labelW = contentW - 38;
+      const oLines = doc.splitTextToSize(opt.label, labelW) as string[];
+      const dLines = opt.description ? (doc.splitTextToSize(opt.description, labelW) as string[]) : [];
+      const rowH = Math.max(7, 3 + oLines.length * 4 + (dLines.length ? dLines.length * 3.4 + 1 : 0));
+      if (y + rowH > 276) { doc.addPage(); y = 20; }
+      doc.setFillColor(249, 250, 251);
+      doc.rect(margin, y, contentW, rowH, "F");
+      let ty = y + 4.5;
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(...dark);
+      doc.setFontSize(9);
+      for (const ln of oLines) { doc.text(ln, margin + 3, ty); ty += 4; }
+      if (dLines.length) {
+        doc.setFontSize(7.5); doc.setTextColor(...gray); ty += 0.3;
+        for (const ln of dLines) { doc.text(ln, margin + 3, ty); ty += 3.4; }
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(...dark);
+      doc.setFontSize(9);
+      doc.text(priceTxt, margin + contentW - 3, y + 4.5, { align: "right" });
+      y += rowH;
+    }
+    y += 5;
+  }
+
+  // ── Modalités (devis de prestation — optionnel) ─────────────────
+  if (facture.modalites && facture.modalites.length > 0) {
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...dark);
+    doc.text("Modalités", margin, y);
+    y += 6;
+    const labW = 45;
+    for (const m of facture.modalites) {
+      doc.setFontSize(8.5);
+      const valLines = doc.splitTextToSize(m.value, contentW - labW - 4) as string[];
+      const rowH = Math.max(5, valLines.length * 4.2 + 2);
+      if (y + rowH > 278) { doc.addPage(); y = 20; }
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(...dark);
+      doc.text(m.label, margin, y + 4);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(...gray);
+      let ty = y + 4;
+      for (const ln of valLines) { doc.text(ln, margin + labW, ty); ty += 4.2; }
+      y += rowH;
+    }
+    y += 4;
+  }
+
   // ── Section signature (devis uniquement) ────────────────────────
   if (isDevis) {
     if (y > 225) { doc.addPage(); y = 20; }
@@ -526,6 +698,29 @@ async function buildPDF(facture: Facture, company?: Company | null) {
       doc.setLineWidth(0.3);
       doc.line(margin + 4, sigY + 36, margin + sigBoxW - 4, sigY + 36);
     }
+
+    // Bloc prestataire (à droite)
+    const presX = margin + contentW * 0.62;
+    const presW = contentW * 0.38;
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(presX, sigY, presW, sigBoxH, 2, 2, "S");
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...dark);
+    doc.text("LE PRESTATAIRE", presX + 4, sigY + 7);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...dark);
+    doc.text(company?.nom ?? "Solutions & Connect", presX + 4, sigY + 13);
+    // Prestataire = émetteur : « bon pour accord » automatique à la date du devis (pas de signature manuelle).
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...green);
+    doc.text("Bon pour accord", presX + 4, sigY + 19.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...gray);
+    doc.text(`Établi et signé le ${fmtDate(docDate ?? null)}`, presX + 4, sigY + 24.5);
+
     y = sigY + sigBoxH + 6;
   }
 

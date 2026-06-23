@@ -290,6 +290,7 @@ export interface ChartGraphique {
   objectifs?: string[]                                          // objectifs du projet (liste)
   typeProjet?: 'application' | 'site_web' | 'autre' | 'app_mobile' | 'app_web'  // application / site / autre (app_mobile & app_web = legacy)
   typeAutre?: string                                            // précision libre si typeProjet === 'autre'
+  nomProjet?: string                                            // nom du projet (distinct du nom commercial de l'app)
   nomApp?: string
   publicCible?: string
   usersMin?: number                                             // nb d'utilisateurs envisagé (bornes)
@@ -369,6 +370,7 @@ export interface PilotageContrat {
   projet?: ProjetContent       // contenu projet partagé (rempli une fois, réutilisé par les documents)
   legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)
   charte?: ChartGraphique      // charte graphique & cadrage (type, couleurs, utilisateurs, contraintes…)
+  optionsDevis?: DevisOption[]    // options à la carte chiffrées proposables sur le devis (hors total)
   estimation?: PilotageEstimation // (legacy) snapshot unique du calculateur — voir `estimations`
   estimations?: SavedEstimation[] // plusieurs estimations nommées à comparer (calculateur de la fiche contrat)
   estimationSelectedId?: string | null // estimation « validée » → son TJM pilote les tâches à facturer
@@ -759,6 +761,16 @@ export interface FactureItem {
   price: number
   discountType?: 'percent' | 'amount'
   discountValue?: number
+  description?: string                          // sous-description détaillée (ce que la ligne inclut) — devis de prestation
+  recurrence?: 'unique' | 'mensuel' | 'annuel'  // 'unique' (défaut) = forfait one-off ; 'mensuel'/'annuel' = récurrent (price = prix par période)
+}
+
+// Option à la carte chiffrée (hors total), proposée sur un devis de prestation
+export interface DevisOption {
+  label: string
+  description?: string
+  prixMin?: number
+  prixMax?: number          // si défini → affiché en fourchette « prixMin – prixMax » ; sinon prix unique (prixMin) ou « sur devis »
 }
 
 export interface Echeance {
@@ -790,6 +802,13 @@ export interface Facture {
   type: FactureType
   items: FactureItem[]
   total: number
+  // Devis de prestation enrichi (optionnel — vide = devis/facture classique inchangé)
+  objet?: string                       // « Objet du devis » (narratif)
+  contratId?: string | null            // contrat Pilotage source (si généré depuis un contrat)
+  validiteJours?: number               // durée de validité du devis (jours ; défaut 30 à l'affichage)
+  inclus?: string[]                    // « Ce qui est inclus » (liste à puces, 2 colonnes)
+  modalites?: { label: string; value: string }[]  // bloc Modalités (paiement, délai, PI, RGPD…)
+  options?: DevisOption[]              // options à la carte chiffrées (hors total)
   echeances?: Echeance[]
   echeanceRef?: EcheanceRef  // présent sur les factures issues d'un devis à échéancier
   notes?: string
