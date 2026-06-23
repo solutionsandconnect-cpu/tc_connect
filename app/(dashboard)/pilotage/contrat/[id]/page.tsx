@@ -627,7 +627,7 @@ export default function ContratPage() {
                 <div>
                   <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Livrables</p>
                   <p className="text-[11px] text-gray-400 mb-2">Ce que le client <strong>reçoit concrètement</strong> (≠ fonctionnalités).</p>
-                  <StringListEditor items={formProjet.livrables} onChange={(v) => updP({ livrables: v })} placeholder="Livrable…" />
+                  <StringListEditor items={formProjet.livrables} onChange={(v) => updP({ livrables: v })} placeholder="Livrable…" reorderable />
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Hors-périmètre <span className="font-normal normal-case text-gray-400">— apparaît sur le cahier des charges</span></p>

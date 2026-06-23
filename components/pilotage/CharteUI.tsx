@@ -137,7 +137,7 @@ export function CharteEditor({ value, onChange, onUpload }: {
     <div className="space-y-5">
       <div>
         <p className={lbl}>Objectifs du projet</p>
-        <StringListEditor items={value.objectifs ?? []} onChange={(v) => upd({ objectifs: v })} placeholder="Un objectif…" />
+        <StringListEditor items={value.objectifs ?? []} onChange={(v) => upd({ objectifs: v })} placeholder="Un objectif…" reorderable />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -253,7 +253,7 @@ export function CharteEditor({ value, onChange, onUpload }: {
 
       <div>
         <p className={lbl}>Contraintes &amp; spécifications techniques</p>
-        <StringListEditor items={value.contraintes ?? []} onChange={(v) => upd({ contraintes: v })} placeholder="ex : intégration compta, mode hors-ligne, hébergement imposé…" />
+        <StringListEditor items={value.contraintes ?? []} onChange={(v) => upd({ contraintes: v })} placeholder="ex : intégration compta, mode hors-ligne, hébergement imposé…" reorderable />
       </div>
 
       {onUpload && (

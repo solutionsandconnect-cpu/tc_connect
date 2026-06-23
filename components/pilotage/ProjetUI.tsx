@@ -3,7 +3,7 @@
 // Éditeurs & aperçu du « contenu projet » d'un contrat Pilotage.
 // Extraits pour être partagés entre la page /pilotage et la page dédiée /pilotage/contrat/[id].
 import { useEffect, useRef, useState } from 'react'
-import { PlusIcon, TrashIcon, ChevronUpIcon, ChevronDownIcon, CheckIcon, PencilIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, TrashIcon, ChevronUpIcon, ChevronDownIcon, CheckIcon, PencilIcon, Bars3BottomLeftIcon } from '@heroicons/react/24/outline'
 import type { ProjetFonction, ProjetPlanning, ProjetTache, ProjetContent } from '@/types'
 import { RESPONSABLES_PLANNING, recalcPlanning, HORS_PERIMETRE_DEFAUT, DEFAULT_PLANNING_ETAPES } from '@/lib/pilotageProjetTemplates'
 import Modal from '@/components/ui/Modal'
@@ -39,11 +39,57 @@ const DATE_CHIPS = [
   { l: '+1 mois', days: 0, months: 1 },
 ] as const
 
-export function StringListEditor({ items, onChange, placeholder }: { items: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
+// Palette ordonnée pour que deux entrées consécutives soient bien contrastées (hues éloignées).
+const CAT_PALETTE = [
+  { badge: 'bg-blue-100 text-blue-700', input: 'bg-blue-50 border-blue-300 text-blue-900' },
+  { badge: 'bg-amber-100 text-amber-700', input: 'bg-amber-50 border-amber-300 text-amber-900' },
+  { badge: 'bg-fuchsia-100 text-fuchsia-700', input: 'bg-fuchsia-50 border-fuchsia-300 text-fuchsia-900' },
+  { badge: 'bg-emerald-100 text-emerald-700', input: 'bg-emerald-50 border-emerald-300 text-emerald-900' },
+  { badge: 'bg-orange-100 text-orange-700', input: 'bg-orange-50 border-orange-300 text-orange-900' },
+  { badge: 'bg-violet-100 text-violet-700', input: 'bg-violet-50 border-violet-300 text-violet-900' },
+  { badge: 'bg-cyan-100 text-cyan-700', input: 'bg-cyan-50 border-cyan-300 text-cyan-900' },
+  { badge: 'bg-rose-100 text-rose-700', input: 'bg-rose-50 border-rose-300 text-rose-900' },
+  { badge: 'bg-lime-100 text-lime-700', input: 'bg-lime-50 border-lime-300 text-lime-900' },
+  { badge: 'bg-teal-100 text-teal-700', input: 'bg-teal-50 border-teal-300 text-teal-900' },
+] as const
+const CAT_NEUTRAL = { badge: 'bg-gray-100 text-gray-500', input: 'bg-white border-gray-300 text-gray-900' }
+// Attribue une couleur DISTINCTE à chaque catégorie par ordre d'apparition (garanti unique tant qu'il y a ≤ 10 catégories).
+export function buildCatColors(cats: string[]): Map<string, typeof CAT_PALETTE[number]> {
+  const map = new Map<string, typeof CAT_PALETTE[number]>()
+  for (const c of cats) {
+    const k = c.trim().toLowerCase()
+    if (k && !map.has(k)) map.set(k, CAT_PALETTE[map.size % CAT_PALETTE.length])
+  }
+  return map
+}
+export function categorieColor(cat: string, map?: Map<string, typeof CAT_PALETTE[number]>) {
+  const key = cat.trim().toLowerCase()
+  if (!key) return CAT_NEUTRAL
+  if (map?.has(key)) return map.get(key)!
+  // Repli (si pas de map fournie) : hash stable sur le libellé.
+  let h = 0
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0
+  return CAT_PALETTE[h % CAT_PALETTE.length]
+}
+
+export function StringListEditor({ items, onChange, placeholder, reorderable }: { items: string[]; onChange: (v: string[]) => void; placeholder?: string; reorderable?: boolean }) {
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir
+    if (j < 0 || j >= items.length) return
+    const next = [...items]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    onChange(next)
+  }
   return (
     <div className="space-y-1.5">
       {items.map((v, i) => (
         <div key={i} className="flex gap-2">
+          {reorderable && (
+            <div className="flex flex-col shrink-0">
+              <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="p-0.5 rounded text-gray-400 enabled:hover:text-blue-600 enabled:hover:bg-blue-50 disabled:opacity-30 transition"><ChevronUpIcon className="w-3.5 h-3.5" /></button>
+              <button type="button" onClick={() => move(i, 1)} disabled={i === items.length - 1} className="p-0.5 rounded text-gray-400 enabled:hover:text-blue-600 enabled:hover:bg-blue-50 disabled:opacity-30 transition"><ChevronDownIcon className="w-3.5 h-3.5" /></button>
+            </div>
+          )}
           <input value={v} placeholder={placeholder} onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))} className={inputCls} />
           <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
         </div>
@@ -55,16 +101,43 @@ export function StringListEditor({ items, onChange, placeholder }: { items: stri
 
 export function FonctionsEditor({ items, onChange }: { items: ProjetFonction[]; onChange: (v: ProjetFonction[]) => void }) {
   const upd = (i: number, patch: Partial<ProjetFonction>) => onChange(items.map((x, j) => (j === i ? { ...x, ...patch } : x)))
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir
+    if (j < 0 || j >= items.length) return
+    const next = [...items]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    onChange(next)
+  }
+  // Regroupe les lignes par catégorie (ordre de 1ʳᵉ apparition, ordre interne conservé) ; catégories vides en fin.
+  const groupByCategorie = () => {
+    const order: string[] = []
+    for (const f of items) { const k = f.categorie.trim(); if (k && !order.includes(k)) order.push(k) }
+    const next = items.filter((f) => f.categorie.trim())
+      .sort((a, b) => order.indexOf(a.categorie.trim()) - order.indexOf(b.categorie.trim()))
+      .concat(items.filter((f) => !f.categorie.trim()))
+    onChange(next)
+  }
+  const distinctCats = new Set(items.map((f) => f.categorie.trim()).filter(Boolean)).size
+  const catColors = buildCatColors(items.map((f) => f.categorie))
   return (
     <div className="space-y-1.5">
       {items.map((f, i) => (
         <div key={i} className="flex gap-2">
-          <input value={f.categorie} placeholder="Catégorie" onChange={(e) => upd(i, { categorie: e.target.value })} className="w-1/3 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <div className="flex flex-col shrink-0">
+            <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="p-0.5 rounded text-gray-400 enabled:hover:text-blue-600 enabled:hover:bg-blue-50 disabled:opacity-30 transition"><ChevronUpIcon className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={() => move(i, 1)} disabled={i === items.length - 1} className="p-0.5 rounded text-gray-400 enabled:hover:text-blue-600 enabled:hover:bg-blue-50 disabled:opacity-30 transition"><ChevronDownIcon className="w-3.5 h-3.5" /></button>
+          </div>
+          <input value={f.categorie} placeholder="Catégorie" onChange={(e) => upd(i, { categorie: e.target.value })} className={`w-1/3 min-w-0 border rounded-lg px-2 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${categorieColor(f.categorie, catColors).input}`} />
           <input value={f.description} placeholder="Description" onChange={(e) => upd(i, { description: e.target.value })} className={inputCls} />
           <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
         </div>
       ))}
-      <button type="button" onClick={() => onChange([...items, { categorie: '', description: '' }])} className={addBtn}><PlusIcon className="w-3.5 h-3.5" /> Ajouter</button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => onChange([...items, { categorie: '', description: '' }])} className={addBtn}><PlusIcon className="w-3.5 h-3.5" /> Ajouter</button>
+        {distinctCats > 1 && (
+          <button type="button" onClick={groupByCategorie} className={addBtn}><Bars3BottomLeftIcon className="w-3.5 h-3.5" /> Grouper par catégorie</button>
+        )}
+      </div>
     </div>
   )
 }
@@ -178,32 +251,49 @@ export function PlanningEditor({ items, onChange, etapesTypes }: { items: Projet
 }
 
 export function HorsPerimetreEditor({ items, onChange }: { items: string[]; onChange: (v: string[]) => void }) {
-  const customs = items.filter((i) => !HORS_PERIMETRE_DEFAUT.includes(i))
-  const toggle = (p: string) => onChange(items.includes(p) ? items.filter((x) => x !== p) : [...items, p])
+  const [draft, setDraft] = useState('')
+  const add = (p: string) => { const t = p.trim(); if (t && !items.includes(t)) onChange([...items, t]) }
+  const addDraft = () => { add(draft); setDraft('') }
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir
+    if (j < 0 || j >= items.length) return
+    const next = [...items]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    onChange(next)
+  }
+  // Raccourcis : suggestions prédéfinies pas encore ajoutées
+  const suggestions = HORS_PERIMETRE_DEFAUT.filter((p) => !items.includes(p))
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-1.5">
-        {HORS_PERIMETRE_DEFAUT.map((p) => {
-          const on = items.includes(p)
-          return (
-            <button key={p} type="button" onClick={() => toggle(p)}
-              className={`text-xs px-2.5 py-1 rounded-full border text-left transition ${on ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-600 hover:border-blue-400'}`}>
-              {on ? '✓ ' : '+ '}{p}
-            </button>
-          )
-        })}
-      </div>
-      {customs.length > 0 && (
+      {items.length > 0 && (
         <div className="space-y-1.5">
-          {customs.map((v) => (
-            <div key={v} className="flex gap-2">
-              <input value={v} onChange={(e) => onChange(items.map((x) => (x === v ? e.target.value : x)))} className={inputCls} />
-              <button type="button" onClick={() => onChange(items.filter((x) => x !== v))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
+          {items.map((v, i) => (
+            <div key={i} className="flex gap-2">
+              <div className="flex flex-col shrink-0">
+                <button type="button" onClick={() => move(i, -1)} disabled={i === 0} className="p-0.5 rounded text-gray-400 enabled:hover:text-blue-600 enabled:hover:bg-blue-50 disabled:opacity-30 transition"><ChevronUpIcon className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => move(i, 1)} disabled={i === items.length - 1} className="p-0.5 rounded text-gray-400 enabled:hover:text-blue-600 enabled:hover:bg-blue-50 disabled:opacity-30 transition"><ChevronDownIcon className="w-3.5 h-3.5" /></button>
+              </div>
+              <input value={v} onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))} className={inputCls} />
+              <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
             </div>
           ))}
         </div>
       )}
-      <button type="button" onClick={() => onChange([...items, ''])} className={addBtn}><PlusIcon className="w-3.5 h-3.5" /> Ajouter une exclusion libre</button>
+      <div className="flex gap-2">
+        <input value={draft} placeholder="Ajouter une exclusion…" onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDraft() } }} className={inputCls} />
+        <button type="button" onClick={addDraft} disabled={!draft.trim()} className={`${addBtn} disabled:opacity-40 disabled:hover:bg-transparent`}><PlusIcon className="w-3.5 h-3.5" /> Ajouter</button>
+      </div>
+      {suggestions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {suggestions.map((p) => (
+            <button key={p} type="button" onClick={() => add(p)}
+              className="text-xs px-2.5 py-1 rounded-full border border-gray-300 bg-white text-gray-600 text-left hover:border-blue-400 transition">
+              + {p}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -643,14 +733,16 @@ export function ProjetApercu({ projet, only }: { projet?: ProjetContent; only?: 
       )}
       {show('fonctionnalites') && nonEmpty('fonctionnalites') && (
         <section><ApercuTitle t="Fonctionnalités" />
+          {(() => { const catColors = buildCatColors(p.fonctionnalites.map((f) => f.categorie)); return (
           <ul className="space-y-1.5">
             {p.fonctionnalites.map((f, i) => (
               <li key={i} className="flex gap-2 text-sm">
-                {f.categorie && <span className="shrink-0 text-xs font-medium text-gray-500 bg-gray-100 rounded px-1.5 py-0.5 h-fit">{f.categorie}</span>}
+                {f.categorie && <span className={`shrink-0 text-xs font-medium rounded px-1.5 py-0.5 h-fit ${categorieColor(f.categorie, catColors).badge}`}>{f.categorie}</span>}
                 <span className="text-gray-700">{f.description}</span>
               </li>
             ))}
           </ul>
+          )})()}
         </section>
       )}
       {show('livrables') && nonEmpty('livrables') && (
