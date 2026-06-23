@@ -21,7 +21,7 @@ import type { PilotageContrat, PilotageContratStatut, PilotageEstimation } from 
 import {
   PlusIcon, PencilIcon, TrashIcon, DocumentTextIcon,
   ExclamationTriangleIcon, PresentationChartLineIcon, CalculatorIcon,
-  ArrowDownTrayIcon, CheckIcon, EyeIcon,
+  ArrowDownTrayIcon, CheckIcon, EyeIcon, ComputerDesktopIcon,
 } from '@heroicons/react/24/outline'
 
 // Plafond micro-entreprise (prestations de services / BNC) — à ajuster si le barème change
@@ -300,10 +300,17 @@ export default function PilotagePage() {
             <p className="text-sm text-gray-500">Tes contrats, ton revenu récurrent et ta marge</p>
           </div>
         </div>
-        <button onClick={openAdd}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
-          <PlusIcon className="w-4 h-4" /> Nouveau contrat
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => router.push('/pilotage/immobilisations')}
+            className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
+            title="Immobilisations / matériel">
+            <ComputerDesktopIcon className="w-4 h-4" /> Immobilisations
+          </button>
+          <button onClick={openAdd}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+            <PlusIcon className="w-4 h-4" /> Nouveau contrat
+          </button>
+        </div>
       </div>
 
       {/* Estimateur de tarif (création sur-mesure) */}

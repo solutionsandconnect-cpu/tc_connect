@@ -115,6 +115,7 @@ export interface EstimateurState {
   prixReventeMensuel: number
   outilsMensuel: number   // coût mensuel des outils (ex : Claude Code) — dilué dans le prix
   joursFactures: number   // jours facturés / an
+  urssafPct: number       // cotisations sociales (URSSAF) en % du CA — pour le net
 }
 
 export const DEFAULT_ESTIMATEUR_STATE: EstimateurState = {
@@ -123,7 +124,7 @@ export const DEFAULT_ESTIMATEUR_STATE: EstimateurState = {
   tjm: 500, overheadPct: 20, bufferPct: 25, maintPct: 18, calcInfra: 20, supportH: 1,
   heuresGagnees: 4, coutHoraireClient: 35, partCaptee: 20,
   premiumRevente: 40, nbClientsFinaux: 30, prixReventeMensuel: 40,
-  outilsMensuel: 100, joursFactures: 100,
+  outilsMensuel: 100, joursFactures: 100, urssafPct: 24.6,
 }
 
 // Snapshot persistable (sans les id de lignes) ⇆ état du composant
@@ -133,7 +134,7 @@ export function estimationFromState(s: EstimateurState): PilotageEstimation {
     maintPct: s.maintPct, infra: s.calcInfra, supportH: s.supportH,
     heuresGagnees: s.heuresGagnees, coutHoraireClient: s.coutHoraireClient, partCaptee: s.partCaptee,
     premiumRevente: s.premiumRevente, nbClientsFinaux: s.nbClientsFinaux, prixReventeMensuel: s.prixReventeMensuel,
-    outilsMensuel: s.outilsMensuel, joursFactures: s.joursFactures,
+    outilsMensuel: s.outilsMensuel, joursFactures: s.joursFactures, urssafPct: s.urssafPct,
     features: s.features.map(({ nom, taille }) => ({ nom, taille })),
   }
 }
@@ -146,6 +147,7 @@ export function stateFromEstimation(e: PilotageEstimation): EstimateurState {
     premiumRevente: e.premiumRevente, nbClientsFinaux: e.nbClientsFinaux, prixReventeMensuel: e.prixReventeMensuel,
     outilsMensuel: e.outilsMensuel ?? DEFAULT_ESTIMATEUR_STATE.outilsMensuel,
     joursFactures: e.joursFactures ?? DEFAULT_ESTIMATEUR_STATE.joursFactures,
+    urssafPct: e.urssafPct ?? DEFAULT_ESTIMATEUR_STATE.urssafPct,
     features: e.features.map((f) => ({ id: randomUUID(), nom: f.nom, taille: f.taille })),
   }
 }
@@ -167,6 +169,7 @@ export function stateFromSettings(s: PilotageSettings): EstimateurState {
   if (s.prixReventeMensuel != null) base.prixReventeMensuel = s.prixReventeMensuel
   if (s.outilsMensuel != null) base.outilsMensuel = s.outilsMensuel
   if (s.joursFactures != null) base.joursFactures = s.joursFactures
+  if (s.urssafPct != null) base.urssafPct = s.urssafPct
   if (s.features && s.features.length)
     base.features = s.features.map((f) => ({ id: randomUUID(), nom: f.nom, taille: f.taille }))
   return base
@@ -188,9 +191,17 @@ export interface TarifResult {
   aboValeur: number
   abo: number
   aboBase: 'valeur' | 'cout'
+  total1an: number
   total3ans: number
   pctRecurrent: number
   paybackMois: number | null
+  // ── Net (ce qu'il te reste après cotisations URSSAF + frais récurrents) ──
+  cotisationsSetup: number     // cotisations sur la création
+  netSetup: number             // création nette de cotisations
+  cotisationsAboMensuel: number // cotisations sur un mois d'abonnement
+  netAboMensuel: number        // abonnement net /mois (− cotisations − infra)
+  netAn1: number               // net par client sur 1 an
+  netAn3: number               // net par client sur 3 ans
 }
 
 export function computeTarif(s: EstimateurState): TarifResult {
@@ -221,13 +232,25 @@ export function computeTarif(s: EstimateurState): TarifResult {
   const abo = Math.max(aboPlancher, aboValeur)
   const aboBase: 'valeur' | 'cout' = aboValeur > aboPlancher ? 'valeur' : 'cout'
 
+  const total1an = setup + abo * 12
   const total3ans = setup + abo * 36
   const pctRecurrent = total3ans > 0 ? Math.round(((abo * 36) / total3ans) * 100) : 0
   const paybackMois = valeurMois > 0 ? setup / valeurMois : null
 
+  // Net : on retire les cotisations sociales (URSSAF, % du CA) et, pour le récurrent,
+  // les frais d'infra réels (Firebase/Vercel) que tu paies chaque mois.
+  const taux = s.urssafPct / 100
+  const cotisationsSetup = setup * taux
+  const netSetup = setup - cotisationsSetup
+  const cotisationsAboMensuel = abo * taux
+  const netAboMensuel = abo - cotisationsAboMensuel - s.calcInfra
+  const netAn1 = netSetup + netAboMensuel * 12
+  const netAn3 = netSetup + netAboMensuel * 36
+
   return {
     revente, joursDev, joursTotal, creationBas, setup, tauxHoraire, outilsParJour,
     valeurAn, valeurMois, maintMensuelle, supportMensuel, aboPlancher, aboValeur, abo, aboBase,
-    total3ans, pctRecurrent, paybackMois,
+    total1an, total3ans, pctRecurrent, paybackMois,
+    cotisationsSetup, netSetup, cotisationsAboMensuel, netAboMensuel, netAn1, netAn3,
   }
 }

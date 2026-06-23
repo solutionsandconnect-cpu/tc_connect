@@ -325,7 +325,18 @@ export interface PilotageEstimation {
   prixReventeMensuel: number
   outilsMensuel?: number   // coût mensuel des outils/abonnements (ex : Claude Code) — dilué dans le prix
   joursFactures?: number   // jours facturés / an (pour répartir le coût des outils sur la journée)
+  urssafPct?: number       // cotisations sociales (URSSAF) en % du CA — pour calculer le net
   features: PilotageEstimationFeature[]
+}
+
+// Collection : pilotage_immobilisations (achats de matériel à amortir / répartir dans le temps)
+export interface PilotageImmobilisation {
+  id: string
+  label: string
+  montant: number            // prix d'achat (TTC)
+  dateAchat?: string | null  // ISO yyyy-mm-dd (optionnel)
+  dureeAns: number           // durée d'amortissement (années)
+  createdAt: Timestamp
 }
 
 // Estimation nommée enregistrée sur un contrat (plusieurs possibles, ex : « client final » / « revendeur »)
@@ -418,6 +429,7 @@ export interface PilotageSettings {
   prixReventeMensuel?: number  // prix de revente par client final /mois
   outilsMensuel?: number       // coût mensuel des outils/abonnements (ex : Claude Code), dilué dans le prix
   joursFactures?: number       // jours facturés / an (pour répartir le coût des outils)
+  urssafPct?: number           // cotisations sociales (URSSAF) en % du CA — pour calculer le net
   // Liste de fonctionnalités de départ du calculateur (durée/complexité par défaut)
   features?: { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl' }[]
   // Étapes-types proposées dans le planning prévisionnel (liste déroulante éditable)
