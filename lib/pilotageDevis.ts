@@ -1,4 +1,5 @@
 import type { PilotageContrat, FactureItem, DevisOption, Facture, Client } from '@/types'
+import { computeTarif, stateFromEstimation, fmtEur } from '@/lib/pilotageEstimateur'
 
 // Construit le payload d'un devis de prestation à partir d'un contrat Pilotage.
 // Toutes les données viennent du contrat (objet, lignes, inclus, options, modalités) → aucune ressaisie.
@@ -42,8 +43,57 @@ export function buildDevisFromContrat(
   // ── Objet : contexte du projet (sinon objet juridique) ──
   const objet = (projet?.contexte?.trim() || legal?.objet?.trim()) || undefined
 
-  // ── Ce qui est inclus : livrables ──
-  const inclus = (projet?.livrables ?? []).filter((l) => l.trim())
+  // ── Ce qui est inclus ──
+  // Checklist « modules livrés » = fonctionnalités du projet.
+  const inclus = (projet?.fonctionnalites ?? [])
+    .map((f) => f.description?.trim() || f.categorie?.trim() || '')
+    .filter((s) => s)
+  // Panneaux titrés : Mise en service (livrables) + Abonnement (si récurrent).
+  const livrables = (projet?.livrables ?? []).filter((l) => l.trim())
+  const inclusPanels: { titre: string; items: string[] }[] = []
+  if (livrables.length) inclusPanels.push({ titre: 'Mise en service', items: livrables })
+  if (abo > 0) {
+    inclusPanels.push({
+      titre: 'Abonnement mensuel',
+      items: [
+        "Hébergement de l'application",
+        'Maintenance corrective & mises à jour de sécurité',
+        'Monitoring & sauvegardes',
+        "Support & correction d'anomalies",
+        'Petites évolutions au fil de l\'eau',
+      ],
+    })
+  }
+
+  // ── Bandeau « valeur » : depuis l'estimation validée du contrat ──
+  const est =
+    contrat.estimations?.find((e) => e.id === contrat.estimationSelectedId) ??
+    contrat.estimations?.[0] ??
+    contrat.estimation
+  let valeurBanner: Facture['valeurBanner'] | undefined
+  if (est) {
+    const t = computeTarif(stateFromEstimation(est))
+    const revente = est.mode === 'revente'
+    if (t.valeurAn > 0) {
+      const stats: { value: string; label: string }[] = [
+        { value: `${Math.round(t.joursDev)} j`, label: 'de conception' },
+        { value: `${est.features.length}`, label: 'modules' },
+      ]
+      if (t.paybackMois != null && t.paybackMois > 0) {
+        stats.push({ value: `${Math.ceil(t.paybackMois)} mois`, label: 'de retour sur investissement' })
+      }
+      valeurBanner = {
+        titre: 'Application sur-mesure, conçue pour votre activité',
+        sousTitre: revente ? 'Un actif que vous pouvez exploiter et revendre' : 'Un outil construit pour vous, pas un logiciel générique',
+        montant: `≈ ${fmtEur(t.valeurAn)}`,
+        mention: revente ? 'REVENU POTENTIEL / AN' : 'VALEUR GÉNÉRÉE ESTIMÉE / AN',
+        texte: revente
+          ? `Estimation du revenu annuel potentiel sur la base des hypothèses de cadrage (${est.nbClientsFinaux} clients × ${fmtEur(est.prixReventeMensuel)}/mois). Le développement, déjà réalisé, représente une valeur de conception d'environ ${fmtEur(t.creationBas)} – ${fmtEur(t.setup)}.`
+          : `Valeur estimée du temps gagné chaque année grâce à l'application, sur la base des hypothèses de cadrage. La conception sur-mesure représente une valeur d'environ ${fmtEur(t.creationBas)} – ${fmtEur(t.setup)}.`,
+        stats,
+      }
+    }
+  }
 
   // ── Options à la carte : depuis le contrat ──
   const options: DevisOption[] = (contrat.optionsDevis ?? []).filter((o) => (o.label ?? '').trim())
@@ -76,6 +126,8 @@ export function buildDevisFromContrat(
     objet,
     contratId: contrat.id,
     inclus: inclus.length ? inclus : undefined,
+    inclusPanels: inclusPanels.length ? inclusPanels : undefined,
+    valeurBanner,
     options: options.length ? options : undefined,
     modalites: modalites.length ? modalites : undefined,
   }

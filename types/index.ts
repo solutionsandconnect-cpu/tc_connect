@@ -806,7 +806,16 @@ export interface Facture {
   objet?: string                       // « Objet du devis » (narratif)
   contratId?: string | null            // contrat Pilotage source (si généré depuis un contrat)
   validiteJours?: number               // durée de validité du devis (jours ; défaut 30 à l'affichage)
-  inclus?: string[]                    // « Ce qui est inclus » (liste à puces, 2 colonnes)
+  inclus?: string[]                    // « Ce qui est inclus » — checklist (modules livrés)
+  inclusPanels?: { titre: string; items: string[] }[]  // « Ce qui est inclus » en panneaux titrés (ex. Mise en service / Abonnement)
+  valeurBanner?: {                     // bandeau « valeur » mis en avant sous les totaux
+    titre?: string
+    sousTitre?: string
+    montant?: string                   // gros chiffre affiché à droite (déjà formaté)
+    mention?: string                   // petite légende sous le chiffre (ex. « VALEUR ESTIMÉE / AN »)
+    texte?: string                     // paragraphe explicatif
+    stats?: { value: string; label: string }[]  // ligne de stats (ex. jours, modules…)
+  }
   modalites?: { label: string; value: string }[]  // bloc Modalités (paiement, délai, PI, RGPD…)
   options?: DevisOption[]              // options à la carte chiffrées (hors total)
   echeances?: Echeance[]
