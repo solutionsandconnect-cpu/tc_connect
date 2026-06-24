@@ -1,4 +1,4 @@
-import type { PilotageDocument, PilotageDocumentType, Company, ChartGraphique } from '@/types'
+import type { PilotageDocument, PilotageDocumentType, Company, ChartGraphique, DevisOption } from '@/types'
 import { buildLegalDoc, defaultLegalFields, type LegalFields } from '@/lib/pilotageLegalTemplates'
 import { emptyProjetContent, projetSections, type ProjetContent } from '@/lib/pilotageProjetTemplates'
 
@@ -64,7 +64,7 @@ export function pilotageDocTypeLabel(t: PilotageDocumentType) {
 // Générateur PDF brandé S&C (logo + coordonnées société ; contenu projet partagé par le contrat)
 export async function generatePilotageDocPdf(
   docu: PilotageDocument,
-  opts: { company?: Company | null; projet?: ProjetContent | null; legal?: LegalFields | null; charte?: ChartGraphique | null } = {},
+  opts: { company?: Company | null; projet?: ProjetContent | null; legal?: LegalFields | null; charte?: ChartGraphique | null; options?: DevisOption[] | null } = {},
 ): Promise<{ blob: Blob; filename: string }> {
   const company = opts.company
   const { jsPDF } = await import('jspdf')
@@ -108,6 +108,9 @@ export async function generatePilotageDocPdf(
   // ── Contrats légaux : rendu multi-pages avec articles ──
   if (meta?.famille === 'legal') {
     const fields = defaultLegalFields((opts.legal ?? docu.contenu ?? {}) as Partial<LegalFields>)
+    // « Objet » fusionné : si non renseigné dans les mentions, on reprend le Contexte
+    // du contenu projet (source unique — plus de double saisie).
+    if (!fields.objet?.trim() && opts.projet?.contexte?.trim()) fields.objet = opts.projet.contexte.trim()
     const legal = buildLegalDoc(docu.type, fields)
     if (legal) {
       const maxY = 272, lineH = 5, contentW = W - margin * 2
@@ -430,6 +433,15 @@ export async function generatePilotageDocPdf(
     if (cfg.horsPerimetre && (c.horsPerimetre?.length ?? 0) > 0) {
       section('Hors-périmètre (non compris)')
       c.horsPerimetre.forEach((l) => listItem(l))
+    }
+    // Options à la carte (évolutions chiffrées) — sur les mêmes docs que le hors-périmètre (cahier des charges)
+    const docOptions = (opts.options ?? []).filter((o) => (o.label ?? '').trim())
+    if (cfg.horsPerimetre && docOptions.length > 0) {
+      section('Options à la carte (évolutions chiffrées)')
+      docOptions.forEach((o) => {
+        const price = o.prixMin != null && o.prixMax != null ? `${o.prixMin} – ${o.prixMax} €` : o.prixMin != null ? `${o.prixMin} €` : 'sur devis'
+        listItem(`${o.label}${o.description ? ` — ${o.description}` : ''}  (${price})`)
+      })
     }
     if (cfg.planning) {
       section('Planning prévisionnel')

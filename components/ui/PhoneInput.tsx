@@ -3,25 +3,32 @@
 import { useState, useEffect, useRef } from 'react'
 
 export const INDICATIFS = [
-  { code: '+33',  flag: '🇫🇷', pays: 'France' },
-  { code: '+32',  flag: '🇧🇪', pays: 'Belgique' },
-  { code: '+41',  flag: '🇨🇭', pays: 'Suisse' },
-  { code: '+352', flag: '🇱🇺', pays: 'Luxembourg' },
-  { code: '+377', flag: '🇲🇨', pays: 'Monaco' },
-  { code: '+1',   flag: '🇺🇸', pays: 'USA / Canada' },
-  { code: '+44',  flag: '🇬🇧', pays: 'Royaume-Uni' },
-  { code: '+49',  flag: '🇩🇪', pays: 'Allemagne' },
-  { code: '+34',  flag: '🇪🇸', pays: 'Espagne' },
-  { code: '+39',  flag: '🇮🇹', pays: 'Italie' },
-  { code: '+351', flag: '🇵🇹', pays: 'Portugal' },
-  { code: '+31',  flag: '🇳🇱', pays: 'Pays-Bas' },
-  { code: '+212', flag: '🇲🇦', pays: 'Maroc' },
-  { code: '+213', flag: '🇩🇿', pays: 'Algérie' },
-  { code: '+216', flag: '🇹🇳', pays: 'Tunisie' },
-  { code: '+225', flag: '🇨🇮', pays: "Côte d'Ivoire" },
-  { code: '+221', flag: '🇸🇳', pays: 'Sénégal' },
-  { code: '+237', flag: '🇨🇲', pays: 'Cameroun' },
+  { code: '+33',  flag: '🇫🇷', iso: 'fr', pays: 'France' },
+  { code: '+32',  flag: '🇧🇪', iso: 'be', pays: 'Belgique' },
+  { code: '+41',  flag: '🇨🇭', iso: 'ch', pays: 'Suisse' },
+  { code: '+352', flag: '🇱🇺', iso: 'lu', pays: 'Luxembourg' },
+  { code: '+377', flag: '🇲🇨', iso: 'mc', pays: 'Monaco' },
+  { code: '+1',   flag: '🇺🇸', iso: 'us', pays: 'USA / Canada' },
+  { code: '+44',  flag: '🇬🇧', iso: 'gb', pays: 'Royaume-Uni' },
+  { code: '+49',  flag: '🇩🇪', iso: 'de', pays: 'Allemagne' },
+  { code: '+34',  flag: '🇪🇸', iso: 'es', pays: 'Espagne' },
+  { code: '+39',  flag: '🇮🇹', iso: 'it', pays: 'Italie' },
+  { code: '+351', flag: '🇵🇹', iso: 'pt', pays: 'Portugal' },
+  { code: '+31',  flag: '🇳🇱', iso: 'nl', pays: 'Pays-Bas' },
+  { code: '+212', flag: '🇲🇦', iso: 'ma', pays: 'Maroc' },
+  { code: '+213', flag: '🇩🇿', iso: 'dz', pays: 'Algérie' },
+  { code: '+216', flag: '🇹🇳', iso: 'tn', pays: 'Tunisie' },
+  { code: '+225', flag: '🇨🇮', iso: 'ci', pays: "Côte d'Ivoire" },
+  { code: '+221', flag: '🇸🇳', iso: 'sn', pays: 'Sénégal' },
+  { code: '+237', flag: '🇨🇲', iso: 'cm', pays: 'Cameroun' },
 ]
+
+// Drapeau en IMAGE (les emojis-drapeaux ne s'affichent pas sur Windows → « FR » au lieu de 🇫🇷).
+// Fallback : l'emoji si pas d'ISO (code personnalisé).
+function Flag({ iso, emoji, className = 'w-5 h-auto rounded-sm' }: { iso?: string; emoji: string; className?: string }) {
+  if (!iso) return <span className="text-lg leading-none">{emoji}</span>
+  return <img src={`https://flagcdn.com/${iso}.svg`} alt={emoji} className={className} loading="lazy" />
+}
 
 export function buildWhatsAppUrl(indicatif: string, telephone: string, message?: string): string {
   const cleaned = telephone.replace(/[\s().+-]/g, '')
@@ -55,7 +62,7 @@ export function PhoneInput({
   const searchRef = useRef<HTMLInputElement>(null)
 
   const knownEntry = INDICATIFS.find((c) => c.code === indicatif)
-  const selected = knownEntry || { code: indicatif || '+33', flag: '🌍', pays: 'Autre' }
+  const selected = knownEntry || { code: indicatif || '+33', flag: '🌍', iso: '', pays: 'Autre' }
 
   const filtered = search.trim()
     ? INDICATIFS.filter(
@@ -101,7 +108,7 @@ export function PhoneInput({
           className={`${base} bg-white flex items-center gap-1 px-2 min-w-[3.5rem] justify-center`}
           title={`${selected.flag} ${selected.code} ${selected.pays}`}
         >
-          <span className="text-xl leading-none">{selected.flag}</span>
+          <Flag iso={selected.iso} emoji={selected.flag} />
           <svg className="w-3 h-3 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
           </svg>
@@ -144,7 +151,7 @@ export function PhoneInput({
                   onClick={() => { onIndicatifChange(c.code); setOpen(false) }}
                   className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-gray-50 transition text-left ${c.code === indicatif ? 'bg-blue-50' : ''}`}
                 >
-                  <span className="text-lg">{c.flag}</span>
+                  <Flag iso={c.iso} emoji={c.flag} />
                   <span className="text-gray-500 w-10 shrink-0 font-mono text-xs">{c.code}</span>
                   <span className="text-gray-700 min-w-0 truncate">{c.pays}</span>
                 </button>

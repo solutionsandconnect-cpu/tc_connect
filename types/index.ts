@@ -349,6 +349,17 @@ export interface SavedEstimation extends PilotageEstimation {
 // Collection : pilotage_contrats (pilotage de l'activité — contrats clients pro)
 export type PilotageContratStatut = 'actif' | 'pause' | 'termine'
 
+// Entrées de l'estimateur de coûts d'infra (Firebase) — voir components/pilotage/InfraCostEstimator.tsx
+export interface InfraInputs {
+  users: number
+  sessionsMois: number
+  lecturesSession: number
+  ecrituresSession: number
+  stockageFichiersGo: number
+  stockageVideoGo: number
+  bandePassanteSessionMo: number
+}
+
 export interface PilotageContrat {
   id: string
   clientId?: string | null      // client relié (collection clients)
@@ -356,8 +367,10 @@ export interface PilotageContrat {
   abonnementId?: string | null  // abonnement relié (collection abonnements)
   abonnementTitre?: string | null // libellé de l'abonnement relié (affichage)
   appNom?: string               // (déprécié) ancienne « app vendue »
-  fraisMiseEnPlace?: number     // frais ponctuels au démarrage
-  abonnementMensuel?: number    // revenu récurrent /mois
+  fraisMiseEnPlace?: number     // frais ponctuels au démarrage (= tarif normal/catalogue ; net = après remise)
+  abonnementMensuel?: number    // revenu récurrent /mois (= tarif normal ; net = après remise)
+  remiseMiseEnPlacePct?: number // remise % sur la mise en service (affichée barrée sur le devis ; le client paie le net)
+  remiseAbonnementPct?: number  // remise % sur l'abonnement mensuel
   coutFirebaseMensuel?: number  // coût d'infra estimé /mois (pour la marge)
   tjm?: number                  // TJM du contrat (sert au prix des tâches « à facturer ») ; sinon estimation.tjm puis réglage global
   dateDebut?: Timestamp
@@ -371,6 +384,18 @@ export interface PilotageContrat {
   legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)
   charte?: ChartGraphique      // charte graphique & cadrage (type, couleurs, utilisateurs, contraintes…)
   optionsDevis?: DevisOption[]    // options à la carte chiffrées proposables sur le devis (hors total)
+  objetDevis?: string             // objet du devis (offre) — si vide, généré auto depuis nom/type/structure de l'offre
+  miseEnServiceDesc?: string      // description de la ligne « Mise en service » — si vide, dérivée des livrables
+  abonnementDesc?: string         // description de la ligne « Abonnement mensuel » — si vide, texte standard
+  valeurBannerOverride?: {        // réglages du bandeau « valeur » (contenu auto depuis l'estimation)
+    masque?: boolean              // true = ne pas afficher le bandeau du tout
+  }
+  evolution?: DevisEvolution      // section « Évolution » optionnelle du devis (revente / white-label)
+  hebergement?: {                 // quota d'hébergement inclus dans l'abonnement (modalité auto du devis)
+    utilisateursInclus?: number   // nb d'utilisateurs actifs inclus (sinon fallback charte.usersMax)
+    depassement?: string          // texte « au-delà : … » (sinon texte standard « refacturé au réel »)
+  }
+  coutFirebaseInputs?: InfraInputs  // entrées saisies dans l'estimateur de coûts d'infra (réutilisées à la réouverture)
   estimation?: PilotageEstimation // (legacy) snapshot unique du calculateur — voir `estimations`
   estimations?: SavedEstimation[] // plusieurs estimations nommées à comparer (calculateur de la fiche contrat)
   estimationSelectedId?: string | null // estimation « validée » → son TJM pilote les tâches à facturer
@@ -438,6 +463,13 @@ export interface PilotageSettings {
   planningEtapes?: string[]
   // Modèle de planning prévisionnel (généré en un clic, éditable) — dates ignorées, recalculées à la génération
   planningTemplate?: ProjetPlanning[]
+  // Valeurs par défaut des mentions légales (durée, droits, exclusivité, RGPD…) appliquées aux nouveaux contrats.
+  // Clés = clés de LegalFields (string → string). Voir lib/pilotageLegalTemplates.
+  legalDefaults?: { [key: string]: string }
+  // Modèle de la section « Évolution » du devis (chargeable en 1 clic sur un contrat — PAS auto).
+  evolutionDefault?: DevisEvolution
+  // Valeurs par défaut de l'estimateur de coûts d'infra (modèle pré-rempli sur les nouveaux estimateurs).
+  coutFirebaseInputs?: InfraInputs
 }
 
 // Collection : Notifications
@@ -755,6 +787,23 @@ export interface Abonnement {
 export type FactureStatus = 'draft' | 'pending' | 'sent' | 'paid' | 'encaissement' | 'overdue' | 'cancelled' | 'accepted' | 'rejected'
 export type FactureType = 'facture' | 'devis'
 
+// Section « Évolution » optionnelle d'un devis (ex : revente / white-label) — bloc structuré.
+export interface DevisEvolutionEtape { titre: string; description?: string; prix?: string }
+export interface DevisEvolutionPanneau { titre: string; reco?: boolean; items: string[]; prix?: string }
+export interface DevisEvolution {
+  masqueDevis?: boolean     // true = ne pas afficher sur le devis client (reste visible sur la Fiche négo interne)
+  titre?: string            // titre de section (défaut « Évolution possible »)
+  tag?: string              // pastille (ex : « Informatif · non inclus »)
+  intro?: string            // paragraphe d'introduction
+  qaQuestion?: string       // question mise en avant (bloc Q/R)
+  qaDetail?: string         // détail sous la question
+  qaReponse?: string        // réponse courte (ex : « Oui ✓ »)
+  etapes?: DevisEvolutionEtape[]      // étapes chiffrées (titre + desc + prix)
+  panneaux?: DevisEvolutionPanneau[]  // options/modèles en 2 colonnes (B1 reco / B2…)
+  tableau?: string          // tableau de prix : 1 ligne/rangée, cellules séparées par « | », 1re ligne = en-têtes
+  note?: string             // note de bas de section
+}
+
 export interface FactureItem {
   label: string
   quantity: number
@@ -818,6 +867,7 @@ export interface Facture {
   }
   modalites?: { label: string; value: string }[]  // bloc Modalités (paiement, délai, PI, RGPD…)
   options?: DevisOption[]              // options à la carte chiffrées (hors total)
+  evolution?: DevisEvolution           // section « Évolution » optionnelle (revente / white-label)
   echeances?: Echeance[]
   echeanceRef?: EcheanceRef  // présent sur les factures issues d'un devis à échéancier
   notes?: string
@@ -841,6 +891,7 @@ export interface Facture {
   factureCodePostal?: string
   factureVille?: string
   factureEmail?: string
+  factureTelephone?: string
   paymentDate?: Timestamp
   paymentMethod?: string
   createdAt?: Timestamp

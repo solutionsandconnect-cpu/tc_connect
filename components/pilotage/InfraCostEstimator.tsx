@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { ServerStackIcon } from '@heroicons/react/24/outline'
+import type { InfraInputs } from '@/types'
 
 // Tarifs Firebase (plan Blaze) — ordres de grandeur publics, facturés en $ (≈ € pour une estimation).
 // Firestore : free 50k lectures/j, 20k écritures/j, 1 Gio stockage. Au-delà : 0,06 $/100k lectures, 0,18 $/100k écritures.
@@ -26,8 +27,8 @@ type Champ = { key: keyof typeof DEFAULTS; label: string; hint: string; step: nu
 
 const DEFAULTS = {
   users: 50,
-  sessionsMois: 20,
-  lecturesSession: 30,
+  sessionsMois: 30,
+  lecturesSession: 60,
   ecrituresSession: 5,
   stockageFichiersGo: 2,
   stockageVideoGo: 0,
@@ -35,17 +36,30 @@ const DEFAULTS = {
 }
 
 const CHAMPS: Champ[] = [
-  { key: 'users', label: 'Utilisateurs actifs / mois', hint: 'qui ouvrent vraiment l’app', step: 5 },
-  { key: 'sessionsMois', label: 'Ouvertures / utilisateur / mois', hint: 'sessions mensuelles', step: 1 },
-  { key: 'lecturesSession', label: 'Lectures de données / session', hint: 'docs chargés à l’ouverture', step: 5 },
-  { key: 'ecrituresSession', label: 'Écritures / session', hint: 'enregistrements créés/modifiés', step: 1 },
+  { key: 'users', label: 'Utilisateurs actifs / mois', hint: 'qui ouvrent vraiment l’app — ex : 50', step: 5 },
+  { key: 'sessionsMois', label: 'Ouvertures / utilisateur / mois', hint: 'nombre réel — ex : 30 = ~1×/jour ouvré', step: 1 },
+  { key: 'lecturesSession', label: 'Lectures de données / session', hint: 'docs chargés / écran — ex : 60', step: 5 },
+  { key: 'ecrituresSession', label: 'Écritures / session', hint: 'saisies créées/modifiées — ex : 5', step: 1 },
   { key: 'stockageFichiersGo', label: 'Stockage fichiers/photos (Go)', hint: 'total cumulé', step: 1 },
   { key: 'stockageVideoGo', label: 'Stockage vidéo (Go)', hint: 'poste lourd si analyse vidéo', step: 5 },
   { key: 'bandePassanteSessionMo', label: 'Téléchargé / session (Mo)', hint: 'images/vidéos servies', step: 1 },
 ]
 
-export default function InfraCostEstimator() {
-  const [v, setV] = useState({ ...DEFAULTS })
+// Repères « combien mettre » par champ (affichés dans l'aide dépliable).
+const AIDE: { champ: string; desc: string; exemples: [string, string][] }[] = [
+  { champ: 'Utilisateurs actifs / mois', desc: 'Personnes différentes qui ouvrent vraiment l’app dans le mois.', exemples: [['Petite structure', '20 – 50'], ['Centre de formation', '50 – 150'], ['Grosse structure', '200+']] },
+  { champ: 'Ouvertures / utilisateur / mois', desc: 'À quelle fréquence chacun ouvre l’app (nombre réel).', exemples: [['Occasionnel (hebdo)', '4 – 8'], ['Régulier (~1×/jour)', '20 – 30'], ['Intensif (plusieurs ×/jour)', '40 – 90']] },
+  { champ: 'Lectures de données / session', desc: 'Éléments chargés à l’ouverture (chaque ligne d’une liste = 1).', exemples: [['App simple', '10 – 30'], ['Listes + détails', '40 – 80'], ['Tableaux de bord riches', '100 – 200+']] },
+  { champ: 'Écritures / session', desc: 'Enregistrements créés/modifiés par visite.', exemples: [['Consultation surtout', '0 – 2'], ['Saisie régulière', '3 – 8'], ['Saisie intensive', '10 – 20']] },
+  { champ: 'Stockage fichiers/photos (Go)', desc: 'Total CUMULÉ des fichiers/photos (pas par session).', exemples: [['Pas de média', '0'], ['Quelques docs/photos', '1 – 5 Go'], ['Beaucoup de photos', '10 – 50+ Go']] },
+  { champ: 'Stockage vidéo (Go)', desc: '⚠️ Laisse 0 : la vidéo va sur un service séparé (R2), pas Firebase. Voir « Vidéo » ci-dessous.', exemples: [] },
+  { champ: 'Téléchargé / session (Mo)', desc: 'Média (images/fichiers) servis à chaque ouverture. 1 photo ≈ 0,2–0,5 Mo.', exemples: [['Surtout texte / listes', '0,5 – 1 Mo'], ['Quelques photos (courant)', '2 – 5 Mo'], ['Beaucoup d’images', '5 – 20 Mo'], ['Vidéo', '50 – 500+ Mo']] },
+]
+
+export default function InfraCostEstimator(
+  { initial, onCommit }: { initial?: Partial<InfraInputs>; onCommit?: (inputs: InfraInputs, central: number) => void } = {},
+) {
+  const [v, setV] = useState<InfraInputs>({ ...DEFAULTS, ...(initial ?? {}) })
   const set = (k: keyof typeof DEFAULTS, val: number) => setV((p) => ({ ...p, [k]: Math.max(0, val) }))
 
   const r = useMemo(() => {
@@ -84,7 +98,7 @@ export default function InfraCostEstimator() {
         <ServerStackIcon className="w-4 h-4 text-orange-600" /> Estimation des coûts d’infrastructure (Firebase)
       </summary>
       <p className="text-xs text-gray-400 mb-4 mt-2">
-        Indicatif — fourchette large. Saisis des valeurs <strong>moyennes</strong> pour avoir un ordre de grandeur du coût mensuel d’hébergement à prévoir (ou à refacturer au client).
+        Indicatif — fourchette large. Saisis des valeurs <strong>moyennes</strong> pour un ordre de grandeur du coût mensuel d’hébergement. Toutes les valeurs sont des <strong>nombres réels</strong> (ex : 30 ouvertures = ~1×/jour, <em>pas</em> 30 000).
       </p>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -93,11 +107,57 @@ export default function InfraCostEstimator() {
             <label className="block text-[11px] font-medium text-gray-600 mb-1">{f.label}</label>
             <input type="number" inputMode="decimal" step={f.step} min={0} value={v[f.key]}
               onChange={(e) => set(f.key, Number(e.target.value) || 0)}
+              onBlur={() => onCommit?.(v, r.total)}
               className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
             <p className="text-[10px] text-gray-400 mt-0.5">{f.hint}</p>
           </div>
         ))}
       </div>
+
+      <details className="mt-2">
+        <summary className="cursor-pointer text-[11px] font-medium text-gray-600 hover:text-gray-800 select-none">ⓘ Aide — combien mettre dans chaque champ ?</summary>
+        <div className="mt-2 space-y-3">
+          {AIDE.map((a) => (
+            <div key={a.champ}>
+              <p className="text-[11px] font-semibold text-gray-700">{a.champ}</p>
+              <p className="text-[11px] text-gray-500">{a.desc}</p>
+              {a.exemples.length > 0 && (
+                <table className="w-full text-[11px] border border-gray-200 rounded-lg overflow-hidden mt-1">
+                  <tbody>
+                    {a.exemples.map(([l, v], i) => (
+                      <tr key={i} className={i ? 'border-t border-gray-100' : ''}>
+                        <td className="px-2 py-1 text-gray-700">{l}</td>
+                        <td className="px-2 py-1 text-right text-gray-700 whitespace-nowrap">{v}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
+        </div>
+      </details>
+
+      <details className="mt-2">
+        <summary className="cursor-pointer text-[11px] font-medium text-gray-600 hover:text-gray-800 select-none">ⓘ Vidéo : pourquoi à part, et combien ça coûte (Cloudflare R2)</summary>
+        <div className="mt-2 text-[11px] text-gray-600 space-y-2">
+          <p>La vidéo est lourde, et sur Firebase <strong>chaque visionnage coûte</strong> (bande passante) → vite cher. On la met donc sur un service séparé où les <strong>visionnages sont gratuits</strong> : <strong>Cloudflare R2</strong>. Firebase garde juste le lien ; R2 garde le fichier.</p>
+          <table className="w-full border border-gray-200 rounded-lg overflow-hidden">
+            <thead><tr className="bg-gray-50">
+              <th className="px-2 py-1 text-left font-semibold text-gray-600">Vidéos stockées (R2)</th>
+              <th className="px-2 py-1 text-right font-semibold text-gray-600">Coût / mois</th>
+            </tr></thead>
+            <tbody>
+              <tr className="border-t border-gray-100"><td className="px-2 py-1">10 Go</td><td className="px-2 py-1 text-right">gratuit</td></tr>
+              <tr className="border-t border-gray-100"><td className="px-2 py-1">100 Go</td><td className="px-2 py-1 text-right whitespace-nowrap">~1,5 $</td></tr>
+              <tr className="border-t border-gray-100"><td className="px-2 py-1">360 Go (~1 an d’usage)</td><td className="px-2 py-1 text-right whitespace-nowrap">~5 $</td></tr>
+              <tr className="border-t border-gray-100"><td className="px-2 py-1">1 To</td><td className="px-2 py-1 text-right whitespace-nowrap">~15 $</td></tr>
+              <tr className="border-t border-gray-100"><td className="px-2 py-1">Visionnages (peu importe le nombre)</td><td className="px-2 py-1 text-right">0 $</td></tr>
+            </tbody>
+          </table>
+          <p><strong>À facturer au client :</strong> ton coût (~5–15 $/mois) <strong>× 3 à 5 de marge</strong> → un <strong>« Module vidéo » ~30–50 €/mois</strong>, en option à part de l’abonnement.</p>
+        </div>
+      </details>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
         <div className="rounded-xl bg-orange-50 border border-orange-100 p-4 sm:col-span-1">
@@ -105,12 +165,17 @@ export default function InfraCostEstimator() {
           {r.sousFree ? (
             <>
               <p className="text-2xl font-bold text-green-600">~ 0 €</p>
-              <p className="text-[10px] text-gray-500 mt-1">Dans le palier gratuit Firebase. Prévoir ~0 € tant que l’usage reste à ce niveau.</p>
+              <p className="text-[10px] text-gray-500 mt-1">Sous le palier gratuit Firebase. L’abonnement n’a <strong>pas</strong> à couvrir d’infra ici → fixe-le sur ta <strong>valeur</strong> (maintenance, support, disponibilité).</p>
             </>
           ) : (
             <>
               <p className="text-2xl font-bold text-orange-700">{fmt(r.bas)} – {fmt(r.haut)}</p>
               <p className="text-[10px] text-gray-500 mt-1">central ≈ {fmt(r.total)}/mois · soit {fmt(r.total * 12)}/an</p>
+              <div className="mt-2 pt-2 border-t border-orange-200">
+                <p className="text-xs text-orange-700/70">Abonnement minimum conseillé <span className="text-orange-700/50">(infra ×3 – ×5)</span></p>
+                <p className="text-lg font-bold text-orange-800">{fmt(r.total * 3)} – {fmt(r.total * 5)} <span className="text-xs font-normal">/mois</span></p>
+                <p className="text-[10px] text-gray-500 mt-0.5">pour couvrir l’infra avec marge (cotisations, support, aléas)</p>
+              </div>
             </>
           )}
         </div>
@@ -127,7 +192,10 @@ export default function InfraCostEstimator() {
         </div>
       </div>
 
-      <p className="text-[11px] text-gray-400 mt-3 leading-relaxed">
+      <p className="text-[11px] text-gray-500 mt-3 leading-relaxed bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+        💡 <strong>À ton échelle</strong> (quelques dizaines à centaines d’utilisateurs), c’est <strong>quasi toujours ~0 €</strong> — sauf si l’app stocke/diffuse de la <strong>vidéo</strong> ou beaucoup de médias. C’est le seul poste à surveiller sérieusement.
+      </p>
+      <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
         Tarifs Firebase plan Blaze (facturé en $, ≈ € ici). <strong>Authentification</strong> et <strong>notifications push (FCM)</strong> sont gratuites (hors SMS/OTP). L’<strong>hébergement du site</strong> (Vercel/Firebase Hosting) n’est pas compté ici : souvent gratuit pour un petit trafic. La <strong>vidéo</strong> est le poste qui fait grimper la facture (stockage + bande passante) — ajuste-le en priorité.
       </p>
     </details>

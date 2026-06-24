@@ -11,38 +11,73 @@ import { useClients } from '@/hooks/useClients'
 import { useCompanies } from '@/hooks/useCompanies'
 import { usePilotageDocuments } from '@/hooks/usePilotageDocuments'
 import { usePilotageSettings } from '@/hooks/usePilotageSettings'
+import { useInvoices } from '@/hooks/useInvoices'
 import { uploadBlob, deleteImage } from '@/lib/uploadImage'
 import SignaturePad from '@/components/ui/SignaturePad'
 import Modal from '@/components/ui/Modal'
 import { generatePilotageDocPdf, PILOTAGE_DOC_TYPES, STATUT_DOC_LABELS } from '@/lib/pilotageDocPdf'
-import { buildDevisFromContrat } from '@/lib/pilotageDevis'
+import { buildDevisFromContrat, buildObjetAuto, buildValeurBannerAuto } from '@/lib/pilotageDevis'
 import { createFacture } from '@/lib/facturationService'
 import { defaultLegalFields, legalFieldGroupsAll, type LegalFields } from '@/lib/pilotageLegalTemplates'
 import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, DEFAULT_PLANNING_TEMPLATE, generatePlanningFromTemplate, type ProjetContent } from '@/lib/pilotageProjetTemplates'
-import { StringListEditor, FonctionsEditor, PlanningEditor, HorsPerimetreEditor, TacheAjoutForm, TachesApercu, PlanningApercu, ProjetApercu, tauxHoraireFromTjm, prixFacture, estEnRetard } from '@/components/pilotage/ProjetUI'
+import { StringListEditor, FonctionsEditor, PlanningEditor, TacheAjoutForm, TachesApercu, PlanningApercu, ProjetApercu, tauxHoraireFromTjm, prixFacture, estEnRetard } from '@/components/pilotage/ProjetUI'
 import { CharteEditor, CharteApercu, defaultCharte } from '@/components/pilotage/CharteUI'
 import EstimateurTarif from '@/components/pilotage/EstimateurTarif'
 import { computeTarif, stateFromEstimation, fmtEur, type TarifResult } from '@/lib/pilotageEstimateur'
 import { randomUUID } from '@/lib/uuid'
-import type { PilotageContrat, PilotageDocument, PilotageDocumentType, ChartGraphique, PilotageEstimation, SavedEstimation, DevisOption } from '@/types'
+import { EvolutionEditor, DEFAULT_EVOLUTION } from '@/components/pilotage/EvolutionEditor'
+import { PerimetreEditor, splitPerimetre, type PerimetreItem } from '@/components/pilotage/PerimetreEditor'
+import { FicheNego } from '@/components/pilotage/FicheNego'
+import InfraCostEstimator from '@/components/pilotage/InfraCostEstimator'
+import type { PilotageContrat, PilotageDocument, PilotageDocumentType, ChartGraphique, PilotageEstimation, SavedEstimation, DevisEvolution, InfraInputs } from '@/types'
 import {
   ArrowLeftIcon, TrashIcon, PlusIcon, CheckIcon, ArrowDownTrayIcon, ExclamationTriangleIcon, PencilIcon,
   EyeIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline'
 
 const TABS = [
-  { key: 'documents', label: 'Documents' },
-  { key: 'calculateur', label: 'Calculateur' },
-  { key: 'projet', label: 'Contenu projet' },
-  { key: 'charte', label: 'Charte & cadrage' },
-  { key: 'planning', label: 'Planning' },
-  { key: 'legal', label: 'Mentions légales' },
-  { key: 'taches', label: 'Tâches' },
-  { key: 'apercu', label: 'Aperçu' },
+  { key: 'documents', label: 'Documents', essentiel: true },
+  { key: 'calculateur', label: 'Calculateur', essentiel: true },
+  { key: 'fichenego', label: 'Fiche négo', essentiel: false },
+  { key: 'projet', label: 'Contenu projet', essentiel: true },
+  { key: 'charte', label: 'Charte & cadrage', essentiel: false },
+  { key: 'planning', label: 'Planning', essentiel: false },
+  { key: 'legal', label: 'Mentions légales', essentiel: false },
+  { key: 'taches', label: 'Tâches', essentiel: false },
+  { key: 'apercu', label: 'Aperçu', essentiel: false },
 ] as const
 type TabKey = typeof TABS[number]['key']
 
 // Sous-titre + ouverture par défaut de chaque section légale (accordéon)
+// Champ texte qui démarre sur une ligne et s'agrandit vers le bas quand le texte est long
+// (utilisé pour les mentions légales : plus de texte tronqué/coupé horizontalement).
+function AutoTextarea({ value, onChange, placeholder, multiline }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; multiline?: boolean
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [value])
+  return (
+    <textarea ref={ref} rows={1} value={value} placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => { if (!multiline && e.key === 'Enter') e.preventDefault() }}
+      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm leading-snug focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden block" />
+  )
+}
+
+// Liste unifiée « hors périmètre / options » reconstruite depuis le contrat enregistré.
+function buildPerimetre(c: PilotageContrat | null): PerimetreItem[] {
+  if (!c) return []
+  return [
+    ...(c.projet?.horsPerimetre ?? []).filter((l) => l.trim()).map((l): PerimetreItem => ({ label: l, type: 'exclu' })),
+    ...(c.optionsDevis ?? []).map((o): PerimetreItem => ({ label: o.label, type: 'option', description: o.description, prixMin: o.prixMin, prixMax: o.prixMax })),
+  ]
+}
+
 function legalGroupMeta(titre: string): { sub: string; open: boolean } {
   if (titre.startsWith('Prestataire')) return { sub: 'Tes infos — pré-remplies depuis ta Société', open: false }
   if (titre === 'Client') return { sub: 'Pré-rempli depuis la fiche client', open: false }
@@ -118,6 +153,12 @@ export default function ContratPage() {
     () => companies.find((c) => (c.nom ?? '').toLowerCase().includes('solutions')) ?? companies[0] ?? null,
     [companies])
   const contrat = useMemo(() => contrats.find((c) => c.id === id) ?? null, [contrats, id])
+  // Devis & factures générés depuis ce contrat (lien `contratId`), plus récents d'abord.
+  const { invoices } = useInvoices(currentUser?.uid ?? '')
+  const contratFactures = useMemo(
+    () => invoices.filter((f) => f.contratId === id).sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0)),
+    [invoices, id],
+  )
   const { documents, addDocument, updateDocument, deleteDocument } = usePilotageDocuments(id)
 
   // Génère un devis de prestation pré-rempli depuis le contrat, puis ouvre la fiche devis.
@@ -140,7 +181,7 @@ export default function ContratPage() {
       setGenDevis(false)
     }
   }
-  const { settings, saveSettings } = usePilotageSettings()
+  const { settings, saveSettings, loading: settingsLoading } = usePilotageSettings()
   // Étapes-types du planning (liste déroulante, persistées dans pilotage_settings et éditables)
   const etapesTypes = settings?.planningEtapes ?? DEFAULT_PLANNING_ETAPES
   const [etapesDraft, setEtapesDraft] = useState<string[] | null>(null)
@@ -161,25 +202,79 @@ export default function ContratPage() {
   const [formProjet, setFormProjet] = useState<ProjetContent>(defaultProjetContent())
   const [formLegal, setFormLegal] = useState<LegalFields>(defaultLegalFields())
   const [formCharte, setFormCharte] = useState<ChartGraphique>(defaultCharte())
-  const [formOptions, setFormOptions] = useState<DevisOption[]>([])
-  // Options à la carte du devis (hors flux Modifier/Enregistrer)
-  const persistOptions = async (next: DevisOption[]) => {
-    setFormOptions(next)
-    if (contrat) { try { await updateContrat(contrat.id, { optionsDevis: next } as Partial<PilotageContrat>) } catch (e) { console.error('[options persist]', e) } }
+  // Liste unifiée « hors périmètre / options » : éditée d'un bloc, répartie à la sauvegarde
+  // (exclusions → projet.horsPerimetre · options → optionsDevis). Sorties inchangées.
+  const [formPerimetre, setFormPerimetre] = useState<PerimetreItem[]>([])
+  // Persistance d'une ligne ajoutée / modifiée (« Terminer ») / supprimée / réordonnée.
+  const persistPerimetre = (next: PerimetreItem[]) => {
+    setFormPerimetre(next)
+    const { horsPerimetre, options } = splitPerimetre(next)
+    setFormProjet((p) => ({ ...p, horsPerimetre }))
+    if (contrat) updateContrat(contrat.id, { 'projet.horsPerimetre': horsPerimetre, optionsDevis: options } as unknown as Partial<PilotageContrat>)
+      .catch((e) => console.error('[perimetre persist]', e))
   }
-  const updOpt = (i: number, patch: Partial<DevisOption>) => setFormOptions((p) => p.map((x, idx) => idx === i ? { ...x, ...patch } : x))
-  const saveOpts = () => { if (contrat) updateContrat(contrat.id, { optionsDevis: formOptions } as Partial<PilotageContrat>).catch((e) => console.error('[options persist]', e)) }
-  // Formulaire d'ajout d'une option (champs vidés après ajout)
-  const [optDraft, setOptDraft] = useState<DevisOption>({ label: '' })
-  const [editOptIdx, setEditOptIdx] = useState<number | null>(null) // option en cours d'édition (lecture seule par défaut)
-  const addOption = () => {
-    if (!optDraft.label.trim()) return
-    persistOptions([...formOptions, { ...optDraft, label: optDraft.label.trim() }])
-    setOptDraft({ label: '' })
+  // Textes du devis (objet + descriptions de lignes) — édités librement, persistés au blur.
+  const [devisObjet, setDevisObjet] = useState('')
+  const [devisMes, setDevisMes] = useState('')   // description « Mise en service »
+  const [devisAbo, setDevisAbo] = useState('')   // description « Abonnement mensuel »
+  const persistDevisTexte = (patch: Partial<Pick<PilotageContrat, 'objetDevis' | 'miseEnServiceDesc' | 'abonnementDesc'>>) => {
+    if (contrat) updateContrat(contrat.id, patch as Partial<PilotageContrat>).catch((e) => console.error('[devis textes persist]', e))
   }
-  const fmtOptPrice = (o: DevisOption) =>
-    o.prixMin != null && o.prixMax != null ? `${o.prixMin} – ${o.prixMax} €`
-      : o.prixMin != null ? `${o.prixMin} €` : 'sur devis'
+  // Quota d'hébergement (alimente la modalité auto « Hébergement & quotas »).
+  const [hebUsers, setHebUsers] = useState('')
+  const [hebDepass, setHebDepass] = useState('')
+  const persistHebergement = () => {
+    if (!contrat) return
+    const utilisateursInclus = hebUsers.trim() === '' ? undefined : Number(hebUsers)
+    updateContrat(contrat.id, { hebergement: { utilisateursInclus, depassement: hebDepass.trim() } } as Partial<PilotageContrat>)
+      .catch((e) => console.error('[hebergement persist]', e))
+  }
+  // Remise (tarif d'ami / partenaire) : % sur la mise en service et/ou l'abonnement.
+  const [remiseMS, setRemiseMS] = useState('')
+  const [remiseAbo, setRemiseAbo] = useState('')
+  const persistRemise = () => {
+    if (!contrat) return
+    updateContrat(contrat.id, {
+      remiseMiseEnPlacePct: remiseMS.trim() === '' ? undefined : Number(remiseMS),
+      remiseAbonnementPct: remiseAbo.trim() === '' ? undefined : Number(remiseAbo),
+    } as Partial<PilotageContrat>).catch((e) => console.error('[remise persist]', e))
+  }
+  // Estimateur de coûts d'infra : on enregistre les entrées + le coût mensuel central sur le contrat.
+  const persistInfra = (inputs: InfraInputs, central: number) => {
+    if (!contrat) return
+    updateContrat(contrat.id, { coutFirebaseInputs: inputs, coutFirebaseMensuel: Math.round(central) } as Partial<PilotageContrat>)
+      .catch((e) => console.error('[infra persist]', e))
+  }
+  // Section « Évolution » (bloc structuré optionnel, ex : revente) — édité localement, persisté au clic.
+  const [formEvolution, setFormEvolution] = useState<DevisEvolution>({})
+  const [evolutionSaved, setEvolutionSaved] = useState(false)
+  const [evolutionDefSaved, setEvolutionDefSaved] = useState(false)
+  const [evolutionClearing, setEvolutionClearing] = useState(false)
+  // Efface toute la section Évolution de CE contrat (les modèles par défaut restent).
+  const clearEvolution = () => {
+    setFormEvolution({})
+    if (contrat) updateContrat(contrat.id, { evolution: {} } as Partial<PilotageContrat>).catch((e) => console.error('[evolution clear]', e))
+    setEvolutionClearing(false)
+  }
+  const saveEvolution = () => {
+    if (!contrat) return
+    updateContrat(contrat.id, { evolution: formEvolution } as Partial<PilotageContrat>).catch((e) => console.error('[evolution persist]', e))
+    setEvolutionSaved(true); setTimeout(() => setEvolutionSaved(false), 2000)
+  }
+  // Charge le modèle (le tien enregistré, sinon le générique de départ) dans l'éditeur — à adapter puis enregistrer.
+  const loadEvolutionTemplate = () => setFormEvolution(settings?.evolutionDefault ?? DEFAULT_EVOLUTION)
+  const saveEvolutionDefault = () => {
+    saveSettings({ evolutionDefault: formEvolution })
+    setEvolutionDefSaved(true); setTimeout(() => setEvolutionDefSaved(false), 2000)
+  }
+  // Bandeau « valeur » : contenu auto depuis l'estimation, simplement masquable.
+  const bannerAuto = useMemo(() => (contrat ? buildValeurBannerAuto(contrat) : null), [contrat])
+  const [bannerMasque, setBannerMasque] = useState(false)
+  const persistBannerMasque = (masque: boolean) => {
+    setBannerMasque(masque)
+    if (contrat) updateContrat(contrat.id, { valeurBannerOverride: { masque } } as Partial<PilotageContrat>)
+      .catch((e) => console.error('[banner masque persist]', e))
+  }
   const [newDocType, setNewDocType] = useState<PilotageDocumentType>('cahier_charges')
   const [signDoc, setSignDoc] = useState<PilotageDocument | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'done'>('idle')
@@ -187,6 +282,15 @@ export default function ContratPage() {
 
   const updP = (patch: Partial<ProjetContent>) => setFormProjet((p) => ({ ...p, ...patch }))
   const updL = (k: keyof LegalFields, v: string) => setFormLegal((f) => ({ ...f, [k]: v }))
+  // Enregistre les champs « policy » courants comme valeurs par défaut des futurs contrats.
+  const [legalDefSaved, setLegalDefSaved] = useState(false)
+  const saveLegalDefaults = () => {
+    const keys: (keyof LegalFields)[] = ['duree', 'etendueDroits', 'exclusivite', 'territoire', 'ajustementsInclus', 'finalites', 'donneesTraitees', 'personnesConcernees', 'dureeConservation', 'sousTraitantsUlterieurs']
+    const defs: Record<string, string> = {}
+    for (const k of keys) { const v = (formLegal[k] ?? '').trim(); if (v) defs[k] = v }
+    saveSettings({ legalDefaults: defs })
+    setLegalDefSaved(true); setTimeout(() => setLegalDefSaved(false), 2000)
+  }
   // Taux horaire (TJM ÷ 7) — TJM saisi sur le contrat en priorité, sinon estimation rattachée, sinon réglage global
   const tauxHoraire = tauxHoraireFromTjm(contrat?.tjm ?? contrat?.estimation?.tjm ?? settings?.tjm ?? 500)
   const aFacturer = (formProjet.taches ?? []).filter((t) => t.facturation === 'facturer' && !t.facturee)
@@ -216,13 +320,29 @@ export default function ContratPage() {
       prixCreation: contrat.fraisMiseEnPlace != null ? String(contrat.fraisMiseEnPlace) : '',
       prixAbo: contrat.abonnementMensuel != null ? String(contrat.abonnementMensuel) : '',
     })
+    // Valeurs par défaut de l'utilisateur (réglages) : remplissent les champs « policy »
+    // encore vides (durée, droits, exclusivité, RGPD…), sans écraser Société/client/prix.
+    const defs = settings?.legalDefaults
+    if (defs) for (const k of Object.keys(defs)) {
+      const kk = k as keyof LegalFields
+      if (!(prefill[kk] ?? '').trim() && defs[k]?.trim()) prefill[kk] = defs[k]
+    }
     const saved = contrat.legal
     if (saved) for (const k of Object.keys(saved) as (keyof LegalFields)[]) { if (saved[k]) prefill[k] = saved[k] }
     setFormLegal(prefill)
     setFormProjet(contrat.projet ? defaultProjetContent(contrat.projet) : defaultProjetContent())
     setFormCharte(contrat.charte ? defaultCharte(contrat.charte) : defaultCharte())
-    setFormOptions(contrat.optionsDevis ?? [])
-  }, [contrat, clients, company])
+    setFormPerimetre(buildPerimetre(contrat))
+    setDevisObjet(contrat.objetDevis ?? '')
+    setDevisMes(contrat.miseEnServiceDesc ?? '')
+    setDevisAbo(contrat.abonnementDesc ?? '')
+    setHebUsers(contrat.hebergement?.utilisateursInclus != null ? String(contrat.hebergement.utilisateursInclus) : '')
+    setHebDepass(contrat.hebergement?.depassement ?? '')
+    setRemiseMS(contrat.remiseMiseEnPlacePct != null ? String(contrat.remiseMiseEnPlacePct) : '')
+    setRemiseAbo(contrat.remiseAbonnementPct != null ? String(contrat.remiseAbonnementPct) : '')
+    setBannerMasque(contrat.valeurBannerOverride?.masque ?? false)
+    setFormEvolution(contrat.evolution ?? {})
+  }, [contrat, clients, company, settings])
 
   // Onglet initial depuis ?tab=… (lu côté client pour éviter une frontière Suspense)
   useEffect(() => {
@@ -230,12 +350,12 @@ export default function ContratPage() {
     if (t && TABS.some((x) => x.key === t)) setTab(t as TabKey)
   }, [])
 
-  // Hydrate les formulaires une fois le contrat chargé
+  // Hydrate les formulaires une fois le contrat ET les réglages chargés (pour appliquer les défauts légaux)
   useEffect(() => {
-    if (!contrat || hydratedFor.current === contrat.id) return
+    if (!contrat || settingsLoading || hydratedFor.current === contrat.id) return
     resetForms()
     hydratedFor.current = contrat.id
-  }, [contrat, resetForms])
+  }, [contrat, resetForms, settingsLoading])
 
   // Changement d'onglet : retour en lecture seule, on annule les modifications non enregistrées
   const goTab = (k: TabKey) => { setEditing(false); resetForms(); setTab(k) }
@@ -297,7 +417,7 @@ export default function ContratPage() {
     if (!currentUser) return
     setPdfBusy(d.id)
     try {
-      const { blob, filename } = await generatePilotageDocPdf(d, { company, projet: formProjet, legal: formLegal, charte: formCharte })
+      const { blob, filename } = await generatePilotageDocPdf(d, { company, projet: formProjet, legal: formLegal, charte: formCharte, options: splitPerimetre(formPerimetre).options })
       const url = await uploadBlob(blob, `users/${currentUser.uid}/pilotage_pdf/${d.contratId}/${d.id}.pdf`)
       await updateDocument(d.id, { pdfUrl: url, pdfNom: filename, pdfGeneeLe: Timestamp.now() })
       triggerDownload(blob, filename)
@@ -441,20 +561,55 @@ export default function ContratPage() {
         </button>
       </div>
 
+      {/* Repère essentiel / facultatif */}
+      <div className="flex items-start gap-2 text-xs text-gray-600 bg-red-50/70 border border-red-100 rounded-lg px-3 py-2">
+        <span className="mt-1 inline-block w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+        <p>
+          Les onglets marqués d'un <span className="text-red-600 font-semibold">point rouge</span> sont l'<strong className="text-red-700">essentiel pour un devis</strong> (client, prix, contenu projet).
+          Les autres sont <strong>facultatifs</strong> — brief, planning, mentions (souvent auto-remplis depuis la fiche client et ta Société).
+        </p>
+      </div>
+
       {/* Onglets — une seule ligne : défilement latéral sur mobile (desktop : tout tient), reste en place au scroll vertical */}
       <div className="flex flex-nowrap gap-1 border-b border-gray-200 sticky top-0 bg-white z-10 pt-1 overflow-x-auto overflow-y-hidden touch-pan-x overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {TABS.map((t) => (
           <button key={t.key} onClick={() => goTab(t.key)}
-            className={`shrink-0 px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition ${tab === t.key ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            title={t.essentiel ? 'Essentiel pour un devis' : 'Facultatif'}
+            className={`shrink-0 px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition ${tab === t.key ? 'border-blue-600 text-blue-700' : `border-transparent hover:text-gray-700 ${t.essentiel ? 'text-gray-600' : 'text-gray-400'}`}`}>
+            {t.essentiel && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 mr-1.5 align-middle" />}
             {t.label}
           </button>
         ))}
       </div>
 
       {/* Contenu de l'onglet */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 sm:p-5">
+      <div className={`bg-white rounded-2xl border shadow-sm p-4 sm:p-5 ${TABS.find((t) => t.key === tab)?.essentiel ? 'border-red-200 ring-1 ring-red-100' : 'border-gray-100'}`}>
+        {TABS.find((t) => t.key === tab)?.essentiel && (
+          <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+            <span><strong>Essentiel pour le devis</strong> — à renseigner avec soin.</span>
+          </div>
+        )}
         {tab === 'documents' && (
           <div className="space-y-4">
+            {/* Devis & factures générés depuis ce contrat → accès direct */}
+            {contratFactures.length > 0 && (
+              <div className="border border-gray-200 rounded-xl p-3">
+                <p className="text-xs font-medium text-gray-600 mb-2">Devis &amp; factures de ce contrat</p>
+                <div className="flex flex-col gap-1.5">
+                  {contratFactures.map((f) => (
+                    <button key={f.id} onClick={() => router.push(`/facturation/${f.id}`)}
+                      className="flex items-center justify-between gap-2 text-left border border-gray-100 hover:border-blue-300 hover:bg-blue-50/40 rounded-lg px-3 py-2 transition">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${f.type === 'devis' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{f.type === 'devis' ? 'Devis' : 'Facture'}</span>
+                        <span className="text-sm text-gray-700 truncate">{f.number}</span>
+                      </span>
+                      <span className="text-xs text-gray-400 shrink-0">{f.total != null ? `${fmtEur(f.total)} ` : ''}›</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {availableDocTypes.length === 0 ? (
               <p className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
                 Tous les types de documents ont été créés pour ce contrat. Chaque document n'existe qu'en un seul exemplaire (modifie-le ou régénère son PDF ci-dessous).
@@ -654,16 +809,65 @@ export default function ContratPage() {
                 />
               </div>
             )}
+
+            {/* Remise (tarif d'ami / partenaire) → prix barré + remise sur le devis, « remise accordée » sur la Fiche négo */}
+            <div className="border-t border-gray-200 pt-4 mt-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Remise <span className="font-normal normal-case text-gray-400">(tarif d'ami / partenaire)</span></h3>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs text-gray-500">Mise en service</label>
+                  <input type="number" value={remiseMS} onChange={(e) => setRemiseMS(e.target.value)} onBlur={persistRemise}
+                    placeholder="0" className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <span className="text-xs text-gray-400">%</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs text-gray-500">Abonnement</label>
+                  <input type="number" value={remiseAbo} onChange={(e) => setRemiseAbo(e.target.value)} onBlur={persistRemise}
+                    placeholder="0" className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <span className="text-xs text-gray-400">%</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">Le prix saisi (frais / abonnement) devient le <strong>tarif normal</strong> : le devis l'affiche <strong>barré</strong> avec la remise, le client paie le net, et la Fiche négo montre « remise accordée ». Laisse vide = pas de remise.</p>
+            </div>
+
+            {/* Coûts d'infra + quota d'hébergement — tout au même endroit */}
+            <div className="border-t border-gray-200 pt-4 mt-2 space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Coûts d'infrastructure & quota d'hébergement</h3>
+              <div className="flex items-start gap-2 text-xs text-blue-800 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                <span className="shrink-0 mt-0.5">💡</span>
+                <p>Règle pour fixer ton quota sans te faire avoir : ton <strong>abonnement doit couvrir l&apos;infra ×3 à ×5</strong> au niveau du quota inclus. <strong>Sous ~50 utilisateurs, c&apos;est quasi gratuit</strong> chez Firebase → inclus un quota généreux sans risque ; le « au-delà » te protège pour la suite.</p>
+              </div>
+              <InfraCostEstimator key={contrat.id} initial={contrat.coutFirebaseInputs ?? settings?.coutFirebaseInputs} onCommit={persistInfra} />
+              <div className="border border-gray-200 rounded-xl p-3">
+                <p className="text-xs font-medium text-gray-600 mb-1">Quota d&apos;hébergement inclus <span className="font-normal text-gray-400">(modalité auto du devis)</span></p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="text-xs text-gray-500">Utilisateurs inclus</label>
+                  <input type="number" value={hebUsers} onChange={(e) => setHebUsers(e.target.value)} onBlur={persistHebergement}
+                    placeholder={formCharte.usersMax != null ? String(formCharte.usersMax) : 'ex : 100'}
+                    className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <span className="text-[11px] text-gray-400">vide = « utilisateurs max » de la Charte</span>
+                </div>
+                <label className="block text-xs text-gray-500 mt-2 mb-1">Au-delà du quota</label>
+                <textarea value={hebDepass} onChange={(e) => setHebDepass(e.target.value)} onBlur={persistHebergement}
+                  rows={2} placeholder="ex : facturé 30 €/mois par tranche de 50 utilisateurs supplémentaires"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y" />
+                <p className="text-[11px] text-gray-400 mt-1">Modalité générée : « L&apos;abonnement inclut l&apos;hébergement (jusqu&apos;à X utilisateurs). Au-delà, … ». Vide = refacturation au réel par défaut.</p>
+              </div>
+            </div>
           </div>
         )}
 
         {tab === 'projet' && (
           <div className="space-y-4">
+            <details open className="border border-gray-200 rounded-xl">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-700 select-none">Contenu du projet</summary>
+              <div className="px-4 pb-4 border-t border-gray-100 pt-3 space-y-4">
             <EditBar editing={editing} onEdit={() => setEditing(true)} onCancel={cancelEdit} onSave={save} saveState={saveState} />
             {editing ? (
               <div className="space-y-5">
                 <div>
-                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Contexte</p>
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Contexte / objet du projet</p>
+                  <p className="text-[11px] text-gray-400 mb-2">En 1-2 phrases, ce que tu réalises pour le client. Sert aussi d'<strong>objet</strong> dans les documents légaux (plus besoin de le ressaisir ailleurs).</p>
                   <textarea rows={3} value={formProjet.contexte} onChange={(e) => updP({ contexte: e.target.value })}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                 </div>
@@ -677,93 +881,133 @@ export default function ContratPage() {
                   <p className="text-[11px] text-gray-400 mb-2">Ce que le client <strong>reçoit concrètement</strong> (≠ fonctionnalités).</p>
                   <StringListEditor items={formProjet.livrables} onChange={(v) => updP({ livrables: v })} placeholder="Livrable…" reorderable />
                 </div>
-                <div>
-                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Hors-périmètre <span className="font-normal normal-case text-gray-400">— apparaît sur le cahier des charges</span></p>
-                  <p className="text-[11px] text-gray-400 mb-2">Ce qui n'est <strong>pas compris</strong> dans le prix. Coche les exclusions qui s'appliquent.</p>
-                  <HorsPerimetreEditor items={formProjet.horsPerimetre} onChange={(v) => updP({ horsPerimetre: v })} />
-                </div>
               </div>
             ) : (
-              <ProjetApercu projet={formProjet} only={['contexte', 'fonctionnalites', 'livrables', 'horsPerimetre']} />
+              <ProjetApercu projet={formProjet} only={['contexte', 'fonctionnalites', 'livrables']} />
             )}
+              </div>
+            </details>
 
-            {/* Options à la carte proposées sur le devis de prestation */}
+            {/* Textes du devis : objet + descriptions de lignes (générés auto si vides) */}
             <details className="border border-gray-200 rounded-xl">
               <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-700 select-none">
-                Options à la carte du devis
-                <span className="ml-1 text-xs text-gray-400">({formOptions.length}) — chiffrées, hors total</span>
+                Textes du devis
+                <span className="ml-1 text-xs text-gray-400">— objet &amp; descriptions (auto si vides)</span>
+              </summary>
+              <div className="px-4 pb-4 space-y-4 border-t border-gray-100 pt-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Objet du devis</label>
+                  <textarea value={devisObjet} onChange={(e) => setDevisObjet(e.target.value)}
+                    onBlur={() => persistDevisTexte({ objetDevis: devisObjet.trim() })}
+                    rows={4} placeholder={buildObjetAuto(contrat)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y" />
+                  <p className="text-[11px] text-gray-400 mt-1">Décrit l'offre vendue (pas le contexte/besoin du client). Vide = phrase générée automatiquement (affichée en gris).</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Description « Mise en service »</label>
+                  <textarea value={devisMes} onChange={(e) => setDevisMes(e.target.value)}
+                    onBlur={() => persistDevisTexte({ miseEnServiceDesc: devisMes.trim() })}
+                    rows={3} placeholder={(formProjet.livrables ?? []).filter((l) => l.trim()).join(' · ') || 'Vide = liste des livrables du projet'}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y" />
+                  <p className="text-[11px] text-gray-400 mt-1">Vide = vos livrables (ci-dessus) collés bout à bout.</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Description « Abonnement mensuel »</label>
+                  <textarea value={devisAbo} onChange={(e) => setDevisAbo(e.target.value)}
+                    onBlur={() => persistDevisTexte({ abonnementDesc: devisAbo.trim() })}
+                    rows={3} placeholder="Hébergement, maintenance corrective, support et petites évolutions. Engagement initial de 12 mois, reconductible."
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y" />
+                  <p className="text-[11px] text-gray-400 mt-1">Vide = texte standard hébergement &amp; maintenance.</p>
+                </div>
+
+                {/* Bandeau « valeur » (ROI) — masquable (contenu auto depuis l'estimation) */}
+                <div className="border-t border-gray-100 pt-3">
+                  <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer select-none">
+                    <input type="checkbox" checked={bannerMasque} onChange={(e) => persistBannerMasque(e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    Masquer le bandeau « valeur » sur le devis
+                  </label>
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    {bannerMasque
+                      ? 'Le bandeau ne sera pas affiché sur le devis.'
+                      : bannerAuto
+                        ? `Affiché automatiquement depuis l'estimation validée (${bannerAuto.montant}). Coche pour le retirer.`
+                        : 'Aucune estimation validée → aucun bandeau ne sera affiché de toute façon.'}
+                  </p>
+                </div>
+              </div>
+            </details>
+
+            {/* Liste unifiée : hors périmètre (→ cahier des charges) + options (→ devis) */}
+            <details className="border border-gray-200 rounded-xl">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-700 select-none">
+                Hors périmètre &amp; options du devis
+                <span className="ml-1 text-xs text-gray-400">({formPerimetre.length})</span>
               </summary>
               <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
-                <p className="text-xs text-gray-500">Propositions supplémentaires affichées sur le devis (ex : module vidéo, publication stores…), non comptées dans le total. Reprises automatiquement par « Générer un devis ».</p>
+                <div className="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <span className="shrink-0 mt-0.5">💡</span>
+                  <div>
+                    <p><strong>Option</strong> = ce que tu proposes de <strong>vendre en plus</strong> (avec prix → devis + cahier des charges). <strong>Hors périmètre</strong> = ce que tu <strong>exclus pour te protéger</strong> (sans prix → cahier des charges) : ce que le client doit fournir, ce qui n&apos;est pas ton job, ce que tu plafonnes.</p>
+                    <p className="mt-1 text-amber-700">Pas de vraie exclusion sur ce projet ? <strong>Laisse vide</strong>, c&apos;est normal — ne transforme pas tout en options (ça fait « menu sans fin » et dévalue ton offre).</p>
+                  </div>
+                </div>
+                <PerimetreEditor items={formPerimetre} onChange={setFormPerimetre} onCommit={persistPerimetre} />
+              </div>
+            </details>
 
-                {/* Options déjà créées — lecture seule par défaut (crayon = modifier) */}
-                {formOptions.length > 0 && (
-                  <div className="space-y-2">
-                    {formOptions.map((o, i) => editOptIdx === i ? (
-                      <div key={i} className="border border-blue-200 rounded-lg p-3 space-y-2 bg-blue-50/30">
-                        <input value={o.label} onChange={(e) => updOpt(i, { label: e.target.value })}
-                          placeholder="Intitulé de l'option" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                        <textarea value={o.description ?? ''} onChange={(e) => updOpt(i, { description: e.target.value })}
-                          rows={2} placeholder="Description (optionnel)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs text-gray-500">Prix</span>
-                          <input type="number" value={o.prixMin ?? ''} onChange={(e) => updOpt(i, { prixMin: e.target.value === '' ? undefined : Number(e.target.value) })}
-                            placeholder="min €" className="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                          <span className="text-xs text-gray-400">à</span>
-                          <input type="number" value={o.prixMax ?? ''} onChange={(e) => updOpt(i, { prixMax: e.target.value === '' ? undefined : Number(e.target.value) })}
-                            placeholder="max € (optionnel)" className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                          <span className="text-xs text-gray-400">vide = « sur devis »</span>
-                        </div>
-                        <div className="flex justify-end">
-                          <button onClick={() => { saveOpts(); setEditOptIdx(null) }}
-                            className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition">
-                            <CheckIcon className="w-4 h-4" /> Terminer
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div key={i} className="flex items-start gap-2 border border-gray-200 rounded-lg p-3 bg-white">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-800">{o.label || <span className="text-gray-400">Sans titre</span>}</p>
-                          {o.description && <p className="text-xs text-gray-500 mt-0.5 whitespace-pre-line">{o.description}</p>}
-                        </div>
-                        <span className="text-sm font-semibold text-gray-700 shrink-0 whitespace-nowrap">{fmtOptPrice(o)}</span>
-                        <button onClick={() => setEditOptIdx(i)} className="p-1.5 text-gray-300 hover:text-blue-600 transition shrink-0" title="Modifier l'option"><PencilIcon className="w-4 h-4" /></button>
-                        <button onClick={() => { persistOptions(formOptions.filter((_, idx) => idx !== i)); setEditOptIdx(null) }} className="p-1.5 text-gray-300 hover:text-red-500 transition shrink-0" title="Supprimer l'option"><TrashIcon className="w-4 h-4" /></button>
-                      </div>
-                    ))}
+            {/* Section « Évolution » du devis (bloc structuré optionnel : revente / white-label) */}
+            <details className="border border-gray-200 rounded-xl">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-700 select-none">
+                Section « Évolution » du devis
+                <span className="ml-1 text-xs text-gray-400">— facultatif (revente / white-label)</span>
+              </summary>
+              <div className="px-4 pb-4 space-y-3 border-t border-gray-100 pt-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={loadEvolutionTemplate}
+                    className="text-xs font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition shrink-0">
+                    Charger le modèle par défaut
+                  </button>
+                  <span className="text-[11px] text-gray-400">
+                    Pré-remplit avec {settings?.evolutionDefault ? 'ton modèle enregistré' : 'un modèle générique de départ'} — à adapter ensuite.
+                  </span>
+                </div>
+                <EvolutionEditor value={formEvolution} onChange={setFormEvolution} />
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button onClick={saveEvolution}
+                    className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition shrink-0">
+                    <CheckIcon className="w-4 h-4" /> Enregistrer la section
+                  </button>
+                  <button onClick={saveEvolutionDefault}
+                    className="text-sm font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition shrink-0">
+                    Enregistrer comme modèle par défaut
+                  </button>
+                  <button onClick={() => setEvolutionClearing(true)}
+                    className="text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition shrink-0">
+                    Tout effacer
+                  </button>
+                  {evolutionSaved && <span className="text-[11px] text-emerald-600">✓ Section enregistrée</span>}
+                  {evolutionDefSaved && <span className="text-[11px] text-emerald-600">✓ Modèle enregistré</span>}
+                </div>
+                {evolutionClearing && (
+                  <div className="flex flex-wrap items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    <span className="text-xs text-red-800">Effacer toute la section « Évolution » de ce devis ? <span className="text-red-600">(les modèles par défaut enregistrés ne sont pas touchés)</span></span>
+                    <button onClick={clearEvolution} className="text-xs font-medium text-white bg-red-600 hover:bg-red-700 px-3 py-1 rounded-lg transition">Oui, effacer</button>
+                    <button onClick={() => setEvolutionClearing(false)} className="text-xs font-medium text-gray-600 hover:text-gray-800 px-2 py-1 transition">Annuler</button>
                   </div>
                 )}
-
-                {/* Section d'ajout — vidée après « Ajouter » */}
-                <div className="border border-dashed border-blue-200 rounded-lg p-3 space-y-2 bg-blue-50/30">
-                  <p className="text-xs font-medium text-gray-600">Nouvelle option</p>
-                  <input value={optDraft.label} onChange={(e) => setOptDraft((d) => ({ ...d, label: e.target.value }))}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addOption() } }}
-                    placeholder="Intitulé de l'option" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  <textarea value={optDraft.description ?? ''} onChange={(e) => setOptDraft((d) => ({ ...d, description: e.target.value }))}
-                    rows={2} placeholder="Description (optionnel)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-gray-500">Prix</span>
-                    <input type="number" value={optDraft.prixMin ?? ''} onChange={(e) => setOptDraft((d) => ({ ...d, prixMin: e.target.value === '' ? undefined : Number(e.target.value) }))}
-                      placeholder="min €" className="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <span className="text-xs text-gray-400">à</span>
-                    <input type="number" value={optDraft.prixMax ?? ''} onChange={(e) => setOptDraft((d) => ({ ...d, prixMax: e.target.value === '' ? undefined : Number(e.target.value) }))}
-                      placeholder="max € (optionnel)" className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <span className="text-xs text-gray-400">vide = « sur devis »</span>
-                  </div>
-                  <button onClick={addOption} disabled={!optDraft.label.trim()}
-                    className="flex items-center gap-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg transition">
-                    <PlusIcon className="w-4 h-4" /> Ajouter
-                  </button>
-                </div>
               </div>
             </details>
           </div>
         )}
 
+        {tab === 'fichenego' && <FicheNego contrat={contrat} />}
+
         {tab === 'charte' && (
           <div className="space-y-4">
+            <div className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+              <strong>Facultatif.</strong> Sert de <strong>brief projet</strong> (identité, plateformes, public, couleurs…) — pas nécessaire pour produire un devis. Remplis seulement ce qui t'est utile.
+            </div>
             <EditBar editing={editing} onEdit={() => setEditing(true)} onCancel={cancelEdit} onSave={save} saveState={saveState} />
             {editing ? <CharteEditor value={formCharte} onChange={setFormCharte} onUpload={uploadCharteFile} /> : <CharteApercu value={formCharte} />}
           </div>
@@ -838,15 +1082,8 @@ export default function ContratPage() {
                         {grp.champs.map((ch) => (
                           <div key={ch.key} className={ch.multiline ? 'sm:col-span-2' : ''}>
                             <label className="block text-[11px] font-medium text-gray-600 mb-1">{ch.label}</label>
-                            {ch.multiline ? (
-                              <textarea rows={2} value={formLegal[ch.key]} placeholder={ch.placeholder}
-                                onChange={(e) => updL(ch.key, e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-                            ) : (
-                              <input type="text" value={formLegal[ch.key]} placeholder={ch.placeholder}
-                                onChange={(e) => updL(ch.key, e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                            )}
+                            <AutoTextarea value={formLegal[ch.key] ?? ''} onChange={(v) => updL(ch.key, v)}
+                              placeholder={ch.placeholder} multiline={!!ch.multiline} />
                             {ch.help && <p className="text-[10px] text-gray-400 mt-0.5">{ch.help}</p>}
                           </div>
                         ))}
@@ -854,6 +1091,17 @@ export default function ContratPage() {
                     </details>
                   )
                 })}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button onClick={saveLegalDefaults}
+                    className="text-xs font-medium text-gray-600 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition shrink-0">
+                    Enregistrer comme valeurs par défaut
+                  </button>
+                  <span className="text-[11px] text-gray-400">
+                    {legalDefSaved
+                      ? '✓ Enregistré — pré-remplira les nouveaux contrats'
+                      : 'Durée, droits, exclusivité, RGPD… seront repris automatiquement sur tes futurs contrats.'}
+                  </span>
+                </div>
               </div>
             ) : (
               <LegalApercu legal={formLegal} />

@@ -800,6 +800,16 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               {isDevis && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200">Devis</span>}
               {facture.signed && <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 border border-emerald-200">Signé</span>}
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${STATUS_STYLE[facture.status]}`}>{STATUS_LABEL[facture.status]}</span>
+              {facture.contratId && (
+                <button
+                  onClick={() => router.push(`/pilotage/contrat/${facture.contratId}?tab=documents`)}
+                  title="Ouvrir le contrat lié"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  Contrat
+                </button>
+              )}
             </div>
             <p className="text-sm text-gray-500 mt-0.5">
               {facture.clientName || "—"} · {fmtDate((facture.date ?? facture.createdAt) ?? null)}

@@ -178,6 +178,29 @@ function buildStyle(primary: string): string {
   .invpdf .panel h3{margin-bottom:8px;font-size:13px}
   .invpdf .panel ul{margin:0;padding-left:18px;color:var(--muted);font-size:12px}
   .invpdf .panel ul li{margin-bottom:4px}
+  .invpdf .panel .reco{color:var(--ok);font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+  .invpdf .panel .price{font-weight:700;color:var(--ink);font-size:12px;margin-top:8px}
+
+  /* Plan de règlement (présentation, n'impacte pas la facturation) */
+  .invpdf .payplan{margin-top:14px;border:1px solid var(--pri);border-radius:8px;overflow:hidden;max-width:360px}
+  .invpdf .payplan .pp-h{background:var(--soft);padding:8px 14px;font-size:10.5px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.6px;color:var(--pri);border-bottom:1px solid var(--line)}
+  .invpdf .payplan .pp-row{display:flex;justify-content:space-between;gap:10px;padding:8px 14px;font-size:12.5px;border-bottom:1px solid var(--line)}
+  .invpdf .payplan .pp-row:last-child{border-bottom:0}
+  .invpdf .payplan .pp-row span:last-child{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .invpdf .payplan .pp-row.total{background:var(--soft);font-weight:700}
+
+  /* Section « Évolution » (bloc Q/R + étapes chiffrées) */
+  .invpdf .fut-head{display:flex;justify-content:space-between;align-items:center;gap:14px;
+    background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:0 0 14px}
+  .invpdf .fut-head .q{font-weight:700;font-size:13.5px}
+  .invpdf .fut-head .q span{display:block;font-weight:400;font-size:12px;color:var(--muted);margin-top:3px}
+  .invpdf .fut-head .a{font-weight:800;color:var(--ok);font-size:15px;white-space:nowrap}
+  .invpdf .fut-step{border:1px solid var(--line);border-radius:8px;padding:11px 16px;margin-bottom:10px;
+    display:flex;justify-content:space-between;align-items:center;gap:14px}
+  .invpdf .fut-step .t b{font-size:13px}
+  .invpdf .fut-step .t small{display:block;color:var(--muted);font-size:11.5px;margin-top:3px}
+  .invpdf .fut-step .p{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--pri)}
 
   .invpdf .opt-tbl td{padding:9px 12px;border-bottom:1px solid var(--line);font-size:12px}
   .invpdf .opt-tbl tr:last-child td{border-bottom:0}
@@ -262,14 +285,21 @@ export function buildInvoiceHtml(
   const style = `<style>${buildStyle(primary)}</style>`;
 
   // ── Totaux ───────────────────────────────────────────────
-  let grandTotal = 0, totalDiscount = 0, recurringYear1 = 0, recurringPerYear = 0;
+  let grandTotal = 0, totalDiscount = 0, recurringYear1 = 0, recurringPerYear = 0, recurringMonthly = 0;
   for (const item of facture.items) {
     const gross = item.quantity * item.price;
     const net = itemNetTotal(item);
     grandTotal += net;
     totalDiscount += gross - net;
-    if (item.recurrence === "mensuel") { recurringYear1 += net; recurringPerYear += item.price * 12; }
-    else if (item.recurrence === "annuel") { recurringYear1 += net; recurringPerYear += item.price; }
+    if (item.recurrence === "mensuel") {
+      recurringYear1 += net;
+      const netMonthly = item.quantity ? net / item.quantity : net; // net par mois (remise incluse)
+      recurringPerYear += netMonthly * 12;
+      recurringMonthly += netMonthly;
+    } else if (item.recurrence === "annuel") {
+      recurringYear1 += net;
+      recurringPerYear += net;
+    }
   }
   const oneOff = grandTotal - recurringYear1;
   const hasDiscount = facture.items.some((i) => i.discountType && i.discountValue);
@@ -281,11 +311,7 @@ export function buildInvoiceHtml(
   const mark = assets.logoDataUrl
     ? `<span class="mark"><img src="${assets.logoDataUrl}" alt=""/></span>`
     : `<span class="mark">${esc((companyName[0] ?? "S").toUpperCase())}</span>`;
-  const brandSubs: string[] = [];
-  if (company?.email || company?.telephone) brandSubs.push([company?.email, company?.telephone].filter((x): x is string => !!x).map(esc).join(" · "));
-  const idLine = [company?.siret ? `SIRET ${company.siret}` : "", company?.tva ? `TVA ${company.tva}` : ""].filter((x): x is string => !!x).map(esc).join(" · ");
-  if (idLine) brandSubs.push(idLine);
-
+  // (Contact / SIRET / TVA déplacés dans la carte « Prestataire » ci-dessous.)
   const statusChip = (() => {
     let label: string, color: string;
     if (isDevis) {
@@ -312,7 +338,6 @@ export function buildInvoiceHtml(
     <div class="head">
       <div class="brand">
         <span class="logo">${mark} ${esc(companyName)}</span>
-        ${brandSubs.map((s) => `<span class="sub">${s}</span>`).join("")}
       </div>
       <div class="doc-meta">
         <h1>${isDevis ? "Devis" : "Facture"}</h1>
@@ -322,11 +347,15 @@ export function buildInvoiceHtml(
     </div>`;
 
   // ── Parties ──────────────────────────────────────────────
+  const presAdresse = [
+    company?.adresse,
+    [company?.codePostal, company?.ville].filter(Boolean).join(" ").trim(),
+  ].filter((x): x is string => !!x && !!x.trim()).map(esc).join(", ");
   const presLines = [
     company?.representant ? esc(company.representant) : "",
-    [company?.adresse].filter((x): x is string => !!x).map(esc).join(""),
-    [company?.codePostal, company?.ville].filter((x): x is string => !!x).map(esc).join(" "),
-    company?.email ? esc(company.email) : "",
+    presAdresse,
+    [company?.email, company?.telephone].filter((x): x is string => !!x).map(esc).join(" · "),
+    [company?.siret ? `SIRET ${company.siret}` : "", company?.tva ? `TVA ${company.tva}` : ""].filter((x): x is string => !!x).map(esc).join(" · "),
   ].filter(Boolean).join("<br/>");
 
   const clientNom = facture.factureNom || facture.clientName || "—";
@@ -336,7 +365,7 @@ export function buildInvoiceHtml(
   const clientLines = [
     cAdr ? esc(cAdr) : "",
     [cCp, cVille].filter((x): x is string => !!x).map(esc).join(" "),
-    facture.factureEmail ? esc(facture.factureEmail) : "",
+    [facture.factureEmail, facture.factureTelephone].filter((x): x is string => !!x).map(esc).join(" · "),
   ].filter(Boolean).join("<br/>");
 
   const parties = `
@@ -365,8 +394,8 @@ export function buildInvoiceHtml(
 
   // Tableau des lignes
   const tblHead = hasDiscount
-    ? `<tr><th>Désignation</th><th class="r">Qté</th><th class="r">P.U. HT</th><th class="r">Remise</th><th class="r">Total HT</th></tr>`
-    : `<tr><th>Désignation</th><th class="r">Qté</th><th class="r">P.U. HT</th><th class="r">Total HT</th></tr>`;
+    ? `<tr><th>Désignation</th><th class="r">Qté</th><th class="r">P.U.</th><th class="r">Remise</th><th class="r">Total</th></tr>`
+    : `<tr><th>Désignation</th><th class="r">Qté</th><th class="r">P.U.</th><th class="r">Total</th></tr>`;
   const tblRows = facture.items.map((item) => {
     const net = itemNetTotal(item);
     const discCell = hasDiscount
@@ -398,12 +427,17 @@ export function buildInvoiceHtml(
     if (dejaRegle > 0) totalsRows.push(`<div class="t-row"><span>Déjà réglé précédemment</span><span>${fmt(dejaRegle)}</span></div>`);
     if (reste > 0.005) totalsRows.push(`<div class="t-row next"><span>Restera à régler ensuite</span><span>${fmt(reste)}</span></div>`);
   } else if (isDevis && recurringYear1 > 0) {
-    totalsRows.push(`<div class="t-row"><span>Mise en service (one-off)</span><span>${fmt(oneOff)}</span></div>`);
-    totalsRows.push(`<div class="t-row"><span>Abonnement (année 1)</span><span>${fmt(recurringYear1)}</span></div>`);
-    totalsRows.push(`<div class="t-row grand"><span>Total Année 1 HT</span><span>${fmt(grandTotal)}</span></div>`);
+    if (oneOff > 0) totalsRows.push(`<div class="t-row"><span>Mise en service <small>(une seule fois)</small></span><span>${fmt(oneOff)}</span></div>`);
+    // Valeur = total annuel (le client n'a pas à calculer), avec le détail /mois dans le libellé.
+    if (recurringMonthly > 0) {
+      totalsRows.push(`<div class="t-row"><span>Abonnement année 1 <small>(${fmt(recurringMonthly)}/mois × 12)</small></span><span>${fmt(recurringYear1)}</span></div>`);
+    } else {
+      totalsRows.push(`<div class="t-row"><span>Abonnement (année 1)</span><span>${fmt(recurringYear1)}</span></div>`);
+    }
+    totalsRows.push(`<div class="t-row grand"><span>Total année 1</span><span>${fmt(grandTotal)}</span></div>`);
     totalsRows.push(`<div class="t-row next"><span>Années suivantes <small>(abonnement seul)</small></span><span>${fmt(recurringPerYear)} / an</span></div>`);
   } else {
-    totalsRows.push(`<div class="t-row grand"><span>Total HT</span><span>${fmt(grandTotal)}</span></div>`);
+    totalsRows.push(`<div class="t-row grand"><span>Total</span><span>${fmt(grandTotal)}</span></div>`);
   }
   const totals = `<div class="totals"><div class="box">${totalsRows.join("")}</div></div>`;
 
@@ -422,7 +456,17 @@ export function buildInvoiceHtml(
       </div>`
     : "";
 
-  const htNote = `<div class="note"><b>Montants exprimés en euros, hors taxes.</b>${isDevis ? " TVA non applicable, art. 293 B du CGI (le cas échéant)." : ""}</div>`;
+  const htNote = `<div class="note"><b>Montants en euros, nets de TVA.</b> TVA non applicable, article 293 B du CGI.</div>`;
+
+  // Plan de règlement (présentation : à la mise en service → puis mensuel × 12). N'impacte pas la facturation.
+  let payPlan = "";
+  if (isDevis && recurringMonthly > 0) {
+    const ppRows: string[] = [];
+    if (oneOff > 0) ppRows.push(`<div class="pp-row"><span>À la mise en service</span><span>${fmt(oneOff)}</span></div>`);
+    ppRows.push(`<div class="pp-row"><span>Puis, mensuellement (× 12)</span><span>${fmt(recurringMonthly)} / mois</span></div>`);
+    ppRows.push(`<div class="pp-row total"><span>Total année 1</span><span>${fmt(grandTotal)}</span></div>`);
+    payPlan = `<div class="payplan"><div class="pp-h">Plan de règlement</div>${ppRows.join("")}</div>`;
+  }
 
   // Référence de paiement (factures)
   let payRef = "";
@@ -492,6 +536,40 @@ export function buildInvoiceHtml(
     options = `${sec("Options à la carte", "(hors devis — sur commande ultérieure)")}<table class="opt-tbl"><tbody>${rows}</tbody></table>`;
   }
 
+  // Section « Évolution » (optionnelle : revente / white-label) — bloc structuré
+  let evolution = "";
+  const ev = facture.evolution;
+  const evEtapes = (ev?.etapes ?? []).filter((e) => (e.titre ?? "").trim() || (e.description ?? "").trim());
+  const evPanneaux = (ev?.panneaux ?? []).filter((p) => (p.titre ?? "").trim() || (p.items ?? []).some((i) => i.trim()));
+  const evHasContent = !!ev && (!!ev.intro?.trim() || !!ev.qaQuestion?.trim() || evEtapes.length > 0 || evPanneaux.length > 0 || !!ev.tableau?.trim() || !!ev.note?.trim());
+  if (ev && evHasContent) {
+    const parts: string[] = [];
+    if (ev.intro?.trim()) parts.push(`<p class="lead">${nl2br(ev.intro)}</p>`);
+    if (ev.qaQuestion?.trim()) {
+      parts.push(`<div class="fut-head"><div class="q">${esc(ev.qaQuestion)}${ev.qaDetail?.trim() ? `<span>${nl2br(ev.qaDetail)}</span>` : ""}</div>${ev.qaReponse?.trim() ? `<div class="a">${esc(ev.qaReponse)}</div>` : ""}</div>`);
+    }
+    for (const e of evEtapes) {
+      parts.push(`<div class="fut-step"><div class="t"><b>${esc(e.titre)}</b>${e.description?.trim() ? `<small>${nl2br(e.description)}</small>` : ""}</div>${e.prix?.trim() ? `<div class="p">${esc(e.prix)}</div>` : ""}</div>`);
+    }
+    if (evPanneaux.length) {
+      parts.push(`<div class="twocol">${evPanneaux.map((p) =>
+        `<div class="panel">${p.reco ? `<div class="reco">★ Recommandé</div>` : ""}<h3>${esc(p.titre)}</h3><ul>${(p.items ?? []).filter((i) => i.trim()).map((i) => `<li>${esc(i)}</li>`).join("")}</ul>${p.prix?.trim() ? `<div class="price">${esc(p.prix)}</div>` : ""}</div>`
+      ).join("")}</div>`);
+    }
+    if (ev.tableau?.trim()) {
+      const lines = ev.tableau.split(/\n/).map((l) => l.trim()).filter(Boolean);
+      if (lines.length) {
+        const cells = (l: string) => l.split("|").map((c) => c.trim());
+        const head = cells(lines[0]);
+        const thead = `<tr>${head.map((c, i) => `<td class="${i === 0 ? "" : "r"}" style="font-weight:700;color:var(--ink)">${esc(c)}</td>`).join("")}</tr>`;
+        const body = lines.slice(1).map((l) => `<tr>${cells(l).map((c, i) => `<td class="${i === 0 ? "" : "r"}">${esc(c)}</td>`).join("")}</tr>`).join("");
+        parts.push(`<table class="opt-tbl"><tbody>${thead}${body}</tbody></table>`);
+      }
+    }
+    if (ev.note?.trim()) parts.push(`<div class="note">${nl2br(ev.note)}</div>`);
+    evolution = `${sec(ev.titre?.trim() || "Évolution possible", ev.tag?.trim() ? esc(ev.tag) : "")}${parts.join("")}`;
+  }
+
   // Modalités
   const modalites = facture.modalites && facture.modalites.length > 0
     ? `${sec("Modalités")}<dl class="mod">${facture.modalites.map((m) => `<div><dt>${esc(m.label)}</dt><dd>${nl2br(m.value)}</dd></div>`).join("")}</dl>`
@@ -509,7 +587,9 @@ export function buildInvoiceHtml(
       <div class="b">
         <div class="role">Le prestataire</div>
         <div class="who">${esc(companyName)}</div>
-        <div class="ok">Bon pour accord<small>Établi et signé le ${fmtDate(docDate ?? null)}</small></div>
+        ${facture.signed
+          ? `<div class="ok">Bon pour accord<small>Signé le ${fmtDate(facture.signedAt ?? docDate ?? null)}</small></div>`
+          : `<div class="bag">Établi le ${fmtDate(docDate ?? null)}</div>`}
       </div>
       <div class="b">
         <div class="role">Le client</div>
@@ -524,11 +604,18 @@ export function buildInvoiceHtml(
   const cgvDateFmt = company?.cgvDate
     ? new Date(company.cgvDate).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })
     : "";
+  // Mentions légales du pied : on retire la mention TVA/293 B (déjà affichée dans la
+  // note sous les totaux) pour éviter le doublon. La date des CGV n'est pas répétée
+  // ici (elle figure déjà sur la page CGV).
+  const footerMentions = (company?.mentionsLegales ?? "")
+    .split(/\n/)
+    .filter((l) => !/tva non applicable|293\s*b/i.test(l))
+    .join("\n")
+    .trim();
   const footer = `<footer>
     ${esc(companyName)}${footerRib ? ` · ${footerRib}` : ""}<br/>
     ${isDevis ? `Devis N° ${esc(facture.number)} · Établi le ${fmtDate(docDate ?? null)} · Valable ${facture.validiteJours ?? 30} jours · Document contractuel après signature.` : `Facture N° ${esc(facture.number)} · ${fmtDate(docDate ?? null)}`}
-    ${cgvDateFmt ? `<br/>CGV mises à jour le ${cgvDateFmt}` : ""}
-    ${company?.mentionsLegales ? `<br/>${nl2br(company.mentionsLegales)}` : ""}
+    ${footerMentions ? `<br/>${nl2br(footerMentions)}` : ""}
   </footer>`;
 
   const mainHtml = `${style}<div class="invpdf">
@@ -539,11 +626,13 @@ export function buildInvoiceHtml(
     ${totals}
     ${valueBanner}
     ${htNote}
+    ${payPlan}
     ${payRef}
     ${echeancier}
     ${notes}
     ${inclus}
     ${options}
+    ${evolution}
     ${modalites}
     ${sign}
     ${footer}

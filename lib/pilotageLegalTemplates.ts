@@ -101,9 +101,9 @@ export function legalFieldGroupsAll(): LegalFieldGroup[] {
     GROUP_PRESTATAIRE,
     GROUP_CLIENT,
     {
-      titre: 'Conditions & objet',
+      titre: 'Conditions',
       champs: [
-        { key: 'objet', label: 'Objet / description du projet', multiline: true, placeholder: 'ex : application web et mobile de gestion des interventions', help: 'En 1-2 phrases, ce que tu réalises pour le client.' },
+        // (L'objet du contrat reprend automatiquement le « Contexte » de l'onglet Contenu projet.)
         { key: 'prixCreation', label: 'Prix de création (€)', help: 'Montant total de la création (mise en place).' },
         { key: 'prixAbo', label: 'Abonnement / redevance mensuelle (€)', help: 'Le mensuel : maintenance + hébergement + support.' },
         { key: 'duree', label: 'Durée / délais', placeholder: 'ex : 4 mois ; 12 mois reconductible', help: 'Délai de réalisation ou durée d’engagement.' },

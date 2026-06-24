@@ -427,8 +427,9 @@ export default function PilotagePage() {
         </div>
       </details>
 
-      {/* Estimateur de coûts d'infra (Firebase) — indicatif */}
-      <InfraCostEstimator />
+      {/* Estimateur de coûts d'infra (Firebase) — indicatif ; les valeurs sont mémorisées comme modèle par défaut */}
+      <InfraCostEstimator key={settings ? 'ready' : 'loading'} initial={settings?.coutFirebaseInputs}
+        onCommit={(inputs) => { saveSettings({ coutFirebaseInputs: inputs }) }} />
 
       {/* Prévisionnel (d'après tes contrats) */}
       <div className="space-y-2">

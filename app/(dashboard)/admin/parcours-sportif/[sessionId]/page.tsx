@@ -2,7 +2,7 @@
 
 import { use, useState, useEffect, useMemo, useRef } from 'react'
 import {
-  doc, getDoc, deleteDoc, collection, query, where, onSnapshot,
+  doc, getDoc, setDoc, deleteDoc, collection, query, where, onSnapshot,
   updateDoc, runTransaction, Timestamp, addDoc, getDocs, writeBatch,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
@@ -93,6 +93,21 @@ BIC : ${bic}\n\n
 Bonne journée\n\n
 Teddy`
 
+// Message d'annulation par défaut (modèle). {reason} optionnel ; lien d'inscription public inclus.
+function defaultCancelMessage(reason: string) {
+  const publicUrl = typeof window !== 'undefined' ? `${window.location.origin}/parcours-sportif` : ''
+  const reasonLine = reason ? `\n\nRaison : ${reason}.` : ''
+  return `Bonjour,
+
+Je suis au regret de vous annoncer que le Parcours Sportif de ce soir est annulé.${reasonLine}
+Désolé pour ce contretemps — je vous donne rendez-vous lors du prochain Parcours.
+
+Voici les prochaines dates programmées : ${publicUrl}
+
+À très vite,
+Teddy`
+}
+
 function fmtDate(ts: Timestamp) {
   return ts.toDate().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 }
@@ -159,17 +174,19 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
   // SMS Annulation
   const [showCancelSmsModal, setShowCancelSmsModal] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
+  const [cancelMessage, setCancelMessage] = useState('')   // message d'annulation éditable (modèle)
+  const [cancelMsgSaved, setCancelMsgSaved] = useState(false)
+  const [cancelSentIds, setCancelSentIds] = useState<Set<string>>(new Set())
   const CANCEL_REASON_PRESETS = ['Météo', 'Nombre d\'inscrits insuffisant', 'Météo + nombre d\'inscrits']
 
   // RIB + numéro de contact depuis les paramètres (settings/parcours_sportif)
   const [parcoursSettings, setParcoursSettings] = useState({ iban: '', bic: '', contactPhone: '' })
   useEffect(() => {
     getDoc(doc(db, 'settings', 'parcours_sportif')).then((snap) => {
-      if (snap.exists()) {
-        const d = snap.data()
-        setParcoursSettings({ iban: d.iban ?? '', bic: d.bic ?? '', contactPhone: d.contactPhone ?? '' })
-      }
-    }).catch(() => {})
+      const d = snap.exists() ? snap.data() : {}
+      setParcoursSettings({ iban: d.iban ?? '', bic: d.bic ?? '', contactPhone: d.contactPhone ?? '' })
+      setCancelMessage(d.cancelMessage || defaultCancelMessage(''))
+    }).catch(() => setCancelMessage(defaultCancelMessage('')))
   }, [])
   // Valeurs prêtes à l'emploi pour les SMS (avec repli si non configuré)
   const ribPhone = parcoursSettings.contactPhone || '+33 6 79 40 82 54'
@@ -769,27 +786,18 @@ export default function AdminSessionDetailPage({ params }: { params: Promise<{ s
     window.open(`sms:${phone.replace(/\s/g, '')}`, '_blank')
   }
 
-  const sendCancelSmsToAll = () => {
-    const publicUrl = `${window.location.origin}/parcours-sportif`
-    const reasonLine = cancelReason ? `\n\nRaison : ${cancelReason}.` : ''
-    const body = `Bonjour,
-
-Au vu du nombre d'inscrits pour le Parcours Sportif de ce soir et de la météo annoncée, je suis contraint d'annuler la séance.${reasonLine}
-J'en suis sincèrement désolé et vous donne rendez-vous lors du prochain Parcours.
-
-Voici le lien du formulaire d'inscription pour voir les prochaines dates programmées : ${publicUrl}.
-
-Bonne journée et à très vite.
-
-Teddy`
-    const recipients = registrations.filter((r) => r.phone?.trim()).map((r) => r.phone!.replace(/\s/g, ''))
-    if (!recipients.length) { alert('Aucun participant avec un numéro de téléphone.'); return }
-    // On ouvre les SMS un par un (chaque lien SMS) — sur mobile iOS/Android l'app SMS accepte un seul destinataire
-    // Stratégie : ouvrir une popup pour chaque numéro séparément
-    // Sur iOS/Android, on utilise "sms:num1,num2" qui marche sur certains appareils
-    const multiSms = `sms:${recipients.join(',')}?body=${encodeURIComponent(body)}`
-    window.open(multiSms, '_blank')
-    setShowCancelSmsModal(false)
+  // Ouvre un SMS INDIVIDUEL pré-rempli (depuis le téléphone) — pas de SMS de groupe, pas de fuite de numéros.
+  const openCancelSMS = (reg: Registration) => {
+    const phone = reg.phone?.replace(/\s/g, '')
+    if (!phone) return
+    window.open(`sms:${phone}?body=${encodeURIComponent(cancelMessage)}`, '_blank')
+    setCancelSentIds((s) => new Set(s).add(reg.id))
+  }
+  // Enregistre le message d'annulation comme modèle réutilisable (settings/parcours_sportif).
+  const saveCancelMessage = () => {
+    setDoc(doc(db, 'settings', 'parcours_sportif'), { cancelMessage }, { merge: true })
+      .then(() => { setCancelMsgSaved(true); setTimeout(() => setCancelMsgSaved(false), 2000) })
+      .catch((e) => console.error('[cancel message save]', e))
   }
 
   // Numéro à utiliser pour joindre la personne sur un impayé :
@@ -920,7 +928,7 @@ Teddy`
           </div>
           <p className="text-sm text-gray-500 capitalize">{fmtDate(session.date)} à {fmtHeure(session.date)}</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
           {/* Vue séance (mobile) */}
           <button onClick={() => router.push(`/admin/parcours-sportif/${sessionId}/vue`)}
             className="text-xs font-medium px-3 py-1.5 rounded-lg border border-purple-200 text-purple-600 bg-purple-50 hover:bg-purple-100 transition">
@@ -936,11 +944,11 @@ Teddy`
             className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50">
             {togglingHidden ? '...' : session.hidden ? 'Afficher' : 'Masquer'}
           </button>
-          {/* SMS Annulation */}
+          {/* Message d'annulation (raison + texte type, réutilisé par les boutons « SMS annulation » de la liste) */}
           {registrations.some((r) => r.phone) && (
             <button onClick={() => setShowCancelSmsModal(true)}
               className="text-xs font-medium px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 transition">
-              SMS Annulation
+              Message d'annulation
             </button>
           )}
           {/* Modifier */}
@@ -1571,6 +1579,13 @@ Teddy`
                           <ChatBubbleLeftIcon className="w-3.5 h-3.5" />SMS
                         </button>
                       )}
+                      {reg.phone && (
+                        <button onClick={() => openCancelSMS(reg)}
+                          title="Ouvrir un SMS d'annulation pré-rempli (règle le texte/la raison via « Message d'annulation » en haut)"
+                          className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition ${cancelSentIds.has(reg.id) ? 'border-emerald-200 text-emerald-600 bg-emerald-50' : 'border-red-200 text-red-600 hover:bg-red-50'}`}>
+                          <ChatBubbleLeftIcon className="w-3.5 h-3.5" />{cancelSentIds.has(reg.id) ? 'Annul. envoyée' : 'SMS annulation'}
+                        </button>
+                      )}
                       {reg.attendance !== 'deregistered' && reg.phone && (
                         reminderConfirmId === reg.id ? (
                           <div className="flex items-center gap-1">
@@ -1616,45 +1631,65 @@ Teddy`
       {/* ── Modal SMS Annulation ── */}
       {showCancelSmsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setShowCancelSmsModal(false)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-gray-800">SMS Annulation</h3>
-            <p className="text-sm text-gray-500">
-              Envoi à <strong>{registrations.filter((r) => r.phone).length}</strong> participant(s) avec numéro de téléphone.
-            </p>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-800">Message d'annulation</h3>
+            <p className="text-sm text-gray-500">Règle ton message type ici (raison + texte), puis envoie-le à chaque participant ci-dessous.</p>
 
-            {/* Raison */}
+            {/* Raison rapide (pré-remplit le message) */}
             <div>
-              <p className="text-xs font-semibold text-gray-600 mb-2">Raison (optionnelle)</p>
-              <div className="flex flex-wrap gap-2 mb-2">
+              <p className="text-xs font-semibold text-gray-600 mb-2">Pré-remplir avec une raison</p>
+              <div className="flex flex-wrap gap-2">
                 {CANCEL_REASON_PRESETS.map((preset) => (
                   <button key={preset} type="button"
-                    onClick={() => setCancelReason(cancelReason === preset ? '' : preset)}
+                    onClick={() => { const r = cancelReason === preset ? '' : preset; setCancelReason(r); setCancelMessage(defaultCancelMessage(r)) }}
                     className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${cancelReason === preset ? 'bg-red-600 text-white border-red-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                     {preset}
                   </button>
                 ))}
               </div>
-              <input type="text" value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                placeholder="Ou saisissez une raison personnalisée…"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
+              <p className="text-[11px] text-gray-400 mt-1">Réécrit le message type avec cette raison — tu peux ensuite l'ajuster librement.</p>
             </div>
 
-            {/* Aperçu */}
-            <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-500 whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto">
-              {`Bonjour,\n\nAu vu du nombre d'inscrits pour le Parcours Sportif de ce soir et de la météo annoncée, je suis contraint d'annuler la séance.${cancelReason ? `\n\nRaison : ${cancelReason}.` : ''}\nJ'en suis sincèrement désolé et vous donne rendez-vous lors du prochain Parcours.\n\nVoici le lien du formulaire d'inscription pour voir les prochaines dates programmées : [lien public].\n\nBonne journée et à très vite.\n\nTeddy`}
+            {/* Message éditable + enregistrement du modèle */}
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-1">Message (modifiable)</p>
+              <textarea value={cancelMessage} onChange={(e) => setCancelMessage(e.target.value)} rows={9}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-red-400 resize-y" />
+              <div className="flex items-center gap-2 mt-2">
+                <button type="button" onClick={saveCancelMessage}
+                  className="text-xs font-medium text-white bg-gray-700 hover:bg-gray-800 px-3 py-1.5 rounded-lg transition">Enregistrer le modèle</button>
+                {cancelMsgSaved && <span className="text-[11px] text-emerald-600">✓ Modèle enregistré</span>}
+              </div>
             </div>
 
-            <div className="flex gap-3 pt-1">
-              <button type="button" onClick={() => setShowCancelSmsModal(false)}
-                className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm hover:bg-gray-50 transition">
-                Annuler
-              </button>
-              <button type="button" onClick={sendCancelSmsToAll}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-sm font-semibold transition">
-                Envoyer les SMS
-              </button>
+            {/* Liste : 1 SMS individuel par participant (fiable + pas de fuite de numéros) */}
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-2">Envoyer (1 par 1, depuis ton téléphone)</p>
+              <div className="border border-gray-100 rounded-xl divide-y divide-gray-100 max-h-56 overflow-y-auto">
+                {registrations.filter((r) => r.phone?.trim()).length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-4">Aucun participant avec numéro de téléphone.</p>
+                ) : (
+                  registrations.filter((r) => r.phone?.trim()).map((reg) => (
+                    <div key={reg.id} className="flex items-center gap-2 px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-gray-800 truncate">{reg.firstName} {reg.lastName}</p>
+                        <p className="text-[11px] text-gray-400">{reg.phone}</p>
+                      </div>
+                      <button type="button" onClick={() => openCancelSMS(reg)}
+                        className={`text-xs font-medium px-3 py-1.5 rounded-lg transition shrink-0 ${cancelSentIds.has(reg.id) ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-600 text-white hover:bg-red-700'}`}>
+                        {cancelSentIds.has(reg.id) ? '✓ Envoyé' : 'SMS'}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1.5">Chaque bouton ouvre un SMS individuel pré-rempli ; tape « Envoyer » dans l'app Messages pour chacun. (Les liens SMS ne fonctionnent que depuis un téléphone.)</p>
             </div>
+
+            <button type="button" onClick={() => setShowCancelSmsModal(false)}
+              className="w-full border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm hover:bg-gray-50 transition">
+              Fermer
+            </button>
           </div>
         </div>
       )}
