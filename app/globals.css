@@ -110,6 +110,10 @@ body {
 html, body {
   overflow-x: clip;
   max-width: 100vw;
+  /* iOS PWA (standalone) : le rebond élastique (overscroll) décolle brièvement la barre
+     de navigation `fixed` du bas quand on tire la liste → elle « remonte ». On supprime
+     le rebond vertical sur le conteneur de défilement pour la garder collée au viewport. */
+  overscroll-behavior-y: none;
 }
 
 /* iOS/Safari : force la couleur du texte saisi dans les champs */

@@ -51,13 +51,18 @@ export function buildValeurBannerAuto(contrat: PilotageContrat): NonNullable<Fac
   if (t.valeurAn <= 0) return null
   const revente = est.mode === 'revente'
   const stats: { value: string; label: string }[] = []
-  if (t.paybackMois != null && t.paybackMois > 0) {
-    stats.push({ value: `${Math.ceil(t.paybackMois)} mois`, label: 'de retour sur investissement' })
+  // Prix réellement payé pour la mise en service = tarif − remise éventuelle (et non le
+  // tarif normal). C'est lui qui sert au ROI et à l'ancrage « valeur de conception ».
+  const remMS = contrat.remiseMiseEnPlacePct ?? 0
+  const prix = (contrat.fraisMiseEnPlace ?? 0) * (1 - remMS / 100)
+  // Retour sur investissement = prix payé ÷ valeur générée par mois.
+  const paybackMois = t.valeurMois > 0 && prix > 0 ? prix / t.valeurMois : null
+  if (paybackMois != null && paybackMois > 0) {
+    stats.push({ value: `${Math.ceil(paybackMois)} mois`, label: 'de retour sur investissement' })
   }
   // L'ancrage « valeur de conception » (creationBas–setup, = jours×TJM ± marge) n'aide
   // que s'il est NETTEMENT supérieur au prix payé (mise en service) : sinon il égale le
   // prix et devient contre-productif. On ne l'affiche donc qu'au-delà de ×1,5.
-  const prix = contrat.fraisMiseEnPlace ?? 0
   const showConception = t.creationBas >= prix * 1.5
   const concept = showConception ? `${fmtEur(t.creationBas)} – ${fmtEur(t.setup)}` : ''
   return {
@@ -157,7 +162,7 @@ export function buildDevisFromContrat(
   const addMod = (label: string, value?: string) => { if (value && value.trim()) modalites.push({ label, value: value.trim() }) }
   if (frais > 0) addMod('Paiement — mise en service', 'Forfait payable à la mise en service.')
   if (abo > 0) addMod('Paiement — abonnement', `Mensuel (${fmtEur(abo)}/mois), sur engagement initial de 12 mois. Hébergement & maintenance inclus.`)
-  if (abo > 0) addMod('Reconduction & résiliation', "À l'issue de l'engagement initial, reconduction par périodes de 12 mois, sauf résiliation par l'une des parties avec un préavis de 2 mois. Révision tarifaire annuelle possible, communiquée à l'avance.")
+  if (abo > 0) addMod('Reconduction & résiliation', legal?.reconduction?.trim() || "À l'issue de l'engagement initial, reconduction par périodes de 12 mois, sauf résiliation par l'une des parties avec un préavis de 2 mois. Révision tarifaire annuelle possible, communiquée à l'avance.")
   if (abo > 0) {
     const inclus = contrat.hebergement?.utilisateursInclus ?? charte?.usersMax
     const audela = contrat.hebergement?.depassement?.trim()
@@ -181,8 +186,14 @@ export function buildDevisFromContrat(
   addMod('Validité', 'Devis valable 30 jours ; prix nets de TVA (TVA non applicable, art. 293 B du CGI) ; révisable si le périmètre ou les hypothèses évoluent.')
 
   const client = opts.client
-  const clientIndicatif = (client as { indicatif_tel?: string } | null | undefined)?.indicatif_tel
-  const factureTelephone = client?.telephone ? `${clientIndicatif ? clientIndicatif + ' ' : ''}${client.telephone}`.trim() : undefined
+  const clientIndicatif = (client as { indicatif_tel?: string } | null | undefined)?.indicatif_tel?.trim()
+  const clientTel = client?.telephone?.trim()
+  // On ne préfixe l'indicatif que si le numéro ne le contient pas déjà (sinon double « +33 +33… »).
+  const factureTelephone = clientTel
+    ? (clientIndicatif && !clientTel.startsWith('+') && !clientTel.startsWith(clientIndicatif)
+        ? `${clientIndicatif} ${clientTel}`
+        : clientTel)
+    : undefined
   return {
     userId: opts.userId,
     clientId: contrat.clientId ?? client?.id ?? '',

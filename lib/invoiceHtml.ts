@@ -100,7 +100,7 @@ function buildStyle(primary: string): string {
     font-size:13px;line-height:1.5;padding:40px 46px 48px;
   }
   .invpdf .head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;
-    border-bottom:3px solid var(--pri);padding-bottom:18px;margin-bottom:22px}
+    border-bottom:3px solid var(--pri);padding-bottom:14px;margin-bottom:16px}
   .invpdf .brand{display:flex;flex-direction:column;gap:2px}
   .invpdf .logo{display:inline-flex;align-items:center;gap:10px;font-weight:800;font-size:19px;letter-spacing:.3px}
   .invpdf .logo .mark{width:34px;height:34px;border-radius:8px;background:var(--pri);color:#fff;
@@ -109,12 +109,12 @@ function buildStyle(primary: string): string {
   .invpdf .brand .sub{color:var(--muted);font-size:11.5px;margin-top:2px}
   .invpdf .doc-meta{text-align:right;flex-shrink:0}
   .invpdf .doc-meta h1{font-size:23px;letter-spacing:1px;color:var(--pri);text-transform:uppercase;margin-bottom:6px}
-  .invpdf .doc-meta .row{font-size:12px;color:var(--muted)}
-  .invpdf .doc-meta .row b{color:var(--ink)}
+  .invpdf .doc-meta-line{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6}
+  .invpdf .doc-meta-line b{color:var(--ink)}
   .invpdf .chip{display:inline-block;margin-top:7px;padding:3px 10px;border-radius:20px;
     font-size:11px;font-weight:700;color:#fff}
 
-  .invpdf .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:22px}
+  .invpdf .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
   .invpdf .card{border:1px solid var(--line);border-radius:8px;padding:13px 16px;background:var(--soft2)}
   .invpdf .card .label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--pri);
     font-weight:700;margin-bottom:6px}
@@ -122,7 +122,7 @@ function buildStyle(primary: string): string {
   .invpdf .card .lines{color:var(--muted);font-size:12px;margin-top:3px}
 
   .invpdf h2.sec{font-size:12.5px;text-transform:uppercase;letter-spacing:1.1px;color:var(--ink);
-    margin:26px 0 11px;padding-bottom:7px;border-bottom:1px solid var(--line);
+    margin:18px 0 10px;padding-bottom:7px;border-bottom:1px solid var(--line);
     display:flex;align-items:center;gap:8px}
   .invpdf h2.sec .n{width:20px;height:20px;border-radius:50%;background:var(--pri);color:#fff;
     display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
@@ -327,21 +327,24 @@ export function buildInvoiceHtml(
     return `<div class="chip" style="background:${color}">${esc(label)}</div>`;
   })();
 
-  const metaRows = [
-    `<div class="row">N° <b>${esc(facture.number)}</b></div>`,
-    `<div class="row">Date : <b>${fmtDate(docDate ?? null)}</b></div>`,
-    isDevis ? `<div class="row">Validité : <b>${facture.validiteJours ?? 30} jours</b></div>` : "",
-    !isDevis && facture.devisNumber ? `<div class="row">Réf. devis : <b>${esc(facture.devisNumber)}</b></div>` : "",
-  ].filter(Boolean).join("");
+  // Méta (N°, date, validité) sur UNE ligne compacte, placée à gauche sous le logo :
+  // l'en-tête est ainsi plus court → plus de chances que le détail + ses totaux tiennent
+  // sur la même page. Le titre « Devis » + la pastille de statut restent à droite.
+  const metaInline = [
+    `N° <b>${esc(facture.number)}</b>`,
+    `Date : <b>${fmtDate(docDate ?? null)}</b>`,
+    isDevis ? `Validité : <b>${facture.validiteJours ?? 30} jours</b>` : "",
+    !isDevis && facture.devisNumber ? `Réf. devis : <b>${esc(facture.devisNumber)}</b>` : "",
+  ].filter(Boolean).join(" &middot; ");
 
   const header = `
     <div class="head">
       <div class="brand">
         <span class="logo">${mark} ${esc(companyName)}</span>
+        <div class="doc-meta-line">${metaInline}</div>
       </div>
       <div class="doc-meta">
         <h1>${isDevis ? "Devis" : "Facture"}</h1>
-        ${metaRows}
         ${statusChip}
       </div>
     </div>`;

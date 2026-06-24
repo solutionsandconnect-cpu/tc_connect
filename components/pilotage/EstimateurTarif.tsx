@@ -39,6 +39,8 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
   const [outilsMensuel, setOutilsMensuel] = useState(init.outilsMensuel)
   const [joursFactures, setJoursFactures] = useState(init.joursFactures)
   const [urssafPct, setUrssafPct] = useState(init.urssafPct)
+  const [remiseSetupPct, setRemiseSetupPct] = useState(init.remiseSetupPct)
+  const [remiseAboPct, setRemiseAboPct] = useState(init.remiseAboPct)
 
   const applyState = (st: EstimateurState) => {
     setMode(st.mode); setFeatures(st.features); setTjm(st.tjm); setOverheadPct(st.overheadPct)
@@ -46,6 +48,7 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
     setHeuresGagnees(st.heuresGagnees); setCoutHoraireClient(st.coutHoraireClient); setPartCaptee(st.partCaptee)
     setPremiumRevente(st.premiumRevente); setNbClientsFinaux(st.nbClientsFinaux); setPrixReventeMensuel(st.prixReventeMensuel)
     setOutilsMensuel(st.outilsMensuel); setJoursFactures(st.joursFactures); setUrssafPct(st.urssafPct)
+    setRemiseSetupPct(st.remiseSetupPct); setRemiseAboPct(st.remiseAboPct)
   }
 
   // Applique les valeurs par défaut globales une seule fois (si pas d'estimation initiale fournie)
@@ -67,10 +70,10 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
   const s: EstimateurState = useMemo(() => ({
     mode, features, tjm, overheadPct, bufferPct, maintPct, calcInfra, supportH,
     heuresGagnees, coutHoraireClient, partCaptee, premiumRevente, nbClientsFinaux, prixReventeMensuel,
-    outilsMensuel, joursFactures, urssafPct,
+    outilsMensuel, joursFactures, urssafPct, remiseSetupPct, remiseAboPct,
   }), [mode, features, tjm, overheadPct, bufferPct, maintPct, calcInfra, supportH,
     heuresGagnees, coutHoraireClient, partCaptee, premiumRevente, nbClientsFinaux, prixReventeMensuel,
-    outilsMensuel, joursFactures, urssafPct])
+    outilsMensuel, joursFactures, urssafPct, remiseSetupPct, remiseAboPct])
 
   const tarif = useMemo(() => computeTarif(s), [s])
 
@@ -88,6 +91,15 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
   const roi3ans = tarif.total3ans > 0 && tarif.valeurAn > 0 ? (tarif.valeurAn * 3) / tarif.total3ans : null
   const heuresMois = mode === 'metier' ? (heuresGagnees * 52) / 12 : 0
   const coutHeureRecup = heuresMois > 0 && tarif.abo > 0 ? tarif.abo / heuresMois : null
+
+  // ── Valeurs « après remise » + helper d'affichage inline (n'apparaît que si une remise est saisie) ──
+  const eurParJourCreationNet = tarif.joursTotal > 0 ? tarif.setupNet / tarif.joursTotal : 0
+  const gardeMoisNet = Math.max(0, tarif.valeurMois - tarif.aboNet)
+  const pctValeurPayeeNet = tarif.valeurMois > 0 ? Math.round((tarif.aboNet / tarif.valeurMois) * 100) : null
+  const coutHeureRecupNet = heuresMois > 0 && tarif.aboNet > 0 ? tarif.aboNet / heuresMois : null
+  // Affiche « → X après remise » en rose à côté d'un chiffre, seulement si une remise est active.
+  const rem = (txt: string, cls = 'text-rose-600') =>
+    tarif.hasRemise ? <span className={`font-semibold ${cls}`}> → {txt} après remise</span> : null
 
   // Remonte l'estimation courante + le calcul au parent (sans boucle : onChange via ref)
   const onChangeRef = useRef(onChange)
@@ -417,12 +429,44 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
       </div>
       )}
 
+      {/* Remise « tarif d'ami » — réduction sur les prix affichés + comparatif de tous les indicateurs */}
+      <div className="mt-4 rounded-xl border border-rose-100 bg-rose-50/50 p-4">
+        <p className="text-xs font-semibold text-rose-800 mb-1">Remise « tarif d&apos;ami / partenaire »</p>
+        <p className="text-[11px] text-rose-700/70 mb-3">
+          Réduction commerciale sur les prix (création + abonnement). <strong>Tes coûts ne bougent pas</strong> — c&apos;est un geste, pas une baisse de charge. Laisse à 0 = pas de remise.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          {([
+            { label: 'Remise création (%)', val: remiseSetupPct, set: setRemiseSetupPct },
+            { label: 'Remise abonnement (%)', val: remiseAboPct, set: setRemiseAboPct },
+          ] as const).map((f) => (
+            <div key={f.label}>
+              <label className="block text-[11px] font-medium text-rose-800/80 mb-1">{f.label}</label>
+              <input type="number" inputMode="decimal" step={5} min={0} max={100} value={f.val}
+                onChange={(e) => f.set(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
+                className="w-full border border-rose-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-rose-400" />
+            </div>
+          ))}
+        </div>
+
+        {tarif.hasRemise ? (
+          <p className="text-[11px] text-rose-700/80 mt-3">
+            Remise active : <strong>{remiseSetupPct}%</strong> sur la création · <strong>{remiseAboPct}%</strong> sur l&apos;abonnement. Tous les encarts ci-dessous affichent le montant <strong className="text-rose-700">après remise</strong> (en rose) à côté du tarif normal. Remise accordée : <strong>{fmtEur(tarif.remiseSetupEur + tarif.remiseAboEur * 12)}</strong> la 1re année · <strong>{fmtEur(tarif.remiseSetupEur + tarif.remiseAboEur * 36)}</strong> sur 3 ans.
+          </p>
+        ) : (
+          <p className="text-[11px] text-rose-700/70 mt-3">Renseigne une remise ci-dessus : chaque encart ci-dessous (abonnement, création, valeur du contrat, « pour t&apos;aider à juger ») affichera alors son montant <strong>après remise</strong>, à côté du tarif normal.</p>
+        )}
+      </div>
+
       {/* Résultat principal : le récurrent (cœur du modèle) */}
       <div className="mt-4 rounded-xl bg-blue-600 text-white p-4 shadow-sm">
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
             <p className="text-xs text-blue-100">{tarif.revente ? 'Redevance /mois — ta part du revenu de revente' : 'Abonnement conseillé /mois — le cœur de ton modèle'}</p>
             <p className="text-3xl font-bold">{fmtEur(tarif.abo)}</p>
+            {tarif.hasRemise && tarif.aboNet !== tarif.abo && (
+              <p className="text-base font-semibold text-emerald-200 mt-0.5">→ {fmtEur(tarif.aboNet)} /mois après remise</p>
+            )}
           </div>
           <div className="text-right text-[11px] text-blue-100 leading-relaxed">
             <p>plancher au coût : <strong className="text-white">{fmtEur(tarif.aboPlancher)}</strong></p>
@@ -456,12 +500,15 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
         <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
           <p className="text-xs text-emerald-700/70">{tarif.revente ? 'Création (forfait, droits de revente inclus)' : 'Création (forfait, one-shot)'}</p>
           <p className="text-2xl font-bold text-emerald-700">{fmtEur(tarif.setup)}</p>
+          {tarif.hasRemise && tarif.setupNet !== tarif.setup && (
+            <p className="text-base font-semibold text-rose-600">→ {fmtEur(tarif.setupNet)} après remise</p>
+          )}
           <p className="text-[11px] text-emerald-600/70 mt-0.5">fourchette {fmtEur(tarif.creationBas)} – {fmtEur(tarif.setup)}</p>
           <p className="text-[10px] text-gray-500 mt-1">
             {tarif.joursDev.toFixed(1)} j dev → {tarif.joursTotal.toFixed(1)} j × {fmtEur(tjm)}/j, +{bufferPct}% d'incertitude{tarif.revente ? `, +${premiumRevente}% droits` : ''}
           </p>
           {tarif.paybackMois != null && tarif.paybackMois > 0 && (
-            <p className="text-[10px] text-emerald-700 mt-1">Rentabilisé {tarif.revente ? 'par le revendeur' : 'par le client'} en ~{Math.ceil(tarif.paybackMois)} mois</p>
+            <p className="text-[10px] text-emerald-700 mt-1">Rentabilisé {tarif.revente ? 'par le revendeur' : 'par le client'} en ~{Math.ceil(tarif.paybackMois)} mois{tarif.hasRemise && tarif.paybackMoisNet != null && tarif.paybackMoisNet !== tarif.paybackMois ? <span className="font-semibold text-rose-600"> → ~{Math.ceil(tarif.paybackMoisNet)} mois après remise</span> : null}</p>
           )}
         </div>
         <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4">
@@ -469,10 +516,12 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
           <div className="flex items-end gap-4 mt-0.5 flex-wrap">
             <div>
               <p className="text-2xl font-bold text-indigo-700">{fmtEur(tarif.total3ans)}</p>
+              {tarif.hasRemise && tarif.total3ansNet !== tarif.total3ans && <p className="text-sm font-semibold text-rose-600">→ {fmtEur(tarif.total3ansNet)} après remise</p>}
               <p className="text-[10px] text-gray-500">sur 3 ans · création + abo × 36 mois</p>
             </div>
             <div>
               <p className="text-lg font-bold text-indigo-600/90">{fmtEur(tarif.total1an)}</p>
+              {tarif.hasRemise && tarif.total1anNet !== tarif.total1an && <p className="text-xs font-semibold text-rose-600">→ {fmtEur(tarif.total1anNet)} après remise</p>}
               <p className="text-[10px] text-gray-500">sur 1 an (court terme) · création + abo × 12</p>
             </div>
           </div>
@@ -499,14 +548,14 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
           <div className="bg-white/70 rounded-lg border border-emerald-100 p-3 space-y-1.5">
             <p className="text-[11px] font-bold text-gray-700 uppercase tracking-wide">Pour toi</p>
             <p className="text-xs text-gray-600">
-              Création : <strong>{fmtEur(tarif.setup)}</strong> pour ~{tarif.joursTotal.toFixed(1)} j → soit ≈ <strong>{fmtEur(eurParJourCreation)}/jour</strong> facturé.
+              Création : <strong>{fmtEur(tarif.setup)}</strong>{rem(fmtEur(tarif.setupNet))} pour ~{tarif.joursTotal.toFixed(1)} j → soit ≈ <strong>{fmtEur(eurParJourCreation)}/jour</strong> facturé{rem(`${fmtEur(eurParJourCreationNet)}/jour`)}.
               <span className="text-gray-400"> Repère freelance France : 400–650 €/j.</span>
             </p>
             <p className="text-xs text-gray-600">
               Si l'IA te fait réaliser ces {tarif.joursTotal.toFixed(1)} j plus vite, ton gain réel par jour grimpe d'autant — c'est <strong>ta marge</strong>, pas une remise à faire.
             </p>
             <p className="text-xs text-gray-600">
-              Récurrent : <strong>{fmtEur(tarif.abo)}/mois</strong> par client → <strong>{fmtEur(tarif.abo * 5)}/mois</strong> avec 5 clients, <strong>{fmtEur(tarif.abo * 10)}/mois</strong> avec 10.
+              Récurrent : <strong>{fmtEur(tarif.abo)}/mois</strong>{rem(`${fmtEur(tarif.aboNet)}/mois`)} par client → <strong>{fmtEur(tarif.abo * 5)}/mois</strong> avec 5 clients, <strong>{fmtEur(tarif.abo * 10)}/mois</strong> avec 10.
             </p>
             {clientsPourMrr(2000) != null && (
               <p className="text-xs text-gray-600">
@@ -522,10 +571,10 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
               </p>
             )}
             <p className="text-xs text-gray-600">
-              Ce client te rapporte <strong>{fmtEur(tarif.total3ans)}</strong> sur 3 ans ({fmtEur(tarif.setup)} de création + {fmtEur(tarif.abo)}/mois).
+              Ce client te rapporte <strong>{fmtEur(tarif.total3ans)}</strong>{rem(fmtEur(tarif.total3ansNet))} sur 3 ans ({fmtEur(tarif.setup)} de création + {fmtEur(tarif.abo)}/mois).
             </p>
             <p className="text-xs text-gray-700 bg-emerald-100/60 rounded-md px-2 py-1.5">
-              <strong>Ce qu'il te reste (net)</strong> : ≈ <strong>{fmtEur(tarif.netSetup)}</strong> sur la création + ≈ <strong>{fmtEur(tarif.netAboMensuel)}/mois</strong> par client — après cotisations ({urssafPct}%) et infra ({fmtEur(calcInfra)}/mois). Détail ci-dessous.
+              <strong>Ce qu'il te reste (net)</strong> : ≈ <strong>{fmtEur(tarif.netSetup)}</strong>{rem(fmtEur(tarif.netSetupRemise))} sur la création + ≈ <strong>{fmtEur(tarif.netAboMensuel)}/mois</strong>{rem(`${fmtEur(tarif.netAboMensuelRemise)}/mois`)} par client — après cotisations ({urssafPct}%) et infra ({fmtEur(calcInfra)}/mois). Détail ci-dessous.
             </p>
           </div>
 
@@ -539,16 +588,16 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
             ) : (
               <>
                 <p className="text-xs text-gray-600">
-                  L'app lui rapporte ≈ <strong>{fmtEur(tarif.valeurMois)}/mois</strong> ; il paie <strong>{fmtEur(tarif.abo)}/mois</strong> → il garde ≈ <strong>{fmtEur(Math.max(0, tarif.valeurMois - tarif.abo))}/mois</strong>.
+                  L'app lui rapporte ≈ <strong>{fmtEur(tarif.valeurMois)}/mois</strong> ; il paie <strong>{fmtEur(tarif.abo)}/mois</strong>{rem(`${fmtEur(tarif.aboNet)}/mois`)} → il garde ≈ <strong>{fmtEur(Math.max(0, tarif.valeurMois - tarif.abo))}/mois</strong>{rem(`${fmtEur(gardeMoisNet)}/mois`)}.
                 </p>
                 <p className="text-xs text-gray-600">
-                  Il ne reverse que <strong>{pctValeurPayee}%</strong> de ce que l'app lui rapporte{deal ? <> — <span className={`font-semibold ${deal.cls}`}>{deal.label}</span></> : null}.
+                  Il ne reverse que <strong>{pctValeurPayee}%</strong>{tarif.hasRemise && pctValeurPayeeNet != null && pctValeurPayeeNet !== pctValeurPayee ? <span className="font-semibold text-rose-600"> → {pctValeurPayeeNet}% après remise</span> : null} de ce que l'app lui rapporte{deal ? <> — <span className={`font-semibold ${deal.cls}`}>{deal.label}</span></> : null}.
                 </p>
               </>
             )}
             {tarif.paybackMois != null && tarif.paybackMois > 0 && (
               <p className="text-xs text-gray-600">
-                Il rembourse la création en ~<strong>{Math.ceil(tarif.paybackMois)} mois</strong>{tarif.paybackMois <= 6 ? ' (très vite)' : tarif.paybackMois <= 12 ? ' (dans l\'année)' : ''}.
+                Il rembourse la création en ~<strong>{Math.ceil(tarif.paybackMois)} mois</strong>{tarif.paybackMois <= 6 ? ' (très vite)' : tarif.paybackMois <= 12 ? ' (dans l\'année)' : ''}{tarif.hasRemise && tarif.paybackMoisNet != null && tarif.paybackMoisNet !== tarif.paybackMois ? <span className="font-semibold text-rose-600"> → ~{Math.ceil(tarif.paybackMoisNet)} mois après remise</span> : null}.
               </p>
             )}
             {roi3ans != null && (
@@ -558,7 +607,7 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
             )}
             {coutHeureRecup != null && (
               <p className="text-xs text-gray-600">
-                Concrètement : il récupère ~<strong>{Math.round(heuresMois)} h/mois</strong> pour {fmtEur(tarif.abo)} → l'heure regagnée lui revient à <strong>{fmtEur(coutHeureRecup)}/h</strong>, contre {fmtEur(coutHoraireClient)}/h que vaut son temps.
+                Concrètement : il récupère ~<strong>{Math.round(heuresMois)} h/mois</strong> pour {fmtEur(tarif.abo)} → l'heure regagnée lui revient à <strong>{fmtEur(coutHeureRecup)}/h</strong>{coutHeureRecupNet != null ? rem(`${fmtEur(coutHeureRecupNet)}/h`) : null}, contre {fmtEur(coutHoraireClient)}/h que vaut son temps.
               </p>
             )}
             <p className="text-xs text-gray-600">

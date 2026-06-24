@@ -256,6 +256,9 @@ export interface LegalFields {
   duree: string
   // Forfait d'ajustements inclus après validation de la maquette (clause du contrat de prestation)
   ajustementsInclus: string
+  // Modalité « Reconduction & résiliation » du devis (préavis, plafond de révision tarifaire…).
+  // Vide = texte standard auto (préavis 2 mois, révision annuelle possible).
+  reconduction: string
 }
 
 // Contenu structuré « projet » (partagé par le contrat, réutilisé par les documents)
@@ -327,6 +330,8 @@ export interface PilotageEstimation {
   outilsMensuel?: number   // coût mensuel des outils/abonnements (ex : Claude Code) — dilué dans le prix
   joursFactures?: number   // jours facturés / an (pour répartir le coût des outils sur la journée)
   urssafPct?: number       // cotisations sociales (URSSAF) en % du CA — pour calculer le net
+  remiseSetupPct?: number  // remise « tarif d'ami » sur la création / mise en service (%)
+  remiseAboPct?: number    // remise « tarif d'ami » sur l'abonnement (%)
   features: PilotageEstimationFeature[]
 }
 
@@ -390,6 +395,8 @@ export interface PilotageContrat {
   valeurBannerOverride?: {        // réglages du bandeau « valeur » (contenu auto depuis l'estimation)
     masque?: boolean              // true = ne pas afficher le bandeau du tout
   }
+  masqueAlerteAlignement?: boolean // true = ne plus afficher l'alerte « estimation ≠ chiffres du contrat »
+                                   // (utile quand le prix diffère volontairement de la valeur calculée)
   evolution?: DevisEvolution      // section « Évolution » optionnelle du devis (revente / white-label)
   hebergement?: {                 // quota d'hébergement inclus dans l'abonnement (modalité auto du devis)
     utilisateursInclus?: number   // nb d'utilisateurs actifs inclus (sinon fallback charte.usersMax)

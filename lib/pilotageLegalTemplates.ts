@@ -16,7 +16,7 @@ export function defaultLegalFields(over: Partial<LegalFields> = {}): LegalFields
     date: '', lieu: '', objet: '', prixCreation: '', prixAbo: '',
     donneesTraitees: '', finalites: '', personnesConcernees: '', dureeConservation: '', sousTraitantsUlterieurs: '',
     etendueDroits: '', exclusivite: '', territoire: '', duree: '',
-    ajustementsInclus: '',
+    ajustementsInclus: '', reconduction: '',
     ...over,
   }
 }
@@ -108,6 +108,7 @@ export function legalFieldGroupsAll(): LegalFieldGroup[] {
         { key: 'prixAbo', label: 'Abonnement / redevance mensuelle (€)', help: 'Le mensuel : maintenance + hébergement + support.' },
         { key: 'duree', label: 'Durée / délais', placeholder: 'ex : 4 mois ; 12 mois reconductible', help: 'Délai de réalisation ou durée d’engagement.' },
         { key: 'ajustementsInclus', label: 'Ajustements inclus (après validation maquette)', placeholder: "ex : 2 jours d'ajustements inclus", help: 'Forfait de retouches compris ; au-delà, c’est un avenant.' },
+        { key: 'reconduction', label: 'Reconduction & résiliation', multiline: true, placeholder: "ex : Reconduction par périodes de 12 mois, résiliation avec préavis de 1 mois. Révision tarifaire annuelle plafonnée à l'évolution de l'indice Syntec.", help: 'Modalité affichée sur le devis. Vide = texte standard (préavis 2 mois, révision annuelle possible). Ajuste ici le préavis (1 ou 2 mois) et le plafond de révision tarifaire.' },
         { key: 'lieu', label: 'Fait à (lieu)', help: 'La ville où le contrat est signé.' },
         { key: 'date', label: 'Date de signature', help: 'Date de signature du contrat.' },
       ],

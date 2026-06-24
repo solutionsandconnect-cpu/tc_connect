@@ -229,16 +229,7 @@ export default function ContratPage() {
     updateContrat(contrat.id, { hebergement: { utilisateursInclus, depassement: hebDepass.trim() } } as Partial<PilotageContrat>)
       .catch((e) => console.error('[hebergement persist]', e))
   }
-  // Remise (tarif d'ami / partenaire) : % sur la mise en service et/ou l'abonnement.
-  const [remiseMS, setRemiseMS] = useState('')
-  const [remiseAbo, setRemiseAbo] = useState('')
-  const persistRemise = () => {
-    if (!contrat) return
-    updateContrat(contrat.id, {
-      remiseMiseEnPlacePct: remiseMS.trim() === '' ? undefined : Number(remiseMS),
-      remiseAbonnementPct: remiseAbo.trim() === '' ? undefined : Number(remiseAbo),
-    } as Partial<PilotageContrat>).catch((e) => console.error('[remise persist]', e))
-  }
+  // Remise (tarif d'ami / partenaire) : réglée dans le calculateur (estimation), reportée au contrat via « aligner ».
   // Estimateur de coûts d'infra : on enregistre les entrées + le coût mensuel central sur le contrat.
   const persistInfra = (inputs: InfraInputs, central: number) => {
     if (!contrat) return
@@ -285,7 +276,7 @@ export default function ContratPage() {
   // Enregistre les champs « policy » courants comme valeurs par défaut des futurs contrats.
   const [legalDefSaved, setLegalDefSaved] = useState(false)
   const saveLegalDefaults = () => {
-    const keys: (keyof LegalFields)[] = ['duree', 'etendueDroits', 'exclusivite', 'territoire', 'ajustementsInclus', 'finalites', 'donneesTraitees', 'personnesConcernees', 'dureeConservation', 'sousTraitantsUlterieurs']
+    const keys: (keyof LegalFields)[] = ['duree', 'etendueDroits', 'exclusivite', 'territoire', 'ajustementsInclus', 'reconduction', 'finalites', 'donneesTraitees', 'personnesConcernees', 'dureeConservation', 'sousTraitantsUlterieurs']
     const defs: Record<string, string> = {}
     for (const k of keys) { const v = (formLegal[k] ?? '').trim(); if (v) defs[k] = v }
     saveSettings({ legalDefaults: defs })
@@ -338,8 +329,6 @@ export default function ContratPage() {
     setDevisAbo(contrat.abonnementDesc ?? '')
     setHebUsers(contrat.hebergement?.utilisateursInclus != null ? String(contrat.hebergement.utilisateursInclus) : '')
     setHebDepass(contrat.hebergement?.depassement ?? '')
-    setRemiseMS(contrat.remiseMiseEnPlacePct != null ? String(contrat.remiseMiseEnPlacePct) : '')
-    setRemiseAbo(contrat.remiseAbonnementPct != null ? String(contrat.remiseAbonnementPct) : '')
     setBannerMasque(contrat.valeurBannerOverride?.masque ?? false)
     setFormEvolution(contrat.evolution ?? {})
   }, [contrat, clients, company, settings])
@@ -523,8 +512,12 @@ export default function ContratPage() {
   const alignerContrat = async (e: SavedEstimation) => {
     if (!contrat) return
     const t = computeTarif(stateFromEstimation(e))
-    try { await updateContrat(contrat.id, { fraisMiseEnPlace: t.setup, abonnementMensuel: t.abo, coutFirebaseMensuel: e.infra } as Partial<PilotageContrat>) }
-    catch (err) { console.error('[pilotage est align]', err) }
+    try {
+      await updateContrat(contrat.id, {
+        fraisMiseEnPlace: t.setup, abonnementMensuel: t.abo, coutFirebaseMensuel: e.infra,
+        remiseMiseEnPlacePct: e.remiseSetupPct ?? 0, remiseAbonnementPct: e.remiseAboPct ?? 0,
+      } as Partial<PilotageContrat>)
+    } catch (err) { console.error('[pilotage est align]', err) }
   }
 
   if (!isAdmin) return <div className="flex items-center justify-center py-20"><p className="text-gray-500">Accès réservé.</p></div>
@@ -722,14 +715,20 @@ export default function ContratPage() {
                   if ((contrat.fraisMiseEnPlace ?? null) !== t.setup) diffs.push(`création contrat ${contrat.fraisMiseEnPlace != null ? fmtEur(contrat.fraisMiseEnPlace) : '—'} ≠ estimation ${fmtEur(t.setup)}`)
                   if ((contrat.abonnementMensuel ?? null) !== t.abo) diffs.push(`abonnement contrat ${contrat.abonnementMensuel != null ? fmtEur(contrat.abonnementMensuel) : '—'} ≠ estimation ${fmtEur(t.abo)}`)
                   if ((contrat.coutFirebaseMensuel ?? null) !== sel.infra) diffs.push(`coût infra contrat ${contrat.coutFirebaseMensuel != null ? fmtEur(contrat.coutFirebaseMensuel) : '—'} ≠ estimation ${fmtEur(sel.infra)}`)
-                  if (diffs.length === 0) return null
+                  if ((contrat.remiseMiseEnPlacePct ?? 0) !== (sel.remiseSetupPct ?? 0)) diffs.push(`remise création contrat ${contrat.remiseMiseEnPlacePct ?? 0}% ≠ estimation ${sel.remiseSetupPct ?? 0}%`)
+                  if ((contrat.remiseAbonnementPct ?? 0) !== (sel.remiseAboPct ?? 0)) diffs.push(`remise abonnement contrat ${contrat.remiseAbonnementPct ?? 0}% ≠ estimation ${sel.remiseAboPct ?? 0}%`)
+                  if (diffs.length === 0 || contrat.masqueAlerteAlignement) return null
                   return (
                     <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
                       <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                       <div className="text-xs text-amber-800">
-                        <p>L'estimation validée <strong>« {sel.label} »</strong> n'est pas identique aux chiffres saisis sur le contrat (seul le <strong>TJM</strong> est repris). Pour info :</p>
+                        <p>Le prix du contrat <strong>diffère</strong> de l&apos;estimation validée <strong>« {sel.label} »</strong> — c&apos;est <strong>normal si c&apos;est voulu</strong> (ex. prix « ami » plus bas que la valeur calculée). Pour info :</p>
                         <ul className="list-disc ml-4 mt-1 space-y-0.5 text-amber-700">{diffs.map((d, i) => <li key={i}>{d}</li>)}</ul>
-                        <button onClick={() => alignerContrat(sel)} className="mt-1.5 text-[11px] font-medium text-amber-800 underline hover:no-underline">Aligner les chiffres du contrat sur cette estimation</button>
+                        <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                          <button onClick={() => alignerContrat(sel)} className="text-[11px] font-medium text-amber-800 underline hover:no-underline">Aligner le contrat sur l&apos;estimation</button>
+                          <button onClick={() => updateContrat(contrat.id, { masqueAlerteAlignement: true } as Partial<PilotageContrat>).catch((e) => console.error('[masque alerte]', e))}
+                            className="text-[11px] font-medium text-amber-700/70 hover:text-amber-800">Ignorer (le prix est voulu différent)</button>
+                        </div>
                       </div>
                     </div>
                   )
@@ -810,24 +809,23 @@ export default function ContratPage() {
               </div>
             )}
 
-            {/* Remise (tarif d'ami / partenaire) → prix barré + remise sur le devis, « remise accordée » sur la Fiche négo */}
+            {/* Remise : désormais réglée DANS le calculateur (estimation), reportée sur le devis via « Aligner ». */}
             <div className="border-t border-gray-200 pt-4 mt-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Remise <span className="font-normal normal-case text-gray-400">(tarif d'ami / partenaire)</span></h3>
-              <div className="flex items-center gap-4 flex-wrap">
-                <div className="flex items-center gap-1.5">
-                  <label className="text-xs text-gray-500">Mise en service</label>
-                  <input type="number" value={remiseMS} onChange={(e) => setRemiseMS(e.target.value)} onBlur={persistRemise}
-                    placeholder="0" className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  <span className="text-xs text-gray-400">%</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <label className="text-xs text-gray-500">Abonnement</label>
-                  <input type="number" value={remiseAbo} onChange={(e) => setRemiseAbo(e.target.value)} onBlur={persistRemise}
-                    placeholder="0" className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  <span className="text-xs text-gray-400">%</span>
-                </div>
-              </div>
-              <p className="text-[11px] text-gray-400 mt-1">Le prix saisi (frais / abonnement) devient le <strong>tarif normal</strong> : le devis l'affiche <strong>barré</strong> avec la remise, le client paie le net, et la Fiche négo montre « remise accordée ». Laisse vide = pas de remise.</p>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Remise <span className="font-normal normal-case text-gray-400">(tarif d'ami / partenaire)</span></h3>
+              {(() => {
+                const sel = estimations.find((e) => e.id === estSelectedId)
+                const eRS = sel?.remiseSetupPct ?? 0
+                const eRA = sel?.remiseAboPct ?? 0
+                return (
+                  <p className="text-[11px] text-gray-400">
+                    La remise se règle <strong>dans le calculateur</strong> (champs « Remise création / abonnement »), avec le comparatif complet « sans remise → après remise ».
+                    {sel
+                      ? <> Estimation validée « {sel.label} » : <strong>{eRS}%</strong> sur la création · <strong>{eRA}%</strong> sur l&apos;abonnement.</>
+                      : <> Valide une estimation pour la définir.</>}
+                    {' '}Elle n&apos;arrive sur le <strong>devis PDF</strong> que quand tu utilises « Aligner » (l&apos;alerte au-dessus de la liste, uniquement s&apos;il y a un écart).
+                  </p>
+                )
+              })()}
             </div>
 
             {/* Coûts d'infra + quota d'hébergement — tout au même endroit */}

@@ -116,6 +116,8 @@ export interface EstimateurState {
   outilsMensuel: number   // coût mensuel des outils (ex : Claude Code) — dilué dans le prix
   joursFactures: number   // jours facturés / an
   urssafPct: number       // cotisations sociales (URSSAF) en % du CA — pour le net
+  remiseSetupPct: number  // remise « tarif d'ami » sur la création / mise en service (%)
+  remiseAboPct: number    // remise « tarif d'ami » sur l'abonnement (%)
 }
 
 export const DEFAULT_ESTIMATEUR_STATE: EstimateurState = {
@@ -125,6 +127,7 @@ export const DEFAULT_ESTIMATEUR_STATE: EstimateurState = {
   heuresGagnees: 4, coutHoraireClient: 35, partCaptee: 20,
   premiumRevente: 40, nbClientsFinaux: 30, prixReventeMensuel: 40,
   outilsMensuel: 100, joursFactures: 100, urssafPct: 24.6,
+  remiseSetupPct: 0, remiseAboPct: 0,
 }
 
 // Snapshot persistable (sans les id de lignes) ⇆ état du composant
@@ -135,6 +138,7 @@ export function estimationFromState(s: EstimateurState): PilotageEstimation {
     heuresGagnees: s.heuresGagnees, coutHoraireClient: s.coutHoraireClient, partCaptee: s.partCaptee,
     premiumRevente: s.premiumRevente, nbClientsFinaux: s.nbClientsFinaux, prixReventeMensuel: s.prixReventeMensuel,
     outilsMensuel: s.outilsMensuel, joursFactures: s.joursFactures, urssafPct: s.urssafPct,
+    remiseSetupPct: s.remiseSetupPct, remiseAboPct: s.remiseAboPct,
     features: s.features.map(({ nom, taille }) => ({ nom, taille })),
   }
 }
@@ -148,6 +152,8 @@ export function stateFromEstimation(e: PilotageEstimation): EstimateurState {
     outilsMensuel: e.outilsMensuel ?? DEFAULT_ESTIMATEUR_STATE.outilsMensuel,
     joursFactures: e.joursFactures ?? DEFAULT_ESTIMATEUR_STATE.joursFactures,
     urssafPct: e.urssafPct ?? DEFAULT_ESTIMATEUR_STATE.urssafPct,
+    remiseSetupPct: e.remiseSetupPct ?? 0,
+    remiseAboPct: e.remiseAboPct ?? 0,
     features: e.features.map((f) => ({ id: randomUUID(), nom: f.nom, taille: f.taille })),
   }
 }
@@ -202,6 +208,19 @@ export interface TarifResult {
   netAboMensuel: number        // abonnement net /mois (− cotisations − infra)
   netAn1: number               // net par client sur 1 an
   netAn3: number               // net par client sur 3 ans
+  // ── Remise « tarif d'ami » appliquée sur les PRIX (jamais sur les coûts/plancher) ──
+  hasRemise: boolean
+  setupNet: number             // création après remise
+  aboNet: number               // abonnement /mois après remise
+  total1anNet: number          // total an 1 après remise
+  total3ansNet: number         // total 3 ans après remise
+  paybackMoisNet: number | null // retour sur invest. client, calculé sur le prix remisé
+  netSetupRemise: number       // ce qu'il te reste sur la création, après remise
+  netAboMensuelRemise: number  // ce qu'il te reste /mois, après remise
+  netAn1Remise: number         // net par client sur 1 an, après remise
+  netAn3Remise: number         // net par client sur 3 ans, après remise
+  remiseSetupEur: number       // montant remisé sur la création
+  remiseAboEur: number         // montant remisé sur l'abonnement /mois
 }
 
 export function computeTarif(s: EstimateurState): TarifResult {
@@ -247,10 +266,30 @@ export function computeTarif(s: EstimateurState): TarifResult {
   const netAn1 = netSetup + netAboMensuel * 12
   const netAn3 = netSetup + netAboMensuel * 36
 
+  // Remise « tarif d'ami » : réduction pure sur les PRIX affichés (création + abo).
+  // On ne touche pas aux coûts (maintenance, plancher) : une remise commerciale ne
+  // baisse pas tes charges. Tous les indicateurs « après remise » découlent du prix remisé.
+  const rS = Math.min(100, Math.max(0, s.remiseSetupPct || 0)) / 100
+  const rA = Math.min(100, Math.max(0, s.remiseAboPct || 0)) / 100
+  const hasRemise = rS > 0 || rA > 0
+  const setupNet = round100(setup * (1 - rS))
+  const aboNet = round10(abo * (1 - rA))
+  const total1anNet = setupNet + aboNet * 12
+  const total3ansNet = setupNet + aboNet * 36
+  const paybackMoisNet = valeurMois > 0 ? setupNet / valeurMois : null
+  const netSetupRemise = setupNet - setupNet * taux
+  const netAboMensuelRemise = aboNet - aboNet * taux - s.calcInfra
+  const netAn1Remise = netSetupRemise + netAboMensuelRemise * 12
+  const netAn3Remise = netSetupRemise + netAboMensuelRemise * 36
+  const remiseSetupEur = setup - setupNet
+  const remiseAboEur = abo - aboNet
+
   return {
     revente, joursDev, joursTotal, creationBas, setup, tauxHoraire, outilsParJour,
     valeurAn, valeurMois, maintMensuelle, supportMensuel, aboPlancher, aboValeur, abo, aboBase,
     total1an, total3ans, pctRecurrent, paybackMois,
     cotisationsSetup, netSetup, cotisationsAboMensuel, netAboMensuel, netAn1, netAn3,
+    hasRemise, setupNet, aboNet, total1anNet, total3ansNet, paybackMoisNet,
+    netSetupRemise, netAboMensuelRemise, netAn1Remise, netAn3Remise, remiseSetupEur, remiseAboEur,
   }
 }
