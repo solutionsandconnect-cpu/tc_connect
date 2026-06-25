@@ -234,7 +234,10 @@ export function buildDevisFromContrat(
   }
   // Valeurs standard, toujours présentes (enrichissent le devis sans ressaisie).
   addMod('Réversibilité des données', 'En fin de contrat, les données sont exportées dans un format réutilisable (CSV / JSON) ; elles restent la propriété du Client.')
-  addMod('Prérequis client', 'Accès (ou délégation) aux services techniques nécessaires (hébergement, nom de domaine), contenus et données à intégrer, et un référent unique pour les validations et la recette.')
+  // Pas d'« hébergement » ici (il est sur le compte du prestataire). Le NOM DE DOMAINE reste au Client
+  // (l'app tourne sur SON domaine) ; on le CONSTATE juste — sa connexion/création est VENDUE via l'option
+  // dédiée (« Création domaine… »), donc on ne re-mentionne pas « en option » ici (évite le doublon).
+  addMod('Prérequis client', "Contenus et données à intégrer (logos, listes, fichiers/exports), le nom de domaine du Client, accès aux éventuels comptes ou outils tiers à connecter, et un référent unique côté Client pour les validations et la recette.")
   if (abo > 0) addMod('Garantie & support', "Correction des anomalies incluse pendant toute la durée de l'abonnement.")
   addMod('Validité', 'Devis valable 30 jours ; prix nets de TVA (TVA non applicable, art. 293 B du CGI) ; révisable si le périmètre ou les hypothèses évoluent.')
 

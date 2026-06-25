@@ -157,10 +157,31 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     const sections = collectSections(target, SCALE);
     const CONT_PAD_MM = 12;   // marge haute des pages de continuation (sinon contenu collé au bord)
     const BOTTOM_PAD_MM = 10; // marge basse de toutes les pages (sinon contenu collé en bas)
+    // Hauteur RÉELLE du contenu = dernière ligne non-blanche. Évite d'émettre une page finale
+    // entièrement vide quand le conteneur a du blanc résiduel en bas (sinon page blanche dans le PDF).
+    const contentH = (() => {
+      const sctx = canvas.getContext("2d");
+      if (!sctx) return totalH;
+      const pageHpx = Math.ceil(H * pxPerMm);
+      const scanH = Math.min(totalH, Math.ceil(pageHpx * 1.5)); // on scrute le bas (~1,5 page)
+      const top = totalH - scanH;
+      let data: Uint8ClampedArray;
+      try { data = sctx.getImageData(0, top, canvas.width, scanH).data; }
+      catch { return totalH; } // canvas inaccessible (taint) → on ne touche à rien
+      const w = canvas.width;
+      for (let row = scanH - 1; row >= 0; row--) {
+        const base = row * w * 4;
+        for (let i = 0; i < w; i++) {
+          const p = base + i * 4;
+          if (data[p] < 250 || data[p + 1] < 250 || data[p + 2] < 250) return top + row + 1;
+        }
+      }
+      return top; // tout le bas scanné est blanc → le contenu finit au-dessus
+    })();
     let rendered = 0;
     let isFirst = firstPage;
 
-    while (rendered < totalH - 1) {
+    while (rendered < contentH - 1) {
       // Page de continuation = ne démarre pas au haut naturel du document (qui, lui,
       // a déjà sa propre marge interne). On lui réserve une marge haute ; et une marge
       // basse sur toutes les pages.
@@ -169,9 +190,9 @@ async function buildPDF(facture: Facture, company?: Company | null) {
       const usableHpx = Math.floor((H - topPadMm - BOTTOM_PAD_MM) * pxPerMm);
       const maxCut = rendered + usableHpx;
       let cut: number;
-      if (maxCut >= totalH) {
+      if (maxCut >= contentH) {
         // Dernier morceau : tout le reste tient sur une page.
-        cut = totalH;
+        cut = contentH;
       } else {
         // On cherche la plus basse frontière sûre qui tient dans la page.
         // (rendered + 8 px : garantit qu'on avance, même si un bloc démarre la page.)
@@ -193,7 +214,7 @@ async function buildPDF(facture: Facture, company?: Company | null) {
         );
         if (splitSection) cut = splitSection.top;
       }
-      const sliceH = Math.min(cut, totalH) - rendered;
+      const sliceH = Math.min(cut, contentH) - rendered;
       if (sliceH <= 0) break;
 
       const pageCanvas = document.createElement("canvas");

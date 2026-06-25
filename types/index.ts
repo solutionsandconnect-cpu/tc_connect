@@ -363,6 +363,7 @@ export interface InfraInputs {
   stockageFichiersGo: number
   stockageVideoGo: number
   bandePassanteSessionMo: number
+  vercelMensuel?: number   // hébergement web (Vercel) — coût fixe /mois (part du plan Pro), pas dérivé de l'usage
 }
 
 export interface PilotageContrat {

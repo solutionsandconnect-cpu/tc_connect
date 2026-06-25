@@ -343,6 +343,8 @@ export function buildInvoiceHtml(
     `Date : <b>${fmtDate(docDate ?? null)}</b>`,
     isDevis ? `Validité : <b>${facture.validiteJours ?? 30} jours</b>` : "",
     !isDevis && facture.devisNumber ? `Réf. devis : <b>${esc(facture.devisNumber)}</b>` : "",
+    // Réf. contrat = clé PARTAGÉE avec les autres documents (cahier des charges, contrats légaux) → fait le lien.
+    facture.contratId ? `Réf : <b>${esc(facture.contratId.slice(0, 8))}</b>` : "",
   ].filter(Boolean).join(" &middot; ");
 
   const header = `

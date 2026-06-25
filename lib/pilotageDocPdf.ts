@@ -136,6 +136,9 @@ export async function generatePilotageDocPdf(
       y = logoData ? 30 : 20   // titre SOUS le logo (évite le chevauchement avec le bandeau)
       para(legal.titre, { bold: true, size: 16 }); y += 2
       if (docu.clientNom) para(`Projet ${docu.clientNom}`, { color: gray, size: 11 })
+      // Réf (id du contrat, PARTAGÉE avec le devis et les autres docs) + version → fait le lien.
+      const refLine = [docu.contratId ? `Réf ${docu.contratId.slice(0, 8)}` : '', `Version ${docVersion}`].filter(Boolean).join('  ·  ')
+      para(refLine, { color: gray, size: 9 })
       y += 3
       legal.intro.forEach((p) => para(p))
       y += 2
@@ -337,7 +340,7 @@ export async function generatePilotageDocPdf(
       ['Date', new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })],
       ['Prestataire', fNom],
       ['Version', docVersion],
-      ['Réf', docu.id.slice(0, 8)],
+      ['Réf', (docu.contratId || docu.id).slice(0, 8)],   // id du CONTRAT = clé partagée avec le devis et les autres docs
     ])
     y += 2
 
@@ -515,7 +518,7 @@ export async function generatePilotageDocPdf(
     ['Version', docVersion],
     ['Statut', STATUT_DOC_LABELS[docu.statut] ?? docu.statut],
     ['Date', new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })],
-    ['Réf', docu.id.slice(0, 8)],
+    ['Réf', (docu.contratId || docu.id).slice(0, 8)],   // id du CONTRAT = clé partagée avec le devis et les autres docs
     ['Prestataire', fNom],
   ]
   const labelW = 55, rowH = 8

@@ -630,7 +630,7 @@ export default function ContratPage() {
           </button>
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-gray-800 truncate">{contrat.clientNom || 'Contrat'}</h1>
-            <p className="text-xs text-gray-400">Documents · contenu projet · mentions légales</p>
+            <p className="text-xs text-gray-400"><span className="font-mono text-gray-500" title="Référence du contrat (commune au devis et aux documents)">Réf {id.slice(0, 8)}</span> · Documents · contenu projet · mentions légales</p>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">

@@ -33,6 +33,7 @@ const DEFAULTS = {
   stockageFichiersGo: 2,
   stockageVideoGo: 0,
   bandePassanteSessionMo: 3,
+  vercelMensuel: 7,   // hébergement web Vercel : part du plan Pro (~19 €) amortie + buffer (éditable)
 }
 
 const CHAMPS: Champ[] = [
@@ -73,7 +74,9 @@ export default function InfraCostEstimator(
     const cWrite = Math.max(0, writes - FREE.writesMois) * RATE.write
     const cStorage = Math.max(0, stockageGo - FREE.storageGo) * RATE.storageGo
     const cEgress = Math.max(0, egressGo - FREE.egressGoMois) * RATE.egressGo
-    const total = cRead + cWrite + cStorage + cEgress
+    const firebaseTotal = cRead + cWrite + cStorage + cEgress
+    const vercel = Math.max(0, v.vercelMensuel ?? 0)   // coût FIXE : ajouté hors fourchette ×0.6/×1.6
+    const total = firebaseTotal + vercel
 
     const sousFree = total < 0.5
     return {
@@ -83,10 +86,11 @@ export default function InfraCostEstimator(
         { l: 'Firestore — écritures', c: cWrite, d: `${(writes / 1_000_000).toFixed(2)} M/mois` },
         { l: 'Stockage fichiers/vidéo', c: cStorage, d: `${stockageGo.toFixed(0)} Go` },
         { l: 'Bande passante (téléchargement)', c: cEgress, d: `${egressGo.toFixed(0)} Go/mois` },
+        { l: 'Hébergement web (Vercel)', c: vercel, d: 'forfait /mois' },
       ],
       total,
-      bas: total * 0.6,
-      haut: total * 1.6,
+      bas: firebaseTotal * 0.6 + vercel,
+      haut: firebaseTotal * 1.6 + vercel,
       sousFree,
     }
   }, [v])
@@ -112,6 +116,15 @@ export default function InfraCostEstimator(
             <p className="text-[10px] text-gray-400 mt-0.5">{f.hint}</p>
           </div>
         ))}
+      </div>
+
+      <div className="mt-3 max-w-xs">
+        <label className="block text-[11px] font-medium text-gray-600 mb-1">Hébergement web — Vercel (€/mois)</label>
+        <input type="number" inputMode="decimal" step={1} min={0} value={v.vercelMensuel ?? 0}
+          onChange={(e) => set('vercelMensuel', Number(e.target.value) || 0)}
+          onBlur={() => onCommit?.(v, r.total)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
+        <p className="text-[10px] text-gray-400 mt-0.5">Coût <strong>fixe</strong> — part du plan <strong>Vercel Pro</strong> (~19 €) amortie entre tes apps + buffer. ⚠️ Hobby = non-commercial ; une app cliente = Pro requis.</p>
       </div>
 
       <details className="mt-2">
@@ -197,7 +210,7 @@ export default function InfraCostEstimator(
         💡 <strong>À ton échelle</strong> (quelques dizaines à centaines d’utilisateurs), c’est <strong>quasi toujours ~0 €</strong> — sauf si l’app stocke/diffuse de la <strong>vidéo</strong> ou beaucoup de médias. C’est le seul poste à surveiller sérieusement.
       </p>
       <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
-        Tarifs Firebase plan Blaze (facturé en $, ≈ € ici). <strong>Authentification</strong> et <strong>notifications push (FCM)</strong> sont gratuites (hors SMS/OTP). L’<strong>hébergement du site</strong> (Vercel/Firebase Hosting) n’est pas compté ici : souvent gratuit pour un petit trafic. La <strong>vidéo</strong> est le poste qui fait grimper la facture (stockage + bande passante) — ajuste-le en priorité.
+        Tarifs Firebase plan Blaze (facturé en $, ≈ € ici). <strong>Authentification</strong> et <strong>notifications push (FCM)</strong> sont gratuites (hors SMS/OTP). L’<strong>hébergement web Vercel</strong> est désormais compté via le champ dédié ci-dessus (plan <strong>Pro requis</strong> pour une app commerciale ; les CRON eux-mêmes sont inclus/négligeables). La <strong>vidéo</strong> est le poste qui fait grimper la facture (stockage + bande passante) — ajuste-le en priorité.
       </p>
     </details>
   )

@@ -456,6 +456,7 @@ export default function PilotagePage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-gray-900">{c.clientNom}</span>
+                    <span className="text-[10px] font-mono text-gray-400" title="Référence du contrat (commune au devis et aux documents)">Réf {c.id.slice(0, 8)}</span>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${STATUT_COLORS[c.statut]}`}>{STATUT_LABELS[c.statut]}</span>
                     {c.premiereAnnee && <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">1ère année</span>}
                   </div>
