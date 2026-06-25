@@ -262,7 +262,7 @@ export interface LegalFields {
 }
 
 // Contenu structuré « projet » (partagé par le contrat, réutilisé par les documents)
-export interface ProjetFonction { categorie: string; description: string }
+export interface ProjetFonction { categorie: string; description: string; taille?: 'xs' | 's' | 'm' | 'l' | 'xl' }  // taille = durée (sync calculateur)
 export interface ProjetPlanning {
   etape: string
   description: string
@@ -312,7 +312,7 @@ export interface ChartGraphique {
 }
 
 // Snapshot des entrées du calculateur de tarif, attaché au contrat pour pouvoir rouvrir/ajuster le calcul.
-export interface PilotageEstimationFeature { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl' }
+export interface PilotageEstimationFeature { nom: string; taille: 'xs' | 's' | 'm' | 'l' | 'xl'; description?: string; categorie?: string }
 export interface PilotageEstimation {
   mode: 'metier' | 'revente'
   tjm: number
@@ -352,7 +352,7 @@ export interface SavedEstimation extends PilotageEstimation {
 }
 
 // Collection : pilotage_contrats (pilotage de l'activité — contrats clients pro)
-export type PilotageContratStatut = 'actif' | 'pause' | 'termine'
+export type PilotageContratStatut = 'prospect' | 'actif' | 'pause' | 'termine'
 
 // Entrées de l'estimateur de coûts d'infra (Firebase) — voir components/pilotage/InfraCostEstimator.tsx
 export interface InfraInputs {
@@ -384,6 +384,7 @@ export interface PilotageContrat {
   devisId?: string | null       // devis validé relié (source de vérité du deal)
   devisNumber?: string | null   // numéro du devis relié (affichage)
   statut: PilotageContratStatut
+  version?: string              // version du projet/contrat (éditable) — reprise par TOUS les documents générés
   notes?: string
   projet?: ProjetContent       // contenu projet partagé (rempli une fois, réutilisé par les documents)
   legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)
@@ -395,8 +396,9 @@ export interface PilotageContrat {
   valeurBannerOverride?: {        // réglages du bandeau « valeur » (contenu auto depuis l'estimation)
     masque?: boolean              // true = ne pas afficher le bandeau du tout
   }
-  masqueAlerteAlignement?: boolean // true = ne plus afficher l'alerte « estimation ≠ chiffres du contrat »
-                                   // (utile quand le prix diffère volontairement de la valeur calculée)
+  masqueAlerteAlignement?: boolean // (déprécié) ancien flag « ne plus jamais afficher l'alerte d'alignement »
+  alerteAlignementIgnoree?: string // signature des chiffres ignorés : tant qu'ils ne bougent pas, l'alerte
+                                   // « estimation ≠ contrat » reste masquée ; si un chiffre change → réapparaît
   evolution?: DevisEvolution      // section « Évolution » optionnelle du devis (revente / white-label)
   hebergement?: {                 // quota d'hébergement inclus dans l'abonnement (modalité auto du devis)
     utilisateursInclus?: number   // nb d'utilisateurs actifs inclus (sinon fallback charte.usersMax)

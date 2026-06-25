@@ -51,6 +51,7 @@ async function fetchImageAsDataUrl(url: string): Promise<string | null> {
 // son contenu). Renvoie une liste triée d'offsets Y en pixels canvas.
 const BREAK_SELECTOR = [
   "tbody tr",          // lignes du tableau de prestations
+  ".sumrow",           // ligne « plan de règlement + totaux » (insécable ensemble)
   ".totals",           // bloc totaux (encadré insécable)
   ".value",            // bandeau valeur (insécable : sa base seule est un point de coupe)
   ".twocol",           // panneaux « inclus » 2 colonnes (insécables ensemble)
@@ -155,7 +156,7 @@ async function buildPDF(facture: Facture, company?: Company | null) {
     const breaks = collectBreakpoints(target, SCALE);
     const sections = collectSections(target, SCALE);
     const CONT_PAD_MM = 12;   // marge haute des pages de continuation (sinon contenu collé au bord)
-    const BOTTOM_PAD_MM = 12; // marge basse de toutes les pages (sinon contenu collé en bas)
+    const BOTTOM_PAD_MM = 10; // marge basse de toutes les pages (sinon contenu collé en bas)
     let rendered = 0;
     let isFirst = firstPage;
 

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { PlusIcon, TrashIcon, ChevronUpIcon, ChevronDownIcon, CheckIcon, PencilIcon, Bars3BottomLeftIcon } from '@heroicons/react/24/outline'
 import type { ProjetFonction, ProjetPlanning, ProjetTache, ProjetContent } from '@/types'
 import { RESPONSABLES_PLANNING, recalcPlanning, HORS_PERIMETRE_DEFAUT, DEFAULT_PLANNING_ETAPES } from '@/lib/pilotageProjetTemplates'
+import { TAILLES } from '@/lib/pilotageEstimateur'
 import Modal from '@/components/ui/Modal'
 
 const inputCls = 'flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -129,6 +130,12 @@ export function FonctionsEditor({ items, onChange }: { items: ProjetFonction[]; 
           </div>
           <input value={f.categorie} placeholder="Catégorie" onChange={(e) => upd(i, { categorie: e.target.value })} className={`w-1/3 min-w-0 border rounded-lg px-2 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${categorieColor(f.categorie, catColors).input}`} />
           <input value={f.description} placeholder="Description" onChange={(e) => upd(i, { description: e.target.value })} className={inputCls} />
+          <select value={f.taille ?? ''} onChange={(e) => upd(i, { taille: (e.target.value || undefined) as ProjetFonction['taille'] })}
+            title="Durée (sert au chiffrage si tu reprends ces fonctionnalités dans le calculateur)"
+            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white shrink-0 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">durée…</option>
+            {(['xs', 's', 'm', 'l', 'xl'] as const).map((k) => <option key={k} value={k}>{TAILLES[k].label} · {TAILLES[k].jours} j</option>)}
+          </select>
           <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className={delBtn}><TrashIcon className="w-4 h-4" /></button>
         </div>
       ))}
@@ -227,9 +234,9 @@ export function PlanningEditor({ items, onChange, etapesTypes }: { items: Projet
                   : <span className="text-[10px] text-gray-400">auto</span>}
               </div>
               {!isLast && (
-                <label className="flex items-center gap-1 text-xs text-gray-500">
+                <label className="flex items-center gap-1 text-xs text-gray-500" title="Durée de cette étape, en jours — détermine la date de début de l'étape suivante">
                   <input type="number" min={0} value={p.dureeJours ?? ''} placeholder="0" onChange={(e) => upd(i, { dureeJours: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value, 10) || 0) })} className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  jours avant la suivante
+                  jours — durée de l'étape
                 </label>
               )}
               <div className="flex items-center gap-1">
@@ -647,6 +654,7 @@ export function PlanningApercu({ planning, onChange, etapesTypes }: { planning: 
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" /> Aujourd'hui</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300" /> À venir</span>
       </div>
+      <p className="text-[10px] text-gray-400">La date est le <strong className="font-medium text-gray-500">début</strong> de l'étape ; « X j » = sa <strong className="font-medium text-gray-500">durée</strong> (jusqu'à l'étape suivante).</p>
       <ol className="relative border-l border-gray-200 ml-1.5 space-y-3">
       {planning.map((s, i) => {
         if (editIdx === i && draft) return (
@@ -682,6 +690,9 @@ export function PlanningApercu({ planning, onChange, etapesTypes }: { planning: 
               <div className="flex items-center gap-2 shrink-0">
                 {s.responsable && <span className={`text-[10px] font-medium rounded-full px-2 py-0.5 ${respColor(s.responsable)}`}>{s.responsable}</span>}
                 {s.date && <span className="text-xs text-gray-500 tabular-nums">{fmtDateFr(s.date)}</span>}
+                {i < planning.length - 1 && s.dureeJours != null && s.dureeJours > 0 && (
+                  <span className="text-[10px] text-gray-400 tabular-nums whitespace-nowrap" title="Durée de l'étape (jusqu'à la suivante)">{s.dureeJours} j</span>
+                )}
                 {onChange && (confirmIdx === i ? (
                   <span className="flex items-center gap-1">
                     <button type="button" onClick={() => del(i)} className="text-xs font-medium text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-lg transition">Oui</button>

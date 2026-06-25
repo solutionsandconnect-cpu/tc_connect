@@ -149,13 +149,14 @@ export default function InfraCostEstimator(
             </tr></thead>
             <tbody>
               <tr className="border-t border-gray-100"><td className="px-2 py-1">10 Go</td><td className="px-2 py-1 text-right">gratuit</td></tr>
-              <tr className="border-t border-gray-100"><td className="px-2 py-1">100 Go</td><td className="px-2 py-1 text-right whitespace-nowrap">~1,5 $</td></tr>
-              <tr className="border-t border-gray-100"><td className="px-2 py-1">360 Go (~1 an d’usage)</td><td className="px-2 py-1 text-right whitespace-nowrap">~5 $</td></tr>
-              <tr className="border-t border-gray-100"><td className="px-2 py-1">1 To</td><td className="px-2 py-1 text-right whitespace-nowrap">~15 $</td></tr>
+              <tr className="border-t border-gray-100"><td className="px-2 py-1">100 Go</td><td className="px-2 py-1 text-right whitespace-nowrap">~1,5 $ <span className="text-gray-400">(≈ 1,4 €)</span></td></tr>
+              <tr className="border-t border-gray-100"><td className="px-2 py-1">360 Go (~1 an d’usage)</td><td className="px-2 py-1 text-right whitespace-nowrap">~5 $ <span className="text-gray-400">(≈ 4,6 €)</span></td></tr>
+              <tr className="border-t border-gray-100"><td className="px-2 py-1">1 To</td><td className="px-2 py-1 text-right whitespace-nowrap">~15 $ <span className="text-gray-400">(≈ 14 €)</span></td></tr>
               <tr className="border-t border-gray-100"><td className="px-2 py-1">Visionnages (peu importe le nombre)</td><td className="px-2 py-1 text-right">0 $</td></tr>
             </tbody>
           </table>
-          <p><strong>À facturer au client :</strong> ton coût (~5–15 $/mois) <strong>× 3 à 5 de marge</strong> → un <strong>« Module vidéo » ~30–50 €/mois</strong>, en option à part de l’abonnement.</p>
+          <p><strong>À facturer au client :</strong> ton coût (~5–15 $/mois, ≈ 5–14 €) <strong>× 3 à 5 de marge</strong> → un <strong>« Module vidéo » ~30–50 €/mois</strong>, en option à part de l’abonnement.</p>
+          <p className="text-[10px] text-gray-400">Tarifs Cloudflare R2 facturés en dollars ; conversion € indicative (taux ~0,92 €/$).</p>
         </div>
       </details>
 

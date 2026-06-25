@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Timestamp } from 'firebase/firestore'
 import { useAuth } from '@/context/AuthContext'
 import { useInvoices } from '@/hooks/useInvoices'
@@ -9,13 +9,12 @@ import { usePilotageContrats } from '@/hooks/usePilotageContrats'
 import { usePilotageCatalogue } from '@/hooks/usePilotageCatalogue'
 import { usePilotageSettings } from '@/hooks/usePilotageSettings'
 import { useClients } from '@/hooks/useClients'
-import { useAbonnementsByClientId } from '@/hooks/useAbonnementsByClientId'
 import { defaultProjetContent, LIVRABLES_DEFAUT } from '@/lib/pilotageProjetTemplates'
 import Modal from '@/components/ui/Modal'
-import SearchSelect from '@/components/ui/SearchSelect'
 import InfraCostEstimator from '@/components/pilotage/InfraCostEstimator'
 import EstimateurTarif from '@/components/pilotage/EstimateurTarif'
-import { CATEGORIES_FEATURE_DEFAUT, type TarifResult } from '@/lib/pilotageEstimateur'
+import { ContratEditModal, emptyContratForm, type ContratForm } from '@/components/pilotage/ContratEditModal'
+import { featuresToFonctions, type TarifResult } from '@/lib/pilotageEstimateur'
 import { randomUUID } from '@/lib/uuid'
 import type { PilotageContrat, PilotageContratStatut, PilotageEstimation } from '@/types'
 import {
@@ -31,73 +30,50 @@ const PLAFOND = 77700
 // et le composant components/pilotage/EstimateurTarif.tsx (partagé avec la fiche contrat).
 
 const STATUT_LABELS: Record<PilotageContratStatut, string> = {
-  actif: 'Actif', pause: 'En pause', termine: 'Terminé',
+  prospect: 'Prospect', actif: 'Actif', pause: 'En pause', termine: 'Terminé',
 }
 const STATUT_COLORS: Record<PilotageContratStatut, string> = {
+  prospect: 'bg-amber-100 text-amber-700',
   actif: 'bg-green-100 text-green-700',
   pause: 'bg-orange-100 text-orange-700',
   termine: 'bg-gray-100 text-gray-500',
 }
 
 const fmtEur = (n: number) => `${Math.round(n).toLocaleString('fr-FR')} €`
-const toLocalDate = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+// Montants NETS réellement facturés = tarif catalogue − remise du contrat (ce que paie le client).
+const netAbo = (c: PilotageContrat) => (c.abonnementMensuel ?? 0) * (1 - (c.remiseAbonnementPct ?? 0) / 100)
+const netSetup = (c: PilotageContrat) => (c.fraisMiseEnPlace ?? 0) * (1 - (c.remiseMiseEnPlacePct ?? 0) / 100)
 const monthsSince = (ts: Timestamp) => {
   const d = ts.toDate(); const n = new Date()
   return (n.getFullYear() - d.getFullYear()) * 12 + (n.getMonth() - d.getMonth())
 }
 
-type Form = {
-  clientId: string; clientNom: string
-  abonnementId: string; abonnementTitre: string
-  fraisMiseEnPlace: string; abonnementMensuel: string
-  coutFirebaseMensuel: string; tjm: string; dateDebut: string; premiereAnnee: boolean
-  tarifAnnee2Defini: boolean; statut: PilotageContratStatut; notes: string
-  devisId: string; devisNumber: string
-}
-const emptyForm: Form = {
-  clientId: '', clientNom: '', abonnementId: '', abonnementTitre: '',
-  fraisMiseEnPlace: '', abonnementMensuel: '',
-  coutFirebaseMensuel: '', tjm: '', dateDebut: '', premiereAnnee: true,
-  tarifAnnee2Defini: false, statut: 'actif', notes: '',
-  devisId: '', devisNumber: '',
-}
-
-// Libellés de statut d'un devis (mêmes que la section Facturation)
-const DEVIS_STATUT_LABEL: Record<string, string> = {
-  draft: 'Brouillon', pending: 'En attente', sent: 'Envoyé', paid: 'Payé',
-  encaissement: 'À encaisser', overdue: 'En retard', cancelled: 'Annulé', accepted: 'Accepté', rejected: 'Non validé',
-}
-
 export default function PilotagePage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { currentUser, userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
   const { invoices } = useInvoices(currentUser?.uid ?? '')
   const { contrats, loading, addContrat, updateContrat, deleteContrat } = usePilotageContrats()
   const { clients } = useClients()
 
+  // Modal d'ajout/édition de contrat (extrait dans <ContratEditModal>, partagé avec la page détail).
   const [showModal, setShowModal] = useState(false)
-  const [editId, setEditId] = useState<string | null>(null)
-  const [form, setForm] = useState<Form>(emptyForm)
-  const [saving, setSaving] = useState(false)
+  const [modalContrat, setModalContrat] = useState<PilotageContrat | null>(null)
+  const [modalInitialForm, setModalInitialForm] = useState<ContratForm | undefined>(undefined)
+  const [modalCreateExtra, setModalCreateExtra] = useState<Partial<PilotageContrat> | undefined>(undefined)
   const [deleteId, setDeleteId] = useState<string | null>(null)
 
   // Amorce le contenu projet depuis l'estimateur (fonctionnalités) + valeurs par défaut.
   // La catégorie est reprise du catalogue (groupe de la brique) quand la fonctionnalité y figure.
-  const seedProjet = (est: PilotageEstimation) => {
-    const groupeParNom = new Map(catalogueItems.map((it) => [it.nom, it.groupe?.trim() || '']))
-    const categorie = (nom: string) => groupeParNom.get(nom) || CATEGORIES_FEATURE_DEFAUT[nom] || ''
-    return defaultProjetContent({
-      fonctionnalites: est.features.map((f) => ({ categorie: categorie(f.nom), description: f.nom })),
+  const seedProjet = (est: PilotageEstimation) =>
+    defaultProjetContent({
+      fonctionnalites: featuresToFonctions(est.features, catalogueItems),
       livrables: [...LIVRABLES_DEFAUT],
     })
-  }
 
   // Contrat dont on rejoue/ajuste l'estimation dans le calculateur
   const [linkedContrat, setLinkedContrat] = useState<PilotageContrat | null>(null)
-  // Estimation à enregistrer à la création d'un contrat « avec ces tarifs »
-  const [pendingEstimation, setPendingEstimation] = useState<PilotageEstimation | null>(null)
   const estimateurRef = useRef<HTMLDetailsElement>(null)
   const loadEstimation = (c: PilotageContrat) => {
     if (!c.estimation) return
@@ -116,17 +92,6 @@ export default function PilotagePage() {
     } as Partial<PilotageContrat>)
     setLinkedContrat(null)
   }
-
-  // Cascade client → abonnement → devis pour le formulaire de contrat
-  const { abonnements: clientAbonnements } = useAbonnementsByClientId(form.clientId || undefined)
-  const clientsTries = useMemo(
-    () => [...clients].sort((a, b) => `${a.nom} ${a.prenom}`.localeCompare(`${b.nom} ${b.prenom}`)),
-    [clients])
-  const devisDuClient = useMemo(
-    () => invoices
-      .filter((f) => f.type === 'devis' && f.clientId === form.clientId && (f.abonnementId ?? '') === form.abonnementId)
-      .sort((a, b) => ((b.date ?? b.createdAt)?.seconds ?? 0) - ((a.date ?? a.createdAt)?.seconds ?? 0)),
-    [invoices, form.clientId, form.abonnementId])
 
   // Estimateur : état « live » remonté par le composant <EstimateurTarif> + graine de ré-hydratation
   const [live, setLive] = useState<{ est: PilotageEstimation; tarif: TarifResult } | null>(null)
@@ -181,7 +146,7 @@ export default function PilotagePage() {
   // ── Calculs ────────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
     const actifs = contrats.filter((c) => c.statut === 'actif')
-    const mrr = actifs.reduce((s, c) => s + (c.abonnementMensuel ?? 0), 0)
+    const mrr = actifs.reduce((s, c) => s + netAbo(c), 0)   // net facturé (après remise)
     const couts = actifs.reduce((s, c) => s + (c.coutFirebaseMensuel ?? 0), 0)
     const marge = mrr - couts
     const now = new Date()
@@ -206,7 +171,7 @@ export default function PilotagePage() {
         out.push({ tone: 'warn', text: `${c.clientNom} : tarif année 2 non défini.` })
       if (c.premiereAnnee && c.dateDebut && monthsSince(c.dateDebut) >= 10)
         out.push({ tone: 'warn', text: `${c.clientNom} : 1ère année bientôt terminée — revoir le tarif.` })
-      if (c.abonnementMensuel != null && (c.abonnementMensuel - (c.coutFirebaseMensuel ?? 0)) <= 0)
+      if (c.abonnementMensuel != null && (netAbo(c) - (c.coutFirebaseMensuel ?? 0)) <= 0)
         out.push({ tone: 'danger', text: `${c.clientNom} : marge nulle ou négative.` })
     }
     if (stats.projection > PLAFOND * 0.8)
@@ -215,69 +180,39 @@ export default function PilotagePage() {
   }, [stats])
 
   // ── Actions ──────────────────────────────────────────────────────────────
-  const openAdd = () => { setEditId(null); setPendingEstimation(null); setForm({ ...emptyForm, tjm: String(live?.est.tjm ?? 500) }); setShowModal(true) }
+  const openModal = (contrat: PilotageContrat | null, initialForm?: ContratForm, createExtra?: Partial<PilotageContrat>) => {
+    setModalContrat(contrat)
+    setModalInitialForm(initialForm)
+    setModalCreateExtra(createExtra)
+    setShowModal(true)
+  }
+  const openAdd = () => openModal(null, { ...emptyContratForm, tjm: String(live?.est.tjm ?? 500) })
   const openAddWithPricing = () => {
     if (!live) return
-    setEditId(null)
-    setPendingEstimation(live.est)  // on attache le calcul courant au futur contrat
-    setForm({
-      ...emptyForm,
-      abonnementMensuel: String(live.tarif.abo),
-      fraisMiseEnPlace: String(live.tarif.setup),
-      coutFirebaseMensuel: String(live.est.infra),
-      tjm: String(live.est.tjm),
-    })
-    setShowModal(true)
+    openModal(
+      null,
+      {
+        ...emptyContratForm,
+        abonnementMensuel: String(live.tarif.abo),
+        fraisMiseEnPlace: String(live.tarif.setup),
+        coutFirebaseMensuel: String(live.est.infra),
+        tjm: String(live.est.tjm),
+      },
+      { estimation: live.est, projet: seedProjet(live.est) },  // snapshot du calcul + contenu projet amorcé
+    )
   }
-  const openEdit = (c: PilotageContrat) => {
-    setEditId(c.id)
-    setPendingEstimation(c.estimation ?? null)
-    setForm({
-      clientId: c.clientId ?? '', clientNom: c.clientNom ?? '',
-      abonnementId: c.abonnementId ?? '', abonnementTitre: c.abonnementTitre ?? '',
-      fraisMiseEnPlace: c.fraisMiseEnPlace != null ? String(c.fraisMiseEnPlace) : '',
-      abonnementMensuel: c.abonnementMensuel != null ? String(c.abonnementMensuel) : '',
-      coutFirebaseMensuel: c.coutFirebaseMensuel != null ? String(c.coutFirebaseMensuel) : '',
-      tjm: c.tjm != null ? String(c.tjm) : (c.estimation?.tjm != null ? String(c.estimation.tjm) : ''),
-      dateDebut: c.dateDebut ? toLocalDate(c.dateDebut.toDate()) : '',
-      premiereAnnee: c.premiereAnnee ?? false,
-      tarifAnnee2Defini: c.tarifAnnee2Defini ?? false,
-      statut: c.statut ?? 'actif', notes: c.notes ?? '',
-      devisId: c.devisId ?? '', devisNumber: c.devisNumber ?? '',
-    })
-    setShowModal(true)
-  }
+  const openEdit = (c: PilotageContrat) => openModal(c)
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!form.clientNom.trim()) return
-    setSaving(true)
-    try {
-      const payload = {
-        clientId: form.clientId || null,
-        clientNom: form.clientNom.trim(),
-        abonnementId: form.abonnementId || null,
-        abonnementTitre: form.abonnementTitre || null,
-        fraisMiseEnPlace: num(form.fraisMiseEnPlace),
-        abonnementMensuel: num(form.abonnementMensuel),
-        coutFirebaseMensuel: num(form.coutFirebaseMensuel),
-        tjm: num(form.tjm),
-        dateDebut: form.dateDebut ? Timestamp.fromDate(new Date(form.dateDebut)) : null,
-        premiereAnnee: form.premiereAnnee,
-        tarifAnnee2Defini: form.tarifAnnee2Defini,
-        statut: form.statut,
-        notes: form.notes.trim() || null,
-        devisId: form.devisId || null,
-        devisNumber: form.devisNumber || null,
-      }
-      // À la création « avec ces tarifs » : on enregistre le snapshot du calcul + un contenu projet amorcé.
-      const extra = !editId && pendingEstimation ? { estimation: pendingEstimation, projet: seedProjet(pendingEstimation) } : {}
-      if (editId) await updateContrat(editId, payload as Partial<PilotageContrat>)
-      else await addContrat({ ...payload, ...extra } as Omit<PilotageContrat, 'id' | 'createdAt'>)
-      setShowModal(false)
-    } catch (err) { console.error('[pilotage submit]', err) }
-    setSaving(false)
-  }
+  // Ouverture du modal d'édition via deep-link ?edit=<id> (compat ; la page détail embarque désormais le modal).
+  const deepLinkHandled = useRef(false)
+  useEffect(() => {
+    if (deepLinkHandled.current || contrats.length === 0) return
+    const editParam = searchParams.get('edit')
+    if (!editParam) return
+    const c = contrats.find((x) => x.id === editParam)
+    if (c) { deepLinkHandled.current = true; openEdit(c) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, contrats])
 
   const confirmDelete = async () => {
     if (!deleteId) return
@@ -503,7 +438,15 @@ export default function PilotagePage() {
             </button>
           </div>
         ) : contrats.map((c) => {
-          const marge = (c.abonnementMensuel ?? 0) - (c.coutFirebaseMensuel ?? 0)
+          const remMS = c.remiseMiseEnPlacePct ?? 0
+          const remAbo = c.remiseAbonnementPct ?? 0
+          const marge = netAbo(c) - (c.coutFirebaseMensuel ?? 0)   // marge sur le net facturé
+          const cells: { l: string; v: string; sub?: string; color?: string }[] = [
+            { l: 'Mise en place', v: c.fraisMiseEnPlace != null ? fmtEur(netSetup(c)) : '—', sub: remMS > 0 && c.fraisMiseEnPlace != null ? fmtEur(c.fraisMiseEnPlace) : undefined },
+            { l: 'Abonnement /mois', v: c.abonnementMensuel != null ? fmtEur(netAbo(c)) : '—', sub: remAbo > 0 && c.abonnementMensuel != null ? fmtEur(c.abonnementMensuel) : undefined },
+            { l: 'Coût infra /mois', v: c.coutFirebaseMensuel != null ? fmtEur(c.coutFirebaseMensuel) : '—' },
+            { l: 'Marge /mois', v: fmtEur(marge), color: marge >= 0 ? 'text-green-600' : 'text-red-600' },
+          ]
           return (
             <div key={c.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
               <div className="flex items-start justify-between gap-3">
@@ -521,15 +464,13 @@ export default function PilotagePage() {
                 </div>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
-                {[
-                  { l: 'Mise en place', v: c.fraisMiseEnPlace != null ? fmtEur(c.fraisMiseEnPlace) : '—' },
-                  { l: 'Abonnement /mois', v: c.abonnementMensuel != null ? fmtEur(c.abonnementMensuel) : '—' },
-                  { l: 'Coût infra /mois', v: c.coutFirebaseMensuel != null ? fmtEur(c.coutFirebaseMensuel) : '—' },
-                  { l: 'Marge /mois', v: fmtEur(marge), color: marge >= 0 ? 'text-green-600' : 'text-red-600' },
-                ].map((x) => (
+                {cells.map((x) => (
                   <div key={x.l}>
                     <p className="text-[10px] text-gray-400">{x.l}</p>
-                    <p className={`text-sm font-semibold ${x.color ?? 'text-gray-800'}`}>{x.v}</p>
+                    <p className={`text-sm font-semibold ${x.color ?? 'text-gray-800'}`}>
+                      {x.v}
+                      {x.sub && <span className="ml-1 text-[10px] font-normal text-gray-400" title="tarif catalogue (avant remise)">{x.sub}</span>}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -586,155 +527,14 @@ export default function PilotagePage() {
         })}
       </div>
 
-      {/* Modal ajout / édition */}
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={editId ? 'Modifier le contrat' : 'Nouveau contrat'}>
-        <form onSubmit={submit} className="space-y-4">
-          {/* Cascade : client (base clients) → abonnement → devis */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Client *</label>
-            <SearchSelect
-              value={form.clientId}
-              placeholder="— Choisir un client —"
-              searchPlaceholder="Rechercher par nom ou email…"
-              emptyText={clients.length === 0 ? 'Aucun client' : 'Aucun résultat'}
-              options={clientsTries.map((c) => ({
-                value: c.id,
-                label: `${c.nom ?? ''} ${c.prenom ?? ''}`.trim() || c.email || '—',
-                sublabel: c.email || undefined,
-              }))}
-              onChange={(id) => {
-                const c = clients.find((x) => x.id === id)
-                setForm((f) => ({
-                  ...f,
-                  clientId: id,
-                  clientNom: c ? `${c.nom ?? ''} ${c.prenom ?? ''}`.trim() : '',
-                  abonnementId: '', abonnementTitre: '',
-                  devisId: '', devisNumber: '',
-                }))
-              }}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Abonnement <span className="text-gray-400 font-normal">(optionnel)</span></label>
-            <SearchSelect
-              value={form.abonnementId}
-              disabled={!form.clientId}
-              placeholder={form.clientId ? '— Sans abonnement —' : "Choisis d'abord un client"}
-              searchPlaceholder="Rechercher un abonnement…"
-              emptyText="Aucun abonnement"
-              options={[
-                { value: '', label: '— Sans abonnement —' },
-                ...clientAbonnements.map((a) => ({
-                  value: a.id,
-                  label: (a.tarifLabel || a.titre || a.categorie || 'Abonnement') + (a.tarifUnitaire != null ? ` — ${fmtEur(a.tarifUnitaire)}` : ''),
-                  sublabel: a.categorie || undefined,
-                })),
-              ]}
-              onChange={(id) => {
-                const a = clientAbonnements.find((x) => x.id === id)
-                const titre = a ? (a.tarifLabel || a.titre || a.categorie || 'Abonnement') : ''
-                setForm((f) => ({ ...f, abonnementId: id, abonnementTitre: titre, devisId: '', devisNumber: '' }))
-              }}
-            />
-            {form.clientId && clientAbonnements.length === 0 && (
-              <p className="text-[11px] text-gray-400 mt-1">Ce client n'a aucun abonnement.</p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Devis relié <span className="text-gray-400 font-normal">(optionnel)</span></label>
-            <SearchSelect
-              value={form.devisId}
-              disabled={!form.clientId}
-              placeholder={form.clientId ? '— Aucun —' : 'Choisis un client'}
-              searchPlaceholder="Rechercher un devis…"
-              emptyText="Aucun devis"
-              options={[
-                { value: '', label: '— Aucun —' },
-                ...devisDuClient.map((d) => ({ value: d.id, label: `${d.number} — ${fmtEur(d.total ?? 0)}`, sublabel: DEVIS_STATUT_LABEL[d.status] ?? d.status })),
-              ]}
-              onChange={(id) => {
-                const d = devisDuClient.find((x) => x.id === id)
-                setForm((f) => ({ ...f, devisId: id, devisNumber: d?.number ?? '' }))
-              }}
-            />
-            <p className="text-[11px] text-gray-400 mt-1">
-              {!form.clientId
-                ? 'Choisis un client (puis son abonnement) pour voir les devis.'
-                : devisDuClient.length === 0
-                  ? 'Aucun devis pour ce client / cet abonnement.'
-                  : 'Relie le devis correspondant (source de vérité du deal).'}
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Mise en place (€)</label>
-              <input type="number" inputMode="decimal" step="0.01" min="0" value={form.fraisMiseEnPlace}
-                onChange={(e) => setForm((f) => ({ ...f, fraisMiseEnPlace: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Abo /mois (€)</label>
-              <input type="number" inputMode="decimal" step="0.01" min="0" value={form.abonnementMensuel}
-                onChange={(e) => setForm((f) => ({ ...f, abonnementMensuel: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Coût infra /mois (€)</label>
-              <input type="number" inputMode="decimal" step="0.01" min="0" value={form.coutFirebaseMensuel}
-                onChange={(e) => setForm((f) => ({ ...f, coutFirebaseMensuel: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">TJM (€/jour)</label>
-              <input type="number" inputMode="decimal" step="10" min="0" value={form.tjm}
-                onChange={(e) => setForm((f) => ({ ...f, tjm: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <p className="text-[10px] text-gray-400 mt-0.5">sert au prix des tâches « à facturer »</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Date de début</label>
-              <input type="date" value={form.dateDebut} onChange={(e) => setForm((f) => ({ ...f, dateDebut: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Statut</label>
-              <select value={form.statut} onChange={(e) => setForm((f) => ({ ...f, statut: e.target.value as PilotageContratStatut }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="actif">Actif</option>
-                <option value="pause">En pause</option>
-                <option value="termine">Terminé</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={form.premiereAnnee} onChange={(e) => setForm((f) => ({ ...f, premiereAnnee: e.target.checked }))} className="w-4 h-4 accent-blue-600" />
-              Tarif « 1ère année »
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={form.tarifAnnee2Defini} onChange={(e) => setForm((f) => ({ ...f, tarifAnnee2Defini: e.target.checked }))} className="w-4 h-4 accent-blue-600" />
-              Tarif année 2 défini
-            </label>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-            <textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              rows={3} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-          </div>
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={() => setShowModal(false)} disabled={saving}
-              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">Annuler</button>
-            <button type="submit" disabled={saving}
-              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50">
-              {saving ? 'Enregistrement…' : editId ? 'Enregistrer' : 'Créer'}
-            </button>
-          </div>
-        </form>
-      </Modal>
+      {/* Modal ajout / édition — composant partagé avec la page détail du contrat */}
+      <ContratEditModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        contrat={modalContrat}
+        initialForm={modalInitialForm}
+        createExtra={modalCreateExtra}
+      />
 
       {/* Confirmation suppression */}
       <Modal isOpen={!!deleteId} onClose={() => setDeleteId(null)} title="Supprimer ce contrat ?" size="sm">

@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { TrashIcon, PlusIcon, PencilIcon, ExclamationTriangleIcon, InformationCircleIcon, ChevronUpIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { randomUUID } from '@/lib/uuid'
 import { usePilotageCatalogue } from '@/hooks/usePilotageCatalogue'
+import { buildCatColors, categorieColor } from '@/components/pilotage/ProjetUI'
 import type { PilotageEstimation, PilotageSettings } from '@/types'
 import {
   TAILLES, DEFAULT_CATALOGUE, DEFAULT_ESTIMATEUR_STATE, FEATURE_AIDES, computeTarif, estimationFromState,
-  stateFromEstimation, stateFromSettings, fmtEur,
+  stateFromEstimation, stateFromSettings, fmtEur, fonctionsToFeatures,
   type TailleKey, type Feature, type EstimateurState, type TarifResult,
 } from '@/lib/pilotageEstimateur'
 
@@ -17,9 +18,10 @@ interface Props {
   defaults?: PilotageSettings | null       // valeurs par défaut globales (si pas d'`initial`)
   onChange?: (estimation: PilotageEstimation, tarif: TarifResult) => void
   footer?: React.ReactNode                 // boutons d'action spécifiques à la page
+  projetFonctions?: { categorie?: string; description: string }[]  // Fonctionnalités du projet → bouton « Reprendre »
 }
 
-export default function EstimateurTarif({ initial, seedNonce, defaults, onChange, footer }: Props) {
+export default function EstimateurTarif({ initial, seedNonce, defaults, onChange, footer, projetFonctions }: Props) {
   const init = useRef<EstimateurState>(initial ? stateFromEstimation(initial) : DEFAULT_ESTIMATEUR_STATE).current
 
   const [mode, setMode] = useState<'metier' | 'revente'>(init.mode)
@@ -97,6 +99,7 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
   const gardeMoisNet = Math.max(0, tarif.valeurMois - tarif.aboNet)
   const pctValeurPayeeNet = tarif.valeurMois > 0 ? Math.round((tarif.aboNet / tarif.valeurMois) * 100) : null
   const coutHeureRecupNet = heuresMois > 0 && tarif.aboNet > 0 ? tarif.aboNet / heuresMois : null
+  const clientsPourMrrNet = (cible: number) => (tarif.aboNet > 0 ? Math.ceil(cible / tarif.aboNet) : null)
   // Affiche « → X après remise » en rose à côté d'un chiffre, seulement si une remise est active.
   const rem = (txt: string, cls = 'text-rose-600') =>
     tarif.hasRemise ? <span className={`font-semibold ${cls}`}> → {txt} après remise</span> : null
@@ -111,6 +114,8 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
   const [showCatalogue, setShowCatalogue] = useState(false)
   const [editCatalogue, setEditCatalogue] = useState(false)
 
+  // Couleur par catégorie (même système que l'éditeur de Fonctionnalités du projet).
+  const featCatColors = buildCatColors(features.map((f) => f.categorie ?? ''))
   const addFeature = () => setFeatures((f) => [...f, { id: randomUUID(), nom: '', taille: 'm' }])
   const updFeature = (id: string, patch: Partial<Feature>) =>
     setFeatures((f) => f.map((x) => (x.id === id ? { ...x, ...patch } : x)))
@@ -183,7 +188,8 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
       {/* Liste des fonctionnalités */}
       <div className="space-y-2">
         {features.map((f, i) => (
-          <div key={f.id} className="flex items-center gap-2">
+          <div key={f.id} className="space-y-1">
+            <div className="flex items-center gap-2">
             <div className="flex flex-col shrink-0">
               <button type="button" onClick={() => moveFeature(i, -1)} disabled={i === 0}
                 title="Monter"
@@ -208,6 +214,15 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
               className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition shrink-0">
               <TrashIcon className="w-4 h-4" />
             </button>
+            </div>
+            <div className="flex gap-2">
+              <input type="text" value={f.categorie ?? ''} placeholder="Catégorie (optionnel)"
+                onChange={(e) => updFeature(f.id, { categorie: e.target.value })}
+                className={`w-1/3 min-w-0 border rounded-lg px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${categorieColor(f.categorie ?? '', featCatColors).input}`} />
+              <input type="text" value={f.description ?? ''} placeholder="Libellé client (optionnel) — sinon le nom ci-dessus"
+                onChange={(e) => updFeature(f.id, { description: e.target.value })}
+                className="flex-1 min-w-0 border border-gray-200 rounded-lg px-3 py-1 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
           </div>
         ))}
         <div className="flex items-center gap-3 flex-wrap">
@@ -215,6 +230,13 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
             className="flex items-center gap-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-lg transition">
             <PlusIcon className="w-3.5 h-3.5" /> Ajouter une ligne vide
           </button>
+          {projetFonctions && projetFonctions.length > 0 && (
+            <button type="button" onClick={() => setFeatures((cur) => fonctionsToFeatures(projetFonctions, cur))}
+              title="Remplace les briques par les Fonctionnalités du Contenu projet (taille moyenne par défaut pour les nouvelles, à rechiffrer)"
+              className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 px-2 py-1 rounded-lg transition">
+              <PlusIcon className="w-3.5 h-3.5" /> Reprendre les fonctionnalités du projet
+            </button>
+          )}
           <button type="button" onClick={() => setShowCatalogue((v) => !v)}
             className="flex items-center gap-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 px-2 py-1 rounded-lg transition">
             <PlusIcon className="w-3.5 h-3.5" /> {showCatalogue ? 'Masquer le catalogue' : 'Ajouter depuis le catalogue'}
@@ -627,15 +649,15 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
               {clientsPourMrr(1000) != null ? (
                 <p className="text-xs text-gray-600">
                   Nombre de clients comme celui-ci pour atteindre :<br />
-                  • <strong>1 000 €/mois</strong> → ~{clientsPourMrr(1000)} clients<br />
-                  • <strong>3 000 €/mois</strong> → ~{clientsPourMrr(3000)} clients<br />
-                  • <strong>5 000 €/mois</strong> → ~{clientsPourMrr(5000)} clients
+                  • <strong>1 000 €/mois</strong> → ~{clientsPourMrr(1000)} clients{rem(`~${clientsPourMrrNet(1000)} clients`)}<br />
+                  • <strong>3 000 €/mois</strong> → ~{clientsPourMrr(3000)} clients{rem(`~${clientsPourMrrNet(3000)} clients`)}<br />
+                  • <strong>5 000 €/mois</strong> → ~{clientsPourMrr(5000)} clients{rem(`~${clientsPourMrrNet(5000)} clients`)}
                 </p>
               ) : (
                 <p className="text-xs text-gray-500">Renseigne un abonnement pour estimer le nombre de clients.</p>
               )}
               <p className="text-xs text-gray-600">
-                Revenu récurrent par client : <strong>{fmtEur(tarif.abo * 12)}/an</strong> (hors création).
+                Revenu récurrent par client : <strong>{fmtEur(tarif.abo * 12)}/an</strong>{rem(`${fmtEur(tarif.aboNet * 12)}/an`)} (hors création).
               </p>
             </div>
 
@@ -644,16 +666,16 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
               <p className="text-[11px] font-bold text-gray-700 uppercase tracking-wide">Comparaisons</p>
               {outilsMensuel > 0 && tarif.total1an > 0 && (
                 <p className="text-xs text-gray-600">
-                  Tes outils (Claude Code…) te coûtent <strong>{fmtEur(outilsMensuel * 12)}/an</strong> ; rien qu'avec ce client (1re année : {fmtEur(tarif.total1an)}), tu les rembourses <strong>{Math.floor(tarif.total1an / (outilsMensuel * 12))}×</strong>.
+                  Tes outils (Claude Code…) te coûtent <strong>{fmtEur(outilsMensuel * 12)}/an</strong> ; rien qu'avec ce client (1re année : {fmtEur(tarif.total1an)}{rem(fmtEur(tarif.total1anNet))}), tu les rembourses <strong>{Math.floor(tarif.total1an / (outilsMensuel * 12))}×</strong>{rem(`${Math.floor(tarif.total1anNet / (outilsMensuel * 12))}×`)}.
                 </p>
               )}
               {coutHeureRecup != null && (
                 <p className="text-xs text-gray-600">
-                  Faire faire ces ~{Math.round(heuresMois)} h/mois par un salarié lui coûterait ≈ <strong>{fmtEur(heuresMois * coutHoraireClient)}/mois</strong> ; ton app les lui rend pour <strong>{fmtEur(tarif.abo)}/mois</strong>.
+                  Faire faire ces ~{Math.round(heuresMois)} h/mois par un salarié lui coûterait ≈ <strong>{fmtEur(heuresMois * coutHoraireClient)}/mois</strong> ; ton app les lui rend pour <strong>{fmtEur(tarif.abo)}/mois</strong>{rem(`${fmtEur(tarif.aboNet)}/mois`)}.
                 </p>
               )}
               <p className="text-xs text-gray-600">
-                À <strong>{fmtEur(tarif.abo)}/mois</strong>, tu es dans la fourchette des logiciels métier (souvent 30–150 €/mois) — sauf que le tien est <strong>sur-mesure</strong>, pas générique.
+                À <strong>{fmtEur(tarif.abo)}/mois</strong>{rem(`${fmtEur(tarif.aboNet)}/mois`)}, tu es dans la fourchette des logiciels métier (souvent 30–150 €/mois) — sauf que le tien est <strong>sur-mesure</strong>, pas générique.
               </p>
             </div>
           </div>
@@ -662,13 +684,13 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
           <div className="mt-3 bg-white/70 rounded-lg border border-emerald-100 p-3 space-y-1.5">
             <p className="text-[11px] font-bold text-gray-700 uppercase tracking-wide">Du brut au net (ce qu'il te reste vraiment)</p>
             <p className="text-xs text-gray-600">
-              Création : {fmtEur(tarif.setup)} − cotisations {urssafPct}% ({fmtEur(tarif.cotisationsSetup)}) = <strong>{fmtEur(tarif.netSetup)}</strong> net.
+              Création : {fmtEur(tarif.setup)} − cotisations {urssafPct}% ({fmtEur(tarif.cotisationsSetup)}) = <strong>{fmtEur(tarif.netSetup)}</strong> net{rem(`${fmtEur(tarif.netSetupRemise)} net`)}.
             </p>
             <p className="text-xs text-gray-600">
-              Abonnement : {fmtEur(tarif.abo)}/mois − cotisations ({fmtEur(tarif.cotisationsAboMensuel)}) − infra Firebase/Vercel ({fmtEur(calcInfra)}) = <strong>{fmtEur(tarif.netAboMensuel)}/mois</strong> net.
+              Abonnement : {fmtEur(tarif.abo)}/mois − cotisations ({fmtEur(tarif.cotisationsAboMensuel)}) − infra Firebase/Vercel ({fmtEur(calcInfra)}) = <strong>{fmtEur(tarif.netAboMensuel)}/mois</strong> net{rem(`${fmtEur(tarif.netAboMensuelRemise)}/mois net`)}.
             </p>
             <p className="text-xs text-gray-600">
-              Net par client : <strong>{fmtEur(tarif.netAn1)}</strong> sur 1 an · <strong>{fmtEur(tarif.netAn3)}</strong> sur 3 ans.
+              Net par client : <strong>{fmtEur(tarif.netAn1)}</strong> sur 1 an{rem(fmtEur(tarif.netAn1Remise))} · <strong>{fmtEur(tarif.netAn3)}</strong> sur 3 ans{rem(fmtEur(tarif.netAn3Remise))}.
             </p>
             {outilsMensuel > 0 && (
               <p className="text-[11px] text-gray-400">

@@ -13,37 +13,42 @@ webpush.setVapidDetails(
 
 export type PushPayload = { title: string; body: string; url?: string }
 
-export async function sendPushToUser(userId: string, payload: PushPayload) {
-  const db = getAdminDb()
-  const snap = await db.collection('push_subscriptions').doc(userId).get()
-  if (!snap.exists) return
-  const { subscription } = snap.data()!
+// Statuts pour lesquels la souscription est définitivement invalide → on la supprime
+// (l'appareil en recréera une saine au prochain passage) :
+//  404/410 = endpoint expiré ou désinscrit ;
+//  403/401 = signature VAPID refusée (souscription liée à une ANCIENNE clé publique).
+const DEAD_STATUS = new Set([401, 403, 404, 410])
+
+async function deliver(ref: FirebaseFirestore.DocumentReference, subscription: any, payload: PushPayload) {
   try {
     await webpush.sendNotification(subscription, JSON.stringify(payload))
   } catch (err: any) {
-    if (err.statusCode === 410 || err.statusCode === 404) {
-      await db.collection('push_subscriptions').doc(userId).delete()
+    const code = err?.statusCode
+    if (DEAD_STATUS.has(code)) {
+      await ref.delete().catch(() => {})
+      console.warn(`[push] souscription supprimée (HTTP ${code}) : ${ref.path}`)
+    } else {
+      // Avant, toute erreur ≠ 410/404 était avalée en silence → pannes invisibles.
+      console.error(`[push] échec d'envoi (${ref.path}) :`, code ?? err?.message ?? err)
     }
   }
 }
 
-export async function sendPushToAdmins(payload: PushPayload) {
+export async function sendPushToUser(userId: string, payload: PushPayload) {
   const db = getAdminDb()
-  const snap = await db.collection('push_subscriptions').where('role_app', '==', 'Admin').get()
-  if (snap.empty) {
-    // Fallback : envoyer à toutes les subscriptions marquées admin
-    const all = await db.collection('push_subscriptions').get()
-    const admins = all.docs.filter(d => d.data().role_app === 'Admin')
-    await Promise.allSettled(admins.map(d => _send(d.ref, d.data().subscription, payload)))
-  } else {
-    await Promise.allSettled(snap.docs.map(d => _send(d.ref, d.data().subscription, payload)))
-  }
+  const ref = db.collection('push_subscriptions').doc(userId)
+  const snap = await ref.get()
+  if (!snap.exists) return
+  await deliver(ref, snap.data()!.subscription, payload)
 }
 
-async function _send(ref: FirebaseFirestore.DocumentReference, subscription: any, payload: PushPayload) {
-  try {
-    await webpush.sendNotification(subscription, JSON.stringify(payload))
-  } catch (err: any) {
-    if (err.statusCode === 410 || err.statusCode === 404) await ref.delete()
+export async function sendPushToAdmins(payload: PushPayload) {
+  const db = getAdminDb()
+  let docs = (await db.collection('push_subscriptions').where('role_app', '==', 'Admin').get()).docs
+  if (docs.length === 0) {
+    // Fallback : filtrer côté client si la requête d'égalité ne renvoie rien.
+    const all = await db.collection('push_subscriptions').get()
+    docs = all.docs.filter(d => d.data().role_app === 'Admin')
   }
+  await Promise.allSettled(docs.map(d => deliver(d.ref, d.data().subscription, payload)))
 }

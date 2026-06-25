@@ -14,6 +14,20 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)))
 }
 
+// Une souscription push est liée à la clé VAPID publique utilisée lors de sa création.
+// Si la clé du serveur a changé depuis, l'ancienne souscription reste « valide » côté
+// navigateur mais le push service rejette tout envoi signé avec la nouvelle clé (HTTP 403),
+// et plus aucune notification n'arrive — sans jamais se réparer. On compare donc la clé de
+// la souscription existante à la clé courante pour décider s'il faut re-souscrire.
+function subscriptionMatchesKey(sub: PushSubscription, desired: Uint8Array): boolean {
+  const raw = sub.options?.applicationServerKey
+  if (!raw) return false
+  const current = new Uint8Array(raw)
+  if (current.length !== desired.length) return false
+  for (let i = 0; i < current.length; i++) if (current[i] !== desired[i]) return false
+  return true
+}
+
 /** iOS (iPhone/iPad) hors mode "installé à l'écran d'accueil" : le push n'est pas disponible. */
 function isIos(): boolean {
   return /iphone|ipad|ipod/i.test(navigator.userAgent)
@@ -86,11 +100,20 @@ export function usePushNotifications() {
     if (!reg) reg = await navigator.serviceWorker.register('/sw.js')
     await navigator.serviceWorker.ready
 
-    const existing = await reg.pushManager.getSubscription()
-    const sub = existing ?? await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidKey) as any,
-    })
+    const desiredKey = urlBase64ToUint8Array(vapidKey)
+    // Si une souscription existe mais a été créée avec une autre clé VAPID, elle est
+    // devenue muette (rejets 403 silencieux) → on la révoque pour en recréer une saine.
+    let sub = await reg.pushManager.getSubscription()
+    if (sub && !subscriptionMatchesKey(sub, desiredKey)) {
+      try { await sub.unsubscribe() } catch {}
+      sub = null
+    }
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: desiredKey as any,
+      })
+    }
 
     const res = await fetch('/api/push/subscribe', {
       method: 'POST',

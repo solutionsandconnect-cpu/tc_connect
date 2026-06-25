@@ -71,12 +71,15 @@ function cgvToHtml(cgv: string): string {
     const indent = Math.floor(spaces / 4) * 16;
     const content = raw.slice(spaces);
 
+    // Puce = ligne commençant par « - », « * » ou « • » suivi d'un espace.
+    const bullet = content.match(/^[-*•]\s+/);
     if (content.startsWith("## ")) {
       closeList();
       out.push(`<h3 class="cgv-h" style="margin-left:${indent}px">${mdInline(content.slice(3))}</h3>`);
-    } else if (content.startsWith("- ")) {
+    } else if (bullet) {
       if (!inList) { out.push(`<ul class="cgv-ul" style="margin-left:${indent}px">`); inList = true; }
-      out.push(`<li>${mdInline(content.slice(2))}</li>`);
+      // Puce écrite en DUR (html2canvas ne rend pas les marqueurs list-style ●).
+      out.push(`<li><span class="bul">•</span><span>${mdInline(content.slice(bullet[0].length))}</span></li>`);
     } else {
       closeList();
       out.push(`<p class="cgv-p" style="margin-left:${indent}px">${mdInline(content)}</p>`);
@@ -140,6 +143,10 @@ function buildStyle(primary: string): string {
   .invpdf .amt{font-weight:700;font-variant-numeric:tabular-nums}
   .invpdf .disc{color:var(--pri);font-weight:700}
 
+  /* Ligne « plan de règlement (gauche) + totaux (droite) » côte à côte */
+  .invpdf .sumrow{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-top:13px;flex-wrap:wrap}
+  .invpdf .sumrow .totals{margin-top:0}
+  .invpdf .sumrow .payplan{margin-top:0;max-width:340px;flex:0 1 340px}
   .invpdf .totals{margin-top:13px;display:flex;justify-content:flex-end}
   .invpdf .totals .box{width:340px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
   .invpdf .totals .t-row{display:flex;justify-content:space-between;gap:10px;padding:8px 14px;font-size:12.5px;
@@ -211,7 +218,7 @@ function buildStyle(primary: string): string {
     padding:11px 16px;font-size:12px;color:var(--muted);margin-top:14px}
   .invpdf .note b{color:var(--ink)}
 
-  .invpdf dl.mod div{display:grid;grid-template-columns:175px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .invpdf dl.mod div{display:grid;grid-template-columns:175px 1fr;gap:12px;padding:6px 0;border-bottom:1px solid var(--line)}
   .invpdf dl.mod div:last-child{border-bottom:0}
   .invpdf dl.mod dt{font-weight:700;font-size:12px}
   .invpdf dl.mod dd{color:var(--muted);font-size:12px}
@@ -238,8 +245,8 @@ function buildStyle(primary: string): string {
   .invpdf .ech-row.wait .e-stat{color:#b45309}
   .invpdf .ech-row .e-amt{width:90px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
 
-  .invpdf .sign{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:26px}
-  .invpdf .sign .b{border:1px solid var(--line);border-radius:8px;padding:13px 16px;min-height:120px}
+  .invpdf .sign{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:16px}
+  .invpdf .sign .b{border:1px solid var(--line);border-radius:8px;padding:11px 14px;min-height:96px}
   .invpdf .sign .b .role{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--pri);font-weight:700}
   .invpdf .sign .b .who{font-weight:700;margin-top:2px}
   .invpdf .sign .b .bag{font-size:11px;color:var(--muted);margin-top:2px}
@@ -247,8 +254,8 @@ function buildStyle(primary: string): string {
   .invpdf .sign .b .ok small{display:block;color:var(--muted);font-weight:400;margin-top:2px}
   .invpdf .sign .b img.sig{max-width:100%;max-height:58px;margin-top:6px}
 
-  .invpdf footer{margin-top:30px;padding-top:14px;border-top:1px solid var(--line);
-    font-size:10.5px;color:var(--muted);text-align:center;line-height:1.7}
+  .invpdf footer{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);
+    font-size:10.5px;color:var(--muted);text-align:center;line-height:1.6}
 
   .cgvpage{width:794px;background:#fff;color:#1b1f24;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
@@ -260,8 +267,9 @@ function buildStyle(primary: string): string {
   .cgvpage .cgv-body{padding:24px 46px 40px;font-size:12px;line-height:1.55;color:#1b1f24}
   .cgvpage .cgv-h{font-size:13px;font-weight:700;margin:14px 0 5px}
   .cgvpage .cgv-p{margin:0 0 5px;text-align:justify}
-  .cgvpage .cgv-ul{margin:0 0 7px;padding-left:20px}
-  .cgvpage .cgv-ul li{margin-bottom:3px}
+  .cgvpage .cgv-ul{list-style:none;margin:0 0 7px;padding-left:6px}
+  .cgvpage .cgv-ul li{margin-bottom:3px;display:flex;gap:7px;align-items:flex-start}
+  .cgvpage .cgv-ul li .bul{flex:0 0 auto;color:${primary};line-height:inherit}
   .cgvpage .sp{height:6px}
   `;
 }
@@ -471,6 +479,10 @@ export function buildInvoiceHtml(
     payPlan = `<div class="payplan"><div class="pp-h">Plan de règlement</div>${ppRows.join("")}</div>`;
   }
 
+  // Totaux + plan de règlement côte à côte : le plan occupe l'espace vide à gauche des
+  // totaux (calés à droite). Sans plan (facture, ou devis sans abonnement) → totaux seuls.
+  const sumBlock = payPlan ? `<div class="sumrow">${payPlan}${totals}</div>` : totals;
+
   // Référence de paiement (factures)
   let payRef = "";
   if (!isDevis) {
@@ -484,9 +496,11 @@ export function buildInvoiceHtml(
     </div>`;
   }
 
-  // Échéancier
+  // Échéancier : suivi de paiement (statuts payé/en attente) → uniquement sur une FACTURE.
+  // Sur un devis, le « Plan de règlement » près des totaux suffit côté client ; les échéances
+  // restent en base (non imprimées) pour la conversion en factures in-app.
   let echeancier = "";
-  if (facture.echeances && facture.echeances.length > 0) {
+  if (!isDevis && facture.echeances && facture.echeances.length > 0) {
     const paidTotal = facture.echeances.filter((e) => e.statut === "payé").reduce((s, e) => s + e.montant, 0);
     const pendingTotal = facture.echeances.filter((e) => e.statut !== "payé").reduce((s, e) => s + e.montant, 0);
     const progress = (!isDevis && grandTotal > 0)
@@ -615,9 +629,10 @@ export function buildInvoiceHtml(
     .filter((l) => !/tva non applicable|293\s*b/i.test(l))
     .join("\n")
     .trim();
+  // Pied de page volontairement compact : pour un devis, le N° / la date / la validité sont déjà
+  // affichés en tête du document → on ne les répète PAS ici (on garde juste la mention contractuelle).
   const footer = `<footer>
-    ${esc(companyName)}${footerRib ? ` · ${footerRib}` : ""}<br/>
-    ${isDevis ? `Devis N° ${esc(facture.number)} · Établi le ${fmtDate(docDate ?? null)} · Valable ${facture.validiteJours ?? 30} jours · Document contractuel après signature.` : `Facture N° ${esc(facture.number)} · ${fmtDate(docDate ?? null)}`}
+    ${esc(companyName)}${footerRib ? ` · ${footerRib}` : ""}${isDevis ? " · Document contractuel après signature." : `<br/>Facture N° ${esc(facture.number)} · ${fmtDate(docDate ?? null)}`}
     ${footerMentions ? `<br/>${nl2br(footerMentions)}` : ""}
   </footer>`;
 
@@ -626,10 +641,9 @@ export function buildInvoiceHtml(
     ${parties}
     ${objet}
     ${table}
-    ${totals}
+    ${sumBlock}
     ${valueBanner}
     ${htNote}
-    ${payPlan}
     ${payRef}
     ${echeancier}
     ${notes}

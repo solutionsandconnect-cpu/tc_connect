@@ -16,7 +16,7 @@ export const TAILLES: Record<TailleKey, { label: string; jours: number }> = {
   xl: { label: 'Très grosse', jours: 12 },
 }
 
-export type Feature = { id: string; nom: string; taille: TailleKey }
+export type Feature = { id: string; nom: string; taille: TailleKey; description?: string; categorie?: string }  // description = libellé « client » (sinon nom) ; categorie = thème (sync projet)
 export const DEFAULT_FEATURES: Feature[] = [
   { id: 'f1', nom: 'Cadrage & maquettes', taille: 'm' },
   { id: 'f2', nom: 'Authentification & comptes', taille: 's' },
@@ -139,8 +139,44 @@ export function estimationFromState(s: EstimateurState): PilotageEstimation {
     premiumRevente: s.premiumRevente, nbClientsFinaux: s.nbClientsFinaux, prixReventeMensuel: s.prixReventeMensuel,
     outilsMensuel: s.outilsMensuel, joursFactures: s.joursFactures, urssafPct: s.urssafPct,
     remiseSetupPct: s.remiseSetupPct, remiseAboPct: s.remiseAboPct,
-    features: s.features.map(({ nom, taille }) => ({ nom, taille })),
+    features: s.features.map(({ nom, taille, description, categorie }) => ({ nom, taille, ...(description?.trim() ? { description: description.trim() } : {}), ...(categorie?.trim() ? { categorie: categorie.trim() } : {}) })),
   }
+}
+
+// Dérive la liste « Fonctionnalités » (projet) depuis les briques du calculateur.
+// Catégorie = groupe du catalogue (sinon défaut connu) ; description = libellé CLIENT s'il existe, sinon le nom.
+// Utilisé à la création du contrat (seed) ET par le bouton « Synchroniser depuis le calculateur ».
+export function featuresToFonctions(
+  features: { nom: string; description?: string; taille?: TailleKey; categorie?: string }[],
+  catalogueItems: { nom: string; groupe?: string }[] = [],
+): { categorie: string; description: string; taille?: TailleKey }[] {
+  const groupeParNom = new Map(catalogueItems.map((it) => [it.nom, it.groupe?.trim() || '']))
+  return features
+    .filter((f) => (f.description?.trim() || f.nom?.trim()))
+    .map((f) => ({
+      categorie: f.categorie?.trim() || groupeParNom.get(f.nom) || CATEGORIES_FEATURE_DEFAUT[f.nom] || '',
+      description: f.description?.trim() || f.nom.trim(),
+      taille: f.taille,
+    }))
+}
+
+// Sens inverse : importe les Fonctionnalités du projet DANS les briques du calculateur.
+// Préserve la brique existante (id + taille + libellé) quand le libellé correspond ; sinon nouvelle
+// brique taille 'm' (à rechiffrer). Le set résultant = celui du projet (ajouts/retraits répercutés).
+export function fonctionsToFeatures(
+  fonctions: { categorie?: string; description: string; taille?: TailleKey }[],
+  existing: Feature[] = [],
+): Feature[] {
+  return fonctions
+    .filter((f) => f.description?.trim())
+    .map((f) => {
+      const label = f.description.trim()
+      const cat = f.categorie?.trim()
+      const match = existing.find((e) => (e.description?.trim() || e.nom.trim()) === label || e.nom.trim() === label)
+      // Matched : on garde id/nom/libellé, on applique la durée + la catégorie venues du projet.
+      if (match) return { ...match, taille: f.taille ?? match.taille, ...(cat ? { categorie: cat } : match.categorie ? { categorie: match.categorie } : {}) }
+      return { id: randomUUID(), nom: label, taille: f.taille ?? 'm', ...(cat ? { categorie: cat } : {}) }
+    })
 }
 
 export function stateFromEstimation(e: PilotageEstimation): EstimateurState {
@@ -154,7 +190,7 @@ export function stateFromEstimation(e: PilotageEstimation): EstimateurState {
     urssafPct: e.urssafPct ?? DEFAULT_ESTIMATEUR_STATE.urssafPct,
     remiseSetupPct: e.remiseSetupPct ?? 0,
     remiseAboPct: e.remiseAboPct ?? 0,
-    features: e.features.map((f) => ({ id: randomUUID(), nom: f.nom, taille: f.taille })),
+    features: e.features.map((f) => ({ id: randomUUID(), nom: f.nom, taille: f.taille, ...(f.description?.trim() ? { description: f.description.trim() } : {}), ...(f.categorie?.trim() ? { categorie: f.categorie.trim() } : {}) })),
   }
 }
 
@@ -272,8 +308,10 @@ export function computeTarif(s: EstimateurState): TarifResult {
   const rS = Math.min(100, Math.max(0, s.remiseSetupPct || 0)) / 100
   const rA = Math.min(100, Math.max(0, s.remiseAboPct || 0)) / 100
   const hasRemise = rS > 0 || rA > 0
-  const setupNet = round100(setup * (1 - rS))
-  const aboNet = round10(abo * (1 - rA))
+  // Net après remise = précis à l'euro (PAS de round100/round10 — sinon 12400×30% = 3720 → 3700).
+  // Le brut (setup/abo) reste arrondi « catalogue » ; la remise s'applique dessus exactement, comme sur le devis.
+  const setupNet = Math.round(setup * (1 - rS))
+  const aboNet = Math.round(abo * (1 - rA))
   const total1anNet = setupNet + aboNet * 12
   const total3ansNet = setupNet + aboNet * 36
   const paybackMoisNet = valeurMois > 0 ? setupNet / valeurMois : null

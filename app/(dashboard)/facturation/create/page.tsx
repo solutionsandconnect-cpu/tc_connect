@@ -123,6 +123,10 @@ export default function CreateFacturePage() {
   const [docType, setDocType] = useState<FactureType>(() =>
     searchParams.get("type") === "devis" ? "devis" : "facture"
   );
+  // Rattachement à un contrat Pilotage (ex. avenant créé depuis la page contrat).
+  // Le client et l'abonnement sont alors présélectionnés, et contratId est persisté
+  // pour que le document apparaisse dans l'onglet « Documents » du contrat.
+  const linkedContratId = searchParams.get("contratId") || undefined;
   const [documentDate, setDocumentDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [validiteJours, setValiditeJours] = useState(30);
 
@@ -184,6 +188,20 @@ export default function CreateFacturePage() {
     const found = abonnements.find((a) => a.id === pendingAboId);
     if (found) { selectAbo(found); setPendingAboId(null); }
   }, [abonnements, pendingAboId]);
+
+  // Présélection client + abonnement quand on arrive depuis un contrat (?clientId, ?abonnementId).
+  const prefilledFromContrat = useRef(false);
+  useEffect(() => {
+    if (prefilledFromContrat.current) return;
+    const clientIdParam = searchParams.get("clientId");
+    if (!clientIdParam || clients.length === 0) return;
+    const c = clients.find((x) => x.id === clientIdParam);
+    if (!c) return;
+    prefilledFromContrat.current = true;
+    handleSelectClient(c);
+    const aboIdParam = searchParams.get("abonnementId");
+    if (aboIdParam) setPendingAboId(aboIdParam); // l'effet ci-dessus le sélectionnera au chargement
+  }, [clients, searchParams]);
 
   // ── Abonnements triés par catégorie + numérotés ───────────
   const { sortedAbos, aboNumbers } = useMemo(() => {
@@ -381,6 +399,7 @@ export default function CreateFacturePage() {
         abonnementTitre: aboDisplayName(selectedAbo),
         items, total, type: docType,
         notes: notes.trim() || undefined,
+        ...(linkedContratId ? { contratId: linkedContratId } : {}),
         ...(docType === "devis" ? { validiteJours } : {}),
         ...(dateTs ? { date: dateTs } : {}),
         ...(builtEcheances ? { echeances: builtEcheances } : {}),

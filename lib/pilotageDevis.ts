@@ -1,6 +1,41 @@
-import type { PilotageContrat, FactureItem, DevisOption, Facture, Client, ChartGraphique } from '@/types'
+import type { PilotageContrat, FactureItem, DevisOption, Facture, Client, ChartGraphique, Echeance } from '@/types'
+import { Timestamp } from 'firebase/firestore'
 import { computeTarif, stateFromEstimation, fmtEur } from '@/lib/pilotageEstimateur'
 import { itemNetTotal } from '@/lib/invoiceHtml'
+
+// Construit l'échéancier in-app calqué sur le « plan de règlement » du devis :
+// une échéance « Mise en service » (montant unique, datée du jour) puis 12 mensualités
+// d'abonnement (à +1, +2… +12 mois). Renvoie undefined si pas d'abonnement (paiement
+// unique → pas d'échéancier, facture en une fois). Les dates sont provisoires (le devis
+// n'est pas signé) et restent éditables in-app. Le total des échéances égale exactement
+// le total du devis (la 12e mensualité absorbe l'arrondi au centime).
+function buildEcheancierFromItems(items: FactureItem[]): Echeance[] | undefined {
+  const aboItem = items.find((i) => i.recurrence === 'mensuel')
+  if (!aboItem) return undefined
+  const months = aboItem.quantity || 12
+  const aboNet = itemNetTotal(aboItem)               // abonnement net sur l'année 1
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  const monthly = round2(aboNet / months)
+  const fraisItem = items.find((i) => i.recurrence === 'unique')
+  const oneOff = fraisItem ? round2(itemNetTotal(fraisItem)) : 0
+
+  const base = new Date()
+  base.setHours(0, 0, 0, 0)
+  const at = (n: number) => {
+    const d = new Date(base)
+    d.setMonth(d.getMonth() + n)
+    return Timestamp.fromDate(d)
+  }
+
+  const list: Echeance[] = []
+  if (oneOff > 0) list.push({ label: 'Mise en service', date: at(0), montant: oneOff, statut: 'en_attente' })
+  for (let m = 1; m <= months; m++) {
+    // La dernière mensualité reprend le reliquat pour que la somme = total exact.
+    const montant = m < months ? monthly : round2(aboNet - monthly * (months - 1))
+    list.push({ label: `Abonnement — mois ${m}/${months}`, date: at(m), montant, statut: 'en_attente' })
+  }
+  return list
+}
 
 // Libellé d'offre lisible depuis le type de projet + plateformes de la charte.
 function offreTypeLabel(charte?: ChartGraphique): string {
@@ -77,6 +112,21 @@ export function buildValeurBannerAuto(contrat: PilotageContrat): NonNullable<Fac
   }
 }
 
+// Met en forme le téléphone client pour le devis (carte Client).
+// - numéro déjà international (« +33… ») → tel quel ;
+// - pas d'indicatif international exploitable → numéro national tel quel (« 06 98… ») ;
+// - indicatif international + numéro national → on préfixe en retirant le 0 de tête
+//   (« 0698932627 » + « +33 » → « +33 698932627 », et non « +33 0698932627 »).
+function formatClientPhone(indicatif: string | undefined, tel: string | undefined): string | undefined {
+  const t = tel?.trim()
+  if (!t) return undefined
+  const ind = indicatif?.trim()
+  if (t.startsWith('+')) return t                       // déjà international
+  if (!ind || !ind.startsWith('+')) return t            // pas d'indicatif → national tel quel
+  if (t.startsWith(ind)) return t                       // déjà préfixé → pas de doublon
+  return `${ind} ${t.replace(/^0/, '')}`                // indicatif + national sans le 0 de tête
+}
+
 // Construit le payload d'un devis de prestation à partir d'un contrat Pilotage.
 // Toutes les données viennent du contrat (objet, lignes, inclus, options, modalités) → aucune ressaisie.
 // Renvoie l'objet attendu par createFacture (sans id/number/status/createdAt/updatedAt).
@@ -124,6 +174,9 @@ export function buildDevisFromContrat(
     items.push({ label: nomProjet || 'Prestation', quantity: 1, price: 0, recurrence: 'unique' })
   }
   const total = items.reduce((s, i) => s + itemNetTotal(i), 0)   // net après remise
+  // Échéancier in-app calqué sur le plan de règlement (mise en service + 12 mensualités).
+  // Présent seulement s'il y a un abonnement ; sinon paiement unique (pas d'échéancier).
+  const echeances = abo > 0 ? buildEcheancierFromItems(items) : undefined
 
   // ── Objet : champ dédié saisi, sinon phrase d'offre générée (PAS le contexte brut) ──
   const objet = contrat.objetDevis?.trim() || buildObjetAuto(contrat)
@@ -188,12 +241,7 @@ export function buildDevisFromContrat(
   const client = opts.client
   const clientIndicatif = (client as { indicatif_tel?: string } | null | undefined)?.indicatif_tel?.trim()
   const clientTel = client?.telephone?.trim()
-  // On ne préfixe l'indicatif que si le numéro ne le contient pas déjà (sinon double « +33 +33… »).
-  const factureTelephone = clientTel
-    ? (clientIndicatif && !clientTel.startsWith('+') && !clientTel.startsWith(clientIndicatif)
-        ? `${clientIndicatif} ${clientTel}`
-        : clientTel)
-    : undefined
+  const factureTelephone = formatClientPhone(clientIndicatif, clientTel)
   return {
     userId: opts.userId,
     clientId: contrat.clientId ?? client?.id ?? '',
@@ -211,6 +259,7 @@ export function buildDevisFromContrat(
     type: 'devis',
     items,
     total,
+    ...(echeances ? { echeances } : {}),
     objet,
     contratId: contrat.id,
     inclus: inclus.length ? inclus : undefined,

@@ -64,16 +64,18 @@ export function pilotageDocTypeLabel(t: PilotageDocumentType) {
 // Générateur PDF brandé S&C (logo + coordonnées société ; contenu projet partagé par le contrat)
 export async function generatePilotageDocPdf(
   docu: PilotageDocument,
-  opts: { company?: Company | null; projet?: ProjetContent | null; legal?: LegalFields | null; charte?: ChartGraphique | null; options?: DevisOption[] | null } = {},
+  opts: { company?: Company | null; projet?: ProjetContent | null; legal?: LegalFields | null; charte?: ChartGraphique | null; options?: DevisOption[] | null; version?: string | null } = {},
 ): Promise<{ blob: Blob; filename: string }> {
   const company = opts.company
+  // Version du PROJET/CONTRAT (éditable au niveau contrat) → reprise par tous les documents.
+  const docVersion = opts.version || docu.version || '1.0'
   const { jsPDF } = await import('jspdf')
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' })
   // Le PDF n'est plus téléchargé directement : on renvoie le blob + le nom de fichier.
   // L'appelant décide de le stocker (Storage) et/ou de le télécharger.
   const finalize = (name: string) => {
     const safe = (name || 'document').replace(/[^a-z0-9]+/gi, '_')
-    return { blob: pdf.output('blob') as Blob, filename: `SC_${safe}_v${docu.version || '1.0'}.pdf` }
+    return { blob: pdf.output('blob') as Blob, filename: `SC_${safe}_v${docVersion}.pdf` }
   }
   const W = 210, margin = 18
   const teal: [number, number, number] = [21, 89, 110]
@@ -131,7 +133,7 @@ export async function generatePilotageDocPdf(
         y += o.gap ?? 2
       }
       drawLogo()
-      y = 20
+      y = logoData ? 30 : 20   // titre SOUS le logo (évite le chevauchement avec le bandeau)
       para(legal.titre, { bold: true, size: 16 }); y += 2
       if (docu.clientNom) para(`Projet ${docu.clientNom}`, { color: gray, size: 11 })
       y += 3
@@ -144,19 +146,38 @@ export async function generatePilotageDocPdf(
         y += 1
       })
       y += 4
-      legal.cloture.forEach((p) => para(p, { gap: 3 }))
-      if (signData) {
-        try {
-          const sp = pdf.getImageProperties(signData)
-          const r = Math.min(45 / sp.width, 22 / sp.height)
-          ensure(sp.height * r + 4)
-          pdf.addImage(signData, 'PNG', margin, y, sp.width * r, sp.height * r)
-          y += sp.height * r + 2
-        } catch { /* signature ignorée si illisible */ }
-        const when = docu.signeLe ? ' le ' + new Date(docu.signeLe.toMillis()).toLocaleDateString('fr-FR') : ''
-        ensure(5) // après ensure pour ne pas hériter de la police du footer
-        setText(gray); pdf.setFont('helvetica', 'italic'); pdf.setFontSize(8)
-        pdf.text(`Signé${docu.signatairePar ? ' par ' + docu.signatairePar : ''}${when}.`, margin, y)
+      // Clôture + cartes de signature, gardées ensemble (ensure du bloc complet avant de dessiner).
+      const sigBh = 36, sigGap = 8, sigBw = (contentW - sigGap) / 2
+      ensure(lineH + sigBh + 8)
+      legal.cloture.forEach((p) => para(p, { gap: 4 }))
+      if (legal.signataires) {
+        const top = y
+        const sigBorder: [number, number, number] = [210, 213, 219]
+        const drawSigBox = (bx: number, role: string, name: string, withSig: boolean) => {
+          setDraw(sigBorder); pdf.setLineWidth(0.2); pdf.roundedRect(bx, top, sigBw, sigBh, 2, 2)
+          setText(teal); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8)
+          pdf.text(role.toUpperCase(), bx + 5, top + 7)
+          setText(dark); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(10)
+          pdf.text(name || '—', bx + 5, top + 13)
+          if (withSig && signData) {
+            try {
+              const sp = pdf.getImageProperties(signData)
+              const r = Math.min((sigBw - 14) / sp.width, 13 / sp.height)
+              pdf.addImage(signData, 'PNG', bx + 5, top + 16, sp.width * r, sp.height * r)
+            } catch { /* signature ignorée si illisible */ }
+          }
+          setText(gray); pdf.setFont('helvetica', 'italic'); pdf.setFontSize(7)
+          pdf.text('Précédé de « lu et approuvé », date et signature', bx + 5, top + sigBh - 4)
+        }
+        drawSigBox(margin, legal.signataires.roleA, fNom, true)
+        drawSigBox(margin + sigBw + sigGap, legal.signataires.roleB, docu.clientNom || '', false)
+        y = top + sigBh
+        if (signData) {
+          const when = docu.signeLe ? ' le ' + new Date(docu.signeLe.toMillis()).toLocaleDateString('fr-FR') : ''
+          ensure(6); y += 4
+          setText(gray); pdf.setFont('helvetica', 'italic'); pdf.setFontSize(8)
+          pdf.text(`Signé électroniquement${docu.signatairePar ? ' par ' + docu.signatairePar : ''}${when}.`, margin, y)
+        }
       }
       footer()
       return finalize(docu.titre || meta.label)
@@ -315,7 +336,7 @@ export async function generatePilotageDocPdf(
       ['Client', docu.clientNom || '—'],
       ['Date', new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })],
       ['Prestataire', fNom],
-      ['Version', docu.version || '1.0'],
+      ['Version', docVersion],
       ['Réf', docu.id.slice(0, 8)],
     ])
     y += 2
@@ -328,10 +349,10 @@ export async function generatePilotageDocPdf(
     // ── Charte & cadrage (cahier des charges) ──
     const ch = opts.charte
     const hasCharte = !!ch && (
-      (ch.objectifs?.length ?? 0) > 0 || ch.typeProjet || ch.nomProjet || ch.nomApp || ch.publicCible ||
+      ch.typeProjet || ch.nomProjet || ch.nomApp || ch.publicCible ||
       ch.usersMin != null || ch.usersMax != null || (ch.plateformes?.length ?? 0) > 0 || ch.domaine ||
       (ch.langues?.length ?? 0) > 0 || (ch.couleurs?.length ?? 0) > 0 || (ch.typographie?.length ?? 0) > 0 ||
-      (ch.ton?.length ?? 0) > 0 || (ch.liens?.length ?? 0) > 0 || (ch.contraintes?.length ?? 0) > 0 ||
+      (ch.ton?.length ?? 0) > 0 || (ch.liens?.length ?? 0) > 0 ||
       !!ch.notes || !!ch.logo?.url
     )
     if (cfg.charte && ch && hasCharte) {
@@ -347,12 +368,6 @@ export async function generatePilotageDocPdf(
       const users = ch.usersMin != null || ch.usersMax != null ? `${ch.usersMin ?? '?'} – ${ch.usersMax ?? '?'} utilisateurs` : ''
 
       section('Charte & cadrage')
-
-      if ((ch.objectifs?.length ?? 0) > 0) {
-        para('Objectifs du projet', { bold: true, size: 10 }); y += 1
-        ch.objectifs!.forEach((o) => listItem(o))
-        y += 1
-      }
 
       // Logo (image du projet/app, distincte du logo S&C en en-tête)
       if (ch.logo?.url) {
@@ -405,10 +420,6 @@ export async function generatePilotageDocPdf(
       }
 
       // Listes
-      if ((ch.contraintes?.length ?? 0) > 0) {
-        y += 1; para('Contraintes & spécifications techniques', { bold: true, size: 10 }); y += 1
-        ch.contraintes!.forEach((l) => listItem(l))
-      }
       if ((ch.liens?.length ?? 0) > 0) {
         y += 1; para('Liens / références', { bold: true, size: 10 }); y += 1
         ch.liens!.forEach((l) => listItem(l))
@@ -445,17 +456,22 @@ export async function generatePilotageDocPdf(
     }
     if (cfg.planning) {
       section('Planning prévisionnel')
+      // « Début » = date de début de l'étape ; « Durée » = nb de jours jusqu'à l'étape
+      // suivante (cohérent avec l'aperçu in-app). La dernière étape n'a pas de durée.
+      const planDescW = contentW - 32 - 28 - 18 - 38
       drawRow([
         { text: 'Étape', w: 32, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Description', w: contentW - 32 - 28 - 38, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
-        { text: 'Date', w: 28, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Description', w: planDescW, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Début', w: 28, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
+        { text: 'Durée', w: 18, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
         { text: 'Responsable', w: 38, fill: teal, color: [255, 255, 255], bold: true, align: 'center' },
       ])
       if (c.planning.length === 0) emptyRow()
       else c.planning.forEach((p, i) => drawRow([
         { text: p.etape, w: 32, fill: zebra(i) },
-        { text: p.description, w: contentW - 32 - 28 - 38, fill: zebra(i) },
+        { text: p.description, w: planDescW, fill: zebra(i) },
         { text: fmtD(p.date), w: 28, align: 'center', fill: zebra(i) },
+        { text: i < c.planning.length - 1 && p.dureeJours != null && p.dureeJours > 0 ? `${p.dureeJours} j` : '—', w: 18, align: 'center', fill: zebra(i) },
         { text: p.responsable, w: 38, align: 'center', fill: zebra(i) },
       ]))
     }
@@ -496,7 +512,7 @@ export async function generatePilotageDocPdf(
   const rows: [string, string][] = [
     ['Client / projet', docu.clientNom || '—'],
     ['Type de document', meta?.label ?? docu.type],
-    ['Version', docu.version || '1.0'],
+    ['Version', docVersion],
     ['Statut', STATUT_DOC_LABELS[docu.statut] ?? docu.statut],
     ['Date', new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })],
     ['Réf', docu.id.slice(0, 8)],

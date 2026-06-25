@@ -22,7 +22,17 @@ export function defaultLegalFields(over: Partial<LegalFields> = {}): LegalFields
 }
 
 // ── Schéma de saisie (pour générer le formulaire d'édition) ─────────────────
-export interface LegalFieldDef { key: keyof LegalFields; label: string; placeholder?: string; multiline?: boolean; help?: string }
+export interface LegalFieldDef { key: keyof LegalFields; label: string; placeholder?: string; multiline?: boolean; help?: string; kind?: 'taglist'; suggestions?: string[] }
+
+// Sous-traitants ultérieurs proposés (clic = ajout) — à ne garder QUE ceux réellement utilisés.
+export const SOUS_TRAITANTS_SUGGESTIONS = [
+  'Google Firebase (hébergement & base de données)',
+  'Vercel (hébergement web)',
+  'Cloudflare R2 (stockage vidéo)',
+  'SendGrid (emails)',
+  'Resend (emails)',
+  'Twilio (SMS)',
+]
 export interface LegalFieldGroup { titre: string; champs: LegalFieldDef[] }
 
 const GROUP_PRESTATAIRE: LegalFieldGroup = {
@@ -120,7 +130,7 @@ export function legalFieldGroupsAll(): LegalFieldGroup[] {
         { key: 'donneesTraitees', label: 'Catégories de données traitées', multiline: true, placeholder: 'ex : nom, email, téléphone, adresse, photos de chantier', help: 'Quelles données personnelles l’app manipule.' },
         { key: 'personnesConcernees', label: 'Personnes concernées', placeholder: 'ex : salariés et clients du Client', help: 'De qui sont les données.' },
         { key: 'dureeConservation', label: 'Durée de conservation', placeholder: 'ex : durée du contrat + 12 mois', help: 'Combien de temps les données sont gardées.' },
-        { key: 'sousTraitantsUlterieurs', label: 'Sous-traitants ultérieurs', placeholder: 'ex : Google Firebase, SendGrid, Twilio', multiline: true, help: 'Les services tiers qui hébergent/traitent les données.' },
+        { key: 'sousTraitantsUlterieurs', label: 'Sous-traitants ultérieurs', kind: 'taglist', suggestions: SOUS_TRAITANTS_SUGGESTIONS, help: 'Les services tiers qui hébergent/traitent réellement les données. N\'ajoute que ceux que tu utilises.' },
       ],
     },
     {
@@ -141,6 +151,7 @@ export interface LegalDocStruct {
   intro: string[]
   articles: LegalArticle[]
   cloture: string[]
+  signataires?: { roleA: string; roleB: string }  // pour dessiner de vraies cartes de signature (A = prestataire, B = client)
 }
 
 const g = (f: LegalFields, k: keyof LegalFields, fb = '[à compléter]') => (f[k] && String(f[k]).trim()) || fb
@@ -153,10 +164,18 @@ export function buildLegalDoc(type: PilotageDocumentType, f: LegalFields): Legal
 }
 
 function entreLesSoussignes(f: LegalFields, rolePresta: string, roleClient: string): string[] {
+  // Côté client : on n'affiche les identifiants (adresse, SIRET, représentant) que s'ils sont
+  // renseignés — un client particulier / étranger peut ne pas avoir de SIRET. Évite les « [à compléter] ».
+  const v = (k: keyof LegalFields) => (f[k] && String(f[k]).trim()) || ''
+  const clientParts = [
+    v('clientAdresse') ? `dont le siège est situé ${v('clientAdresse')}` : '',
+    v('clientSiret') ? `immatriculée sous le numéro ${v('clientSiret')}` : '',
+    v('clientRepresentant') ? `représentée par ${v('clientRepresentant')}` : '',
+  ].filter(Boolean)
   return [
     `Entre les soussignés :`,
     `${g(f, 'prestataireNom')}, ${g(f, 'prestataireStatut')}, immatriculée sous le numéro SIRET ${g(f, 'prestataireSiret')}, dont le siège est situé ${g(f, 'prestataireAdresse')}, représentée par ${g(f, 'prestataireRepresentant')}, ci-après « ${rolePresta} » ;`,
-    `Et ${g(f, 'clientNom')}, dont le siège est situé ${g(f, 'clientAdresse')}, immatriculée sous le numéro ${g(f, 'clientSiret')}, représentée par ${g(f, 'clientRepresentant')}, ci-après « ${roleClient} » ;`,
+    `Et ${g(f, 'clientNom')}${clientParts.length ? `, ${clientParts.join(', ')}` : ''}, ci-après « ${roleClient} » ;`,
     `Il a été convenu ce qui suit.`,
   ]
 }
@@ -210,7 +229,8 @@ function buildPrestation(f: LegalFields): LegalDocStruct {
         `Le présent contrat est soumis au droit français. À défaut d'accord amiable, tout litige sera porté devant les tribunaux compétents.`,
       ] },
     ],
-    cloture: clotureSignatures(f, 'Le Prestataire', 'Le Client'),
+    cloture: clotureSignatures(f),
+    signataires: { roleA: 'Le Prestataire', roleB: 'Le Client' },
   }
 }
 
@@ -256,7 +276,8 @@ function buildDPA(f: LegalFields): LegalDocStruct {
         `Le présent accord s'applique pendant toute la durée du traitement réalisé pour le compte du Responsable de traitement.`,
       ] },
     ],
-    cloture: clotureSignatures(f, 'Le Sous-traitant', 'Le Responsable de traitement'),
+    cloture: clotureSignatures(f),
+    signataires: { roleA: 'Le Sous-traitant', roleB: 'Le Responsable de traitement' },
   }
 }
 
@@ -291,14 +312,12 @@ function buildLicence(f: LegalFields): LegalDocStruct {
         `Le présent contrat est soumis au droit français. Tout litige relève des tribunaux compétents.`,
       ] },
     ],
-    cloture: clotureSignatures(f, 'Le Concédant', 'Le Bénéficiaire'),
+    cloture: clotureSignatures(f),
+    signataires: { roleA: 'Le Concédant', roleB: 'Le Bénéficiaire' },
   }
 }
 
-function clotureSignatures(f: LegalFields, rolePresta: string, roleClient: string): string[] {
-  return [
-    `Fait à ${g(f, 'lieu')}, le ${g(f, 'date')}, en deux exemplaires originaux.`,
-    `${rolePresta}                                              ${roleClient}`,
-    `(signature, précédée de la mention « lu et approuvé »)`,
-  ]
+// Ligne de clôture seule ; les signataires sont rendus en cartes (cf. LegalDocStruct.signataires).
+function clotureSignatures(f: LegalFields): string[] {
+  return [`Fait à ${g(f, 'lieu')}, le ${g(f, 'date')}, en deux exemplaires originaux.`]
 }

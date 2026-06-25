@@ -17,13 +17,16 @@ import SignaturePad from '@/components/ui/SignaturePad'
 import Modal from '@/components/ui/Modal'
 import { generatePilotageDocPdf, PILOTAGE_DOC_TYPES, STATUT_DOC_LABELS } from '@/lib/pilotageDocPdf'
 import { buildDevisFromContrat, buildObjetAuto, buildValeurBannerAuto } from '@/lib/pilotageDevis'
+import { DevisLinkPicker } from '@/components/pilotage/DevisLinkPicker'
+import { ContratEditModal } from '@/components/pilotage/ContratEditModal'
 import { createFacture } from '@/lib/facturationService'
 import { defaultLegalFields, legalFieldGroupsAll, type LegalFields } from '@/lib/pilotageLegalTemplates'
 import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, DEFAULT_PLANNING_TEMPLATE, generatePlanningFromTemplate, type ProjetContent } from '@/lib/pilotageProjetTemplates'
 import { StringListEditor, FonctionsEditor, PlanningEditor, TacheAjoutForm, TachesApercu, PlanningApercu, ProjetApercu, tauxHoraireFromTjm, prixFacture, estEnRetard } from '@/components/pilotage/ProjetUI'
 import { CharteEditor, CharteApercu, defaultCharte } from '@/components/pilotage/CharteUI'
 import EstimateurTarif from '@/components/pilotage/EstimateurTarif'
-import { computeTarif, stateFromEstimation, fmtEur, type TarifResult } from '@/lib/pilotageEstimateur'
+import { computeTarif, stateFromEstimation, fmtEur, featuresToFonctions, type TarifResult } from '@/lib/pilotageEstimateur'
+import { usePilotageCatalogue } from '@/hooks/usePilotageCatalogue'
 import { randomUUID } from '@/lib/uuid'
 import { EvolutionEditor, DEFAULT_EVOLUTION } from '@/components/pilotage/EvolutionEditor'
 import { PerimetreEditor, splitPerimetre, type PerimetreItem } from '@/components/pilotage/PerimetreEditor'
@@ -66,6 +69,52 @@ function AutoTextarea({ value, onChange, placeholder, multiline }: {
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => { if (!multiline && e.key === 'Enter') e.preventDefault() }}
       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm leading-snug focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden block" />
+  )
+}
+
+// Éditeur de liste (chips + ajout via « + » + suggestions cliquables). Stocke une chaîne « a, b, c »
+// (compatible avec le rendu en phrase dans les templates légaux).
+function TagListField({ value, onChange, placeholder, suggestions }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; suggestions?: string[]
+}) {
+  const items = value.split(',').map((s) => s.trim()).filter(Boolean)
+  const [draft, setDraft] = useState('')
+  const set = (next: string[]) => onChange(next.join(', '))
+  const add = (label: string) => {
+    const l = label.trim()
+    if (!l || items.some((x) => x.toLowerCase() === l.toLowerCase())) { setDraft(''); return }
+    set([...items, l]); setDraft('')
+  }
+  const remaining = (suggestions ?? []).filter((s) => !items.some((x) => x.toLowerCase() === s.toLowerCase()))
+  return (
+    <div className="space-y-1.5">
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((it, i) => (
+            <span key={i} className="inline-flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-800 rounded-full pl-2.5 pr-1 py-0.5 text-xs">
+              {it}
+              <button type="button" onClick={() => set(items.filter((_, j) => j !== i))} className="text-blue-400 hover:text-blue-700 text-sm leading-none">×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-1.5">
+        <input value={draft} onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(draft) } }}
+          placeholder={placeholder || 'Ajouter…'}
+          className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        <button type="button" onClick={() => add(draft)} disabled={!draft.trim()}
+          className="shrink-0 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg px-3 py-1.5 text-sm font-medium transition">+</button>
+      </div>
+      {remaining.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {remaining.map((s) => (
+            <button key={s} type="button" onClick={() => add(s)}
+              className="text-[11px] border border-dashed border-gray-300 text-gray-600 hover:border-blue-400 hover:text-blue-700 rounded-full px-2 py-0.5 transition">+ {s}</button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -155,6 +204,7 @@ export default function ContratPage() {
   const contrat = useMemo(() => contrats.find((c) => c.id === id) ?? null, [contrats, id])
   // Devis & factures générés depuis ce contrat (lien `contratId`), plus récents d'abord.
   const { invoices } = useInvoices(currentUser?.uid ?? '')
+  const { items: catalogueItems } = usePilotageCatalogue()
   const contratFactures = useMemo(
     () => invoices.filter((f) => f.contratId === id).sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0)),
     [invoices, id],
@@ -163,6 +213,7 @@ export default function ContratPage() {
 
   // Génère un devis de prestation pré-rempli depuis le contrat, puis ouvre la fiche devis.
   const [genDevis, setGenDevis] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
   const generateDevis = async () => {
     if (!contrat || !currentUser) return
     setGenDevis(true)
@@ -308,8 +359,9 @@ export default function ContratPage() {
       clientSiret: cli?.siret || '',
       clientRepresentant,
       date: new Date().toLocaleDateString('fr-FR'),
-      prixCreation: contrat.fraisMiseEnPlace != null ? String(contrat.fraisMiseEnPlace) : '',
-      prixAbo: contrat.abonnementMensuel != null ? String(contrat.abonnementMensuel) : '',
+      // Prix NET réellement facturé (catalogue − remise) → cohérent avec le devis, pas le tarif catalogue.
+      prixCreation: contrat.fraisMiseEnPlace != null ? String(Math.round(contrat.fraisMiseEnPlace * (1 - (contrat.remiseMiseEnPlacePct ?? 0) / 100))) : '',
+      prixAbo: contrat.abonnementMensuel != null ? String(Math.round(contrat.abonnementMensuel * (1 - (contrat.remiseAbonnementPct ?? 0) / 100))) : '',
     })
     // Valeurs par défaut de l'utilisateur (réglages) : remplissent les champs « policy »
     // encore vides (durée, droits, exclusivité, RGPD…), sans écraser Société/client/prix.
@@ -319,7 +371,12 @@ export default function ContratPage() {
       if (!(prefill[kk] ?? '').trim() && defs[k]?.trim()) prefill[kk] = defs[k]
     }
     const saved = contrat.legal
-    if (saved) for (const k of Object.keys(saved) as (keyof LegalFields)[]) { if (saved[k]) prefill[k] = saved[k] }
+    // ⚠️ prixCreation/prixAbo sont TOUJOURS recalculés du contrat (net, ci-dessus) — on n'applique
+    // jamais l'ancien snapshot figé de contrat.legal, sinon un vieux tarif resterait collé au document.
+    if (saved) for (const k of Object.keys(saved) as (keyof LegalFields)[]) {
+      if (k === 'prixCreation' || k === 'prixAbo') continue
+      if (saved[k]) prefill[k] = saved[k]
+    }
     setFormLegal(prefill)
     setFormProjet(contrat.projet ? defaultProjetContent(contrat.projet) : defaultProjetContent())
     setFormCharte(contrat.charte ? defaultCharte(contrat.charte) : defaultCharte())
@@ -406,7 +463,7 @@ export default function ContratPage() {
     if (!currentUser) return
     setPdfBusy(d.id)
     try {
-      const { blob, filename } = await generatePilotageDocPdf(d, { company, projet: formProjet, legal: formLegal, charte: formCharte, options: splitPerimetre(formPerimetre).options })
+      const { blob, filename } = await generatePilotageDocPdf(d, { company, projet: formProjet, legal: formLegal, charte: formCharte, options: splitPerimetre(formPerimetre).options, version: contrat?.version })
       const url = await uploadBlob(blob, `users/${currentUser.uid}/pilotage_pdf/${d.contratId}/${d.id}.pdf`)
       await updateDocument(d.id, { pdfUrl: url, pdfNom: filename, pdfGeneeLe: Timestamp.now() })
       triggerDownload(blob, filename)
@@ -455,6 +512,15 @@ export default function ContratPage() {
 
   const estimations: SavedEstimation[] = contrat?.estimations ?? []
   const estSelectedId = contrat?.estimationSelectedId ?? null
+  // Synchronise les Fonctionnalités du projet DEPUIS le calculateur (briques de l'estimation
+  // sélectionnée) : catégorie = groupe catalogue, description = libellé client (sinon nom).
+  const [foncSynced, setFoncSynced] = useState(false)
+  const syncFonctionsFromCalc = async () => {
+    const selEst = contrat?.estimations?.find((e) => e.id === estSelectedId) ?? contrat?.estimations?.[0] ?? contrat?.estimation
+    if (!selEst?.features?.length) return
+    await persistProjet({ fonctionnalites: featuresToFonctions(selEst.features, catalogueItems) })
+    setFoncSynced(true); setTimeout(() => setFoncSynced(false), 2000)
+  }
 
   // Migration douce : ancienne estimation unique → liste (une seule fois)
   const migratedEst = useRef(false)
@@ -536,6 +602,8 @@ export default function ContratPage() {
 
   return (
     <div className="space-y-5 pb-24">
+      {/* Modal d'édition du contrat (même composant que la page Pilotage) — édition en place, sans navigation */}
+      <ContratEditModal isOpen={showEditModal} onClose={() => setShowEditModal(false)} contrat={contrat} />
       {/* En-tête */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 min-w-0">
@@ -547,11 +615,18 @@ export default function ContratPage() {
             <p className="text-xs text-gray-400">Documents · contenu projet · mentions légales</p>
           </div>
         </div>
-        <button onClick={generateDevis} disabled={genDevis}
-          title="Crée un devis de prestation pré-rempli depuis ce contrat (objet, lignes, inclus, options, modalités)"
-          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition shrink-0">
-          <PlusIcon className="w-4 h-4" /> {genDevis ? 'Génération…' : 'Générer un devis'}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={() => setShowEditModal(true)}
+            title="Modifier les infos du contrat (client, tarifs, statut, devis rattachés…)"
+            className="flex items-center gap-1.5 border border-gray-300 text-gray-700 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition">
+            <PencilIcon className="w-4 h-4" /> Modifier
+          </button>
+          <button onClick={generateDevis} disabled={genDevis}
+            title="Crée un devis de prestation pré-rempli depuis ce contrat (objet, lignes, inclus, options, modalités)"
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+            <PlusIcon className="w-4 h-4" /> {genDevis ? 'Génération…' : 'Générer un devis'}
+          </button>
+        </div>
       </div>
 
       {/* Repère essentiel / facultatif */}
@@ -585,10 +660,18 @@ export default function ContratPage() {
         )}
         {tab === 'documents' && (
           <div className="space-y-4">
-            {/* Devis & factures générés depuis ce contrat → accès direct */}
-            {contratFactures.length > 0 && (
-              <div className="border border-gray-200 rounded-xl p-3">
-                <p className="text-xs font-medium text-gray-600 mb-2">Devis &amp; factures de ce contrat</p>
+            {/* Devis & factures rattachés à ce contrat (généré initial + avenants liés) → accès direct */}
+            <div className="border border-gray-200 rounded-xl p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-gray-600">Devis &amp; factures de ce contrat</p>
+                <button
+                  onClick={() => router.push(`/facturation/create?type=devis&clientId=${contrat.clientId ?? ''}&contratId=${id}${contrat.abonnementId ? `&abonnementId=${contrat.abonnementId}` : ''}`)}
+                  title="Créer un nouveau devis déjà rattaché à ce contrat (ex. un avenant)"
+                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition shrink-0">
+                  <PlusIcon className="w-3.5 h-3.5" /> Nouveau devis
+                </button>
+              </div>
+              {contratFactures.length > 0 ? (
                 <div className="flex flex-col gap-1.5">
                   {contratFactures.map((f) => (
                     <button key={f.id} onClick={() => router.push(`/facturation/${f.id}`)}
@@ -601,8 +684,16 @@ export default function ContratPage() {
                     </button>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <p className="text-[11px] text-gray-400">Aucun devis/facture rattaché pour l'instant.</p>
+              )}
+              <details className="border-t border-gray-100 pt-2">
+                <summary className="cursor-pointer text-xs font-medium text-blue-600 hover:text-blue-800 select-none list-none">+ Rattacher un devis déjà préparé</summary>
+                <div className="mt-2">
+                  <DevisLinkPicker contratId={id} uid={currentUser?.uid ?? ''} clientId={contrat.clientId || undefined} />
+                </div>
+              </details>
+            </div>
             {availableDocTypes.length === 0 ? (
               <p className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
                 Tous les types de documents ont été créés pour ce contrat. Chaque document n'existe qu'en un seul exemplaire (modifie-le ou régénère son PDF ci-dessous).
@@ -643,7 +734,7 @@ export default function ContratPage() {
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-800 truncate">{d.titre}</p>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-gray-400">v{d.version}</span>
+                        <span className="text-[10px] text-gray-400">v{contrat.version || '1.0'}</span>
                         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                           d.statut === 'signe' ? 'bg-green-100 text-green-700'
                             : d.statut === 'finalise' ? 'bg-blue-100 text-blue-700'
@@ -717,7 +808,15 @@ export default function ContratPage() {
                   if ((contrat.coutFirebaseMensuel ?? null) !== sel.infra) diffs.push(`coût infra contrat ${contrat.coutFirebaseMensuel != null ? fmtEur(contrat.coutFirebaseMensuel) : '—'} ≠ estimation ${fmtEur(sel.infra)}`)
                   if ((contrat.remiseMiseEnPlacePct ?? 0) !== (sel.remiseSetupPct ?? 0)) diffs.push(`remise création contrat ${contrat.remiseMiseEnPlacePct ?? 0}% ≠ estimation ${sel.remiseSetupPct ?? 0}%`)
                   if ((contrat.remiseAbonnementPct ?? 0) !== (sel.remiseAboPct ?? 0)) diffs.push(`remise abonnement contrat ${contrat.remiseAbonnementPct ?? 0}% ≠ estimation ${sel.remiseAboPct ?? 0}%`)
-                  if (diffs.length === 0 || contrat.masqueAlerteAlignement) return null
+                  // Signature des chiffres qui définissent l'écart (contrat + estimation sélectionnée).
+                  // « Ignorer » la mémorise ; tant qu'elle ne change pas, l'alerte reste masquée. Si un
+                  // chiffre bouge (d'un côté ou de l'autre), la signature change → l'alerte réapparaît.
+                  const signature = JSON.stringify([
+                    contrat.fraisMiseEnPlace ?? null, contrat.abonnementMensuel ?? null, contrat.coutFirebaseMensuel ?? null,
+                    contrat.remiseMiseEnPlacePct ?? 0, contrat.remiseAbonnementPct ?? 0,
+                    t.setup, t.abo, sel.infra, sel.remiseSetupPct ?? 0, sel.remiseAboPct ?? 0, sel.id,
+                  ])
+                  if (diffs.length === 0 || contrat.alerteAlignementIgnoree === signature) return null
                   return (
                     <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
                       <ExclamationTriangleIcon className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
@@ -726,7 +825,7 @@ export default function ContratPage() {
                         <ul className="list-disc ml-4 mt-1 space-y-0.5 text-amber-700">{diffs.map((d, i) => <li key={i}>{d}</li>)}</ul>
                         <div className="mt-1.5 flex items-center gap-3 flex-wrap">
                           <button onClick={() => alignerContrat(sel)} className="text-[11px] font-medium text-amber-800 underline hover:no-underline">Aligner le contrat sur l&apos;estimation</button>
-                          <button onClick={() => updateContrat(contrat.id, { masqueAlerteAlignement: true } as Partial<PilotageContrat>).catch((e) => console.error('[masque alerte]', e))}
+                          <button onClick={() => updateContrat(contrat.id, { alerteAlignementIgnoree: signature } as Partial<PilotageContrat>).catch((e) => console.error('[masque alerte]', e))}
                             className="text-[11px] font-medium text-amber-700/70 hover:text-amber-800">Ignorer (le prix est voulu différent)</button>
                         </div>
                       </div>
@@ -794,6 +893,7 @@ export default function ContratPage() {
                   key={estEditingId}
                   initial={estSeed}
                   defaults={settings}
+                  projetFonctions={formProjet.fonctionnalites}
                   onChange={(est, t) => setEstLive({ est, tarif: t })}
                   footer={(
                     <div className="mt-3 flex items-center gap-2">
@@ -870,8 +970,15 @@ export default function ContratPage() {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Fonctionnalités</p>
-                  <p className="text-[11px] text-gray-400 mb-2">Ce que l'app <em>fait</em>, regroupé par thème. La <strong>catégorie</strong> = le module fonctionnel ; la description = le comportement concret.</p>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Fonctionnalités</p>
+                    <button type="button" onClick={syncFonctionsFromCalc}
+                      title="Remplace la liste par les briques du calculateur (avec leur libellé client si renseigné)"
+                      className="flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 transition shrink-0">
+                      <ArrowDownTrayIcon className="w-3.5 h-3.5" /> {foncSynced ? '✓ Synchronisé' : 'Synchroniser depuis le calculateur'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mb-2">Ce que l'app <em>fait</em>. Édite ici librement, ou clique <strong>« Synchroniser »</strong> pour reprendre les <strong>briques du calculateur</strong> (avec leur libellé client).</p>
                   <FonctionsEditor items={formProjet.fonctionnalites} onChange={(v) => updP({ fonctionnalites: v })} />
                 </div>
                 <div>
@@ -1016,7 +1123,7 @@ export default function ContratPage() {
             <EditBar editing={editing} onEdit={() => setEditing(true)} onCancel={cancelEdit} onSave={save} saveState={saveState} />
             {editing ? (
               <div className="space-y-2">
-                <p className="text-[11px] text-gray-400 mb-2">Le champ « Étape » propose une liste déroulante (tape pour filtrer, ou saisis librement). La date se calcule depuis la précédente + le délai en jours ; saisis une date à la main pour la <strong>fixer</strong>. Réordonne avec les flèches.</p>
+                <p className="text-[11px] text-gray-400 mb-2">Le champ « Étape » propose une liste déroulante (tape pour filtrer, ou saisis librement). Pour chaque étape : la <strong>date</strong> = son <strong>début</strong>, et les <strong>jours</strong> = sa <strong>durée</strong> (l'étape suivante démarre donc à cette date + la durée). Saisis une date à la main pour la <strong>fixer</strong>. Réordonne avec les flèches.</p>
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
                   {genConfirm ? (
                     <span className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
@@ -1078,10 +1185,15 @@ export default function ContratPage() {
                       </summary>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 border-t border-gray-100">
                         {grp.champs.map((ch) => (
-                          <div key={ch.key} className={ch.multiline ? 'sm:col-span-2' : ''}>
+                          <div key={ch.key} className={ch.multiline || ch.kind === 'taglist' ? 'sm:col-span-2' : ''}>
                             <label className="block text-[11px] font-medium text-gray-600 mb-1">{ch.label}</label>
-                            <AutoTextarea value={formLegal[ch.key] ?? ''} onChange={(v) => updL(ch.key, v)}
-                              placeholder={ch.placeholder} multiline={!!ch.multiline} />
+                            {ch.kind === 'taglist' ? (
+                              <TagListField value={formLegal[ch.key] ?? ''} onChange={(v) => updL(ch.key, v)}
+                                placeholder={ch.placeholder} suggestions={ch.suggestions} />
+                            ) : (
+                              <AutoTextarea value={formLegal[ch.key] ?? ''} onChange={(v) => updL(ch.key, v)}
+                                placeholder={ch.placeholder} multiline={!!ch.multiline} />
+                            )}
                             {ch.help && <p className="text-[10px] text-gray-400 mt-0.5">{ch.help}</p>}
                           </div>
                         ))}

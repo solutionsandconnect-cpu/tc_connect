@@ -135,10 +135,6 @@ export function CharteEditor({ value, onChange, onUpload }: {
   }
   return (
     <div className="space-y-5">
-      <div>
-        <p className={lbl}>Objectifs du projet</p>
-        <StringListEditor items={value.objectifs ?? []} onChange={(v) => upd({ objectifs: v })} placeholder="Un objectif…" reorderable />
-      </div>
 
       <div>
         <p className={lbl}>Nom du projet</p>
@@ -256,10 +252,6 @@ export function CharteEditor({ value, onChange, onUpload }: {
         <StringListEditor items={value.liens ?? []} onChange={(v) => upd({ liens: v })} placeholder="https://…" />
       </div>
 
-      <div>
-        <p className={lbl}>Contraintes &amp; spécifications techniques</p>
-        <StringListEditor items={value.contraintes ?? []} onChange={(v) => upd({ contraintes: v })} placeholder="ex : intégration compta, mode hors-ligne, hébergement imposé…" reorderable />
-      </div>
 
       {onUpload && (
         <div>
@@ -301,8 +293,6 @@ function ApSection({ t, children }: { t: string; children: React.ReactNode }) {
 const badge = (s: string, i: number) => <span key={i} className="text-[10px] font-medium rounded-full px-2 py-0.5 bg-gray-100 text-gray-600">{s}</span>
 
 export function CharteApercu({ value: v }: { value: ChartGraphique }) {
-  const objectifs = (v.objectifs ?? []).filter(Boolean)
-  const contraintes = (v.contraintes ?? []).filter(Boolean)
   const couleurs = (v.couleurs ?? []).filter((c) => c.hex)
   const liens = (v.liens ?? []).filter(Boolean)
   const fichiers = v.fichiers ?? []
@@ -312,7 +302,7 @@ export function CharteApercu({ value: v }: { value: ChartGraphique }) {
   const tons = v.ton ?? []
   const typeTxt = v.typeProjet ? (v.typeProjet === 'autre' ? (v.typeAutre || 'Autre') : (TYPE_LABEL[v.typeProjet] ?? v.typeProjet)) : ''
   const users = v.usersMin != null || v.usersMax != null ? `${v.usersMin ?? '?'} – ${v.usersMax ?? '?'} utilisateurs` : ''
-  const vide = !(v.logo || objectifs.length || typeTxt || v.nomProjet || v.nomApp || v.publicCible || users || plateformes.length || v.domaine || langues.length || couleurs.length || typos.length || tons.length || liens.length || fichiers.length || contraintes.length || v.notes)
+  const vide = !(v.logo || typeTxt || v.nomProjet || v.nomApp || v.publicCible || users || plateformes.length || v.domaine || langues.length || couleurs.length || typos.length || tons.length || liens.length || fichiers.length || v.notes)
   if (vide)
     return <p className="text-sm text-gray-400 text-center py-10">Rien pour l'instant.<br />Clique sur « Modifier » pour remplir la charte.</p>
   return (
@@ -322,13 +312,6 @@ export function CharteApercu({ value: v }: { value: ChartGraphique }) {
           <a href={v.logo.url} target="_blank" rel="noreferrer" className="inline-block">
             <img src={v.logo.url} alt="logo" className="w-20 h-20 rounded-lg object-contain border border-gray-200 bg-white p-1.5" />
           </a>
-        </ApSection>
-      )}
-      {objectifs.length > 0 && (
-        <ApSection t="Objectifs du projet">
-          <ul className="space-y-1 text-sm text-gray-700">
-            {objectifs.map((o, i) => <li key={i} className="flex gap-2"><span className="text-blue-500 shrink-0">•</span>{o}</li>)}
-          </ul>
         </ApSection>
       )}
 
@@ -382,13 +365,6 @@ export function CharteApercu({ value: v }: { value: ChartGraphique }) {
         </ApSection>
       )}
 
-      {contraintes.length > 0 && (
-        <ApSection t="Contraintes & spécifications techniques">
-          <ul className="space-y-1 text-sm text-gray-700">
-            {contraintes.map((c, i) => <li key={i} className="flex gap-2"><span className="text-blue-500 shrink-0">•</span>{c}</li>)}
-          </ul>
-        </ApSection>
-      )}
       {v.notes && <ApSection t="Notes / contraintes de marque"><p className="text-sm text-gray-700 whitespace-pre-wrap">{v.notes}</p></ApSection>}
     </div>
   )
