@@ -10,6 +10,7 @@ import { usePilotageContrats } from '@/hooks/usePilotageContrats'
 import Modal from '@/components/ui/Modal'
 import SearchSelect from '@/components/ui/SearchSelect'
 import { DevisLinkPicker } from '@/components/pilotage/DevisLinkPicker'
+import { defaultSuivisPeriodiques } from '@/lib/pilotageSuivi'
 import type { PilotageContrat, PilotageContratStatut } from '@/types'
 
 const fmtEur = (n: number) => `${Math.round(n).toLocaleString('fr-FR')} €`
@@ -29,6 +30,8 @@ export type ContratForm = {
   coutFirebaseMensuel: string; tjm: string; dateDebut: string; premiereAnnee: boolean
   tarifAnnee2Defini: boolean; statut: PilotageContratStatut; version: string; notes: string
   devisId: string; devisNumber: string
+  dureeEngagementMois: string; preavisMois: string
+  maquetteValideeLe: string
 }
 export const emptyContratForm: ContratForm = {
   clientId: '', clientNom: '', abonnementId: '', abonnementTitre: '',
@@ -36,6 +39,8 @@ export const emptyContratForm: ContratForm = {
   coutFirebaseMensuel: '', tjm: '', dateDebut: '', premiereAnnee: true,
   tarifAnnee2Defini: false, statut: 'prospect', version: '1.0', notes: '',
   devisId: '', devisNumber: '',
+  dureeEngagementMois: '', preavisMois: '',
+  maquetteValideeLe: '',
 }
 
 function formFromContrat(c: PilotageContrat): ContratForm {
@@ -51,6 +56,9 @@ function formFromContrat(c: PilotageContrat): ContratForm {
     tarifAnnee2Defini: c.tarifAnnee2Defini ?? false,
     statut: c.statut ?? 'actif', version: c.version ?? '1.0', notes: c.notes ?? '',
     devisId: c.devisId ?? '', devisNumber: c.devisNumber ?? '',
+    dureeEngagementMois: c.dureeEngagementMois != null ? String(c.dureeEngagementMois) : '',
+    preavisMois: c.preavisMois != null ? String(c.preavisMois) : '',
+    maquetteValideeLe: c.maquetteValideeLe ?? '',
   }
 }
 
@@ -121,6 +129,9 @@ export function ContratEditModal({
         tarifAnnee2Defini: form.tarifAnnee2Defini,
         statut: form.statut,
         version: form.version.trim() || '1.0',
+        dureeEngagementMois: num(form.dureeEngagementMois),
+        preavisMois: num(form.preavisMois),
+        maquetteValideeLe: form.maquetteValideeLe || null,
         notes: form.notes.trim() || null,
         devisId: form.devisId || null,
         devisNumber: form.devisNumber || null,
@@ -129,7 +140,7 @@ export function ContratEditModal({
       if (editId) {
         await updateContrat(editId, payload as Partial<PilotageContrat>)
       } else {
-        const res = await addContrat({ ...payload, ...(createExtra ?? {}) } as Omit<PilotageContrat, 'id' | 'createdAt'>)
+        const res = await addContrat({ suivisPeriodiques: defaultSuivisPeriodiques(), ...payload, ...(createExtra ?? {}) } as Omit<PilotageContrat, 'id' | 'createdAt'>)
         savedId = (res as { id?: string } | undefined)?.id ?? null
       }
       onSaved?.(savedId)
@@ -288,6 +299,27 @@ export function ContratEditModal({
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             <p className="text-[10px] text-gray-400 mt-0.5">reprise par tous les documents générés (devis, cahier des charges, contrats…)</p>
           </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Engagement (mois)</label>
+            <input type="number" inputMode="numeric" step="1" min="0" value={form.dureeEngagementMois} placeholder="12"
+              onChange={(e) => setForm((f) => ({ ...f, dureeEngagementMois: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Préavis (mois)</label>
+            <input type="number" inputMode="numeric" step="1" min="0" value={form.preavisMois} placeholder="2"
+              onChange={(e) => setForm((f) => ({ ...f, preavisMois: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <p className="col-span-2 text-[10px] text-gray-400 -mt-1">Sert au suivi reconduction / préavis (« À suivre »). Vide = défauts 12 mois d'engagement, 2 mois de préavis.</p>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Maquette validée le</label>
+          <input type="date" value={form.maquetteValideeLe} onChange={(e) => setForm((f) => ({ ...f, maquetteValideeLe: e.target.value }))}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <p className="text-[10px] text-gray-400 mt-0.5">Jalon qui gèle le périmètre : au-delà du forfait d'ajustements inclus, les nouvelles demandes passent en « à facturer ». Laisse vide tant que la maquette n'est pas validée.</p>
         </div>
         <div className="flex flex-col gap-2">
           <label className="flex items-center gap-2 text-sm text-gray-700">

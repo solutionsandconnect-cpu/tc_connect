@@ -31,6 +31,7 @@ import { randomUUID } from '@/lib/uuid'
 import { EvolutionEditor, DEFAULT_EVOLUTION } from '@/components/pilotage/EvolutionEditor'
 import { PerimetreEditor, splitPerimetre, type PerimetreItem } from '@/components/pilotage/PerimetreEditor'
 import { FicheNego } from '@/components/pilotage/FicheNego'
+import SuivisPeriodiques from '@/components/pilotage/SuivisPeriodiques'
 import InfraCostEstimator from '@/components/pilotage/InfraCostEstimator'
 import type { PilotageContrat, PilotageDocument, PilotageDocumentType, ChartGraphique, PilotageEstimation, SavedEstimation, DevisEvolution, InfraInputs } from '@/types'
 import {
@@ -47,6 +48,7 @@ const TABS = [
   { key: 'planning', label: 'Planning', essentiel: false },
   { key: 'legal', label: 'Mentions légales', essentiel: false },
   { key: 'taches', label: 'Tâches', essentiel: false },
+  { key: 'suivi', label: 'Suivi', essentiel: false },
   { key: 'apercu', label: 'Aperçu', essentiel: false },
 ] as const
 type TabKey = typeof TABS[number]['key']
@@ -203,7 +205,7 @@ export default function ContratPage() {
     [companies])
   const contrat = useMemo(() => contrats.find((c) => c.id === id) ?? null, [contrats, id])
   // Devis & factures générés depuis ce contrat (lien `contratId`), plus récents d'abord.
-  const { invoices } = useInvoices(currentUser?.uid ?? '')
+  const { invoices, loading: invoicesLoading } = useInvoices(currentUser?.uid ?? '')
   const { items: catalogueItems } = usePilotageCatalogue()
   const contratFactures = useMemo(
     () => invoices.filter((f) => f.contratId === id).sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0)),
@@ -347,6 +349,11 @@ export default function ContratPage() {
     const clientAdresse = cli?.adresseEntreprise || [cli?.adresse, cli?.codePostal, cli?.ville].filter(Boolean).join(', ')
     const clientRepresentant = cli?.representantEntreprise || [cli?.prenom, cli?.nom].filter(Boolean).join(' ').trim()
     const prestaAdresse = [company?.adresse, company?.codePostal, company?.ville].filter(Boolean).join(', ')
+    // Date des documents = celle du DEVIS lié (figée à sa création) → cohérence devis ↔ contrats.
+    // À défaut de devis lié, date du jour. Comme le prix, elle n'est PAS reprise du snapshot sauvegardé.
+    const linkedDevis = invoices.find((f) => f.id === contrat.devisId) ?? invoices.find((f) => f.contratId === contrat.id && f.type === 'devis')
+    const devisTs = linkedDevis ? (linkedDevis.date ?? linkedDevis.createdAt) : null
+    const docDateStr = devisTs?.seconds ? new Date(devisTs.seconds * 1000).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')
     const prefill = defaultLegalFields({
       prestataireNom: company?.nom || 'Solutions & Connect',
       prestataireSiret: company?.siret || '',
@@ -358,7 +365,7 @@ export default function ContratPage() {
       clientAdresse,
       clientSiret: cli?.siret || '',
       clientRepresentant,
-      date: new Date().toLocaleDateString('fr-FR'),
+      date: docDateStr,
       // Prix NET réellement facturé (catalogue − remise) → cohérent avec le devis, pas le tarif catalogue.
       prixCreation: contrat.fraisMiseEnPlace != null ? String(Math.round(contrat.fraisMiseEnPlace * (1 - (contrat.remiseMiseEnPlacePct ?? 0) / 100))) : '',
       prixAbo: contrat.abonnementMensuel != null ? String(Math.round(contrat.abonnementMensuel * (1 - (contrat.remiseAbonnementPct ?? 0) / 100))) : '',
@@ -374,7 +381,7 @@ export default function ContratPage() {
     // ⚠️ prixCreation/prixAbo sont TOUJOURS recalculés du contrat (net, ci-dessus) — on n'applique
     // jamais l'ancien snapshot figé de contrat.legal, sinon un vieux tarif resterait collé au document.
     if (saved) for (const k of Object.keys(saved) as (keyof LegalFields)[]) {
-      if (k === 'prixCreation' || k === 'prixAbo') continue
+      if (k === 'prixCreation' || k === 'prixAbo' || k === 'date') continue   // toujours recalculés (prix net + date du devis)
       if (saved[k]) prefill[k] = saved[k]
     }
     setFormLegal(prefill)
@@ -388,7 +395,7 @@ export default function ContratPage() {
     setHebDepass(contrat.hebergement?.depassement ?? '')
     setBannerMasque(contrat.valeurBannerOverride?.masque ?? false)
     setFormEvolution(contrat.evolution ?? {})
-  }, [contrat, clients, company, settings])
+  }, [contrat, clients, company, settings, invoices])
 
   // Onglet initial depuis ?tab=… (lu côté client pour éviter une frontière Suspense)
   useEffect(() => {
@@ -398,10 +405,10 @@ export default function ContratPage() {
 
   // Hydrate les formulaires une fois le contrat ET les réglages chargés (pour appliquer les défauts légaux)
   useEffect(() => {
-    if (!contrat || settingsLoading || hydratedFor.current === contrat.id) return
+    if (!contrat || settingsLoading || invoicesLoading || hydratedFor.current === contrat.id) return
     resetForms()
     hydratedFor.current = contrat.id
-  }, [contrat, resetForms, settingsLoading])
+  }, [contrat, resetForms, settingsLoading, invoicesLoading])
 
   // Changement d'onglet : retour en lecture seule, on annule les modifications non enregistrées
   const goTab = (k: TabKey) => { setEditing(false); resetForms(); setTab(k) }
@@ -1282,6 +1289,21 @@ export default function ContratPage() {
             {showAjout && <TacheAjoutForm items={formProjet.taches} onChange={(v) => persistProjet({ taches: v })} tauxHoraire={tauxHoraire} />}
             <p className="text-[11px] text-gray-400">Modifie chaque tâche directement dans la liste (statut, Moi/Client, date, facturation, terminée…). Les changements sont enregistrés automatiquement.</p>
             <TachesApercu taches={formProjet.taches} onChange={(v) => persistProjet({ taches: v })} tauxHoraire={tauxHoraire} />
+          </div>
+        )}
+
+        {tab === 'suivi' && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
+              <p className="text-xs text-slate-600">
+                <strong>Suivis récurrents internes</strong> (non montrés au client) : relevé du quota d'utilisateurs, révision tarifaire annuelle… Les échéances qui approchent (≤ 7 j) ou en retard remontent dans le tableau « À suivre » de la page Pilotage et déclenchent un rappel push.
+              </p>
+            </div>
+            <SuivisPeriodiques
+              suivis={contrat?.suivisPeriodiques ?? []}
+              anchor={contrat?.dateDebut?.toDate() ?? contrat?.createdAt?.toDate() ?? new Date()}
+              onChange={(next) => { if (contrat) updateContrat(contrat.id, { suivisPeriodiques: next }).catch((e) => console.error('[suivis persist]', e)) }}
+            />
           </div>
         )}
 

@@ -168,7 +168,7 @@ export default function TripItem({
             />
           ) : (
             <div className="flex items-center gap-1.5 min-w-0">
-              <p className={`text-sm truncate ${done ? 'line-through text-gray-400' : 'text-gray-800 font-medium'}`}>
+              <p className={`text-sm break-words ${done ? 'line-through text-gray-400' : 'text-gray-800 font-medium'}`}>
                 {item.name}
               </p>
               {canEdit && (

@@ -145,6 +145,9 @@ export function buildDevisFromContrat(
   const abo = contrat.abonnementMensuel ?? 0
   const remMS = contrat.remiseMiseEnPlacePct ?? 0   // remise % sur la mise en service
   const remAbo = contrat.remiseAbonnementPct ?? 0   // remise % sur l'abonnement
+  // Engagement / préavis configurables (défauts 12 / 2 mois) — repris dans les modalités du devis ET le suivi « À suivre ».
+  const engMois = contrat.dureeEngagementMois && contrat.dureeEngagementMois > 0 ? contrat.dureeEngagementMois : 12
+  const preMois = contrat.preavisMois && contrat.preavisMois > 0 ? contrat.preavisMois : 2
   if (frais > 0) {
     items.push({
       label: 'Mise en service',
@@ -167,7 +170,7 @@ export function buildDevisFromContrat(
       ...(remAbo > 0 ? { discountType: 'percent' as const, discountValue: remAbo } : {}),
       description:
         contrat.abonnementDesc?.trim() ||
-        'Hébergement, maintenance corrective, support et petites évolutions. Engagement initial de 12 mois, reconductible.',
+        `Hébergement, maintenance corrective, support et petites évolutions. Engagement initial de ${engMois} mois, reconductible.`,
     })
   }
   if (items.length === 0) {
@@ -214,8 +217,8 @@ export function buildDevisFromContrat(
   const modalites: { label: string; value: string }[] = []
   const addMod = (label: string, value?: string) => { if (value && value.trim()) modalites.push({ label, value: value.trim() }) }
   if (frais > 0) addMod('Paiement — mise en service', 'Forfait payable à la mise en service.')
-  if (abo > 0) addMod('Paiement — abonnement', `Mensuel (${fmtEur(abo)}/mois), sur engagement initial de 12 mois. Hébergement & maintenance inclus.`)
-  if (abo > 0) addMod('Reconduction & résiliation', legal?.reconduction?.trim() || "À l'issue de l'engagement initial, reconduction par périodes de 12 mois, sauf résiliation par l'une des parties avec un préavis de 2 mois. Révision tarifaire annuelle possible, communiquée à l'avance.")
+  if (abo > 0) addMod('Paiement — abonnement', `Mensuel (${fmtEur(abo)}/mois), sur engagement initial de ${engMois} mois. Hébergement & maintenance inclus.`)
+  if (abo > 0) addMod('Reconduction & résiliation', legal?.reconduction?.trim() || `À l'issue de l'engagement initial de ${engMois} mois, reconduction par périodes de ${engMois} mois, sauf résiliation par l'une des parties avec un préavis de ${preMois} mois. Révision tarifaire annuelle possible, communiquée à l'avance.`)
   if (abo > 0) {
     const inclus = contrat.hebergement?.utilisateursInclus ?? charte?.usersMax
     const audela = contrat.hebergement?.depassement?.trim()

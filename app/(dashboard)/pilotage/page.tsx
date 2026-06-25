@@ -15,12 +15,13 @@ import InfraCostEstimator from '@/components/pilotage/InfraCostEstimator'
 import EstimateurTarif from '@/components/pilotage/EstimateurTarif'
 import { ContratEditModal, emptyContratForm, type ContratForm } from '@/components/pilotage/ContratEditModal'
 import { featuresToFonctions, type TarifResult } from '@/lib/pilotageEstimateur'
+import { buildSuiviItems } from '@/lib/pilotageSuivi'
 import { randomUUID } from '@/lib/uuid'
 import type { PilotageContrat, PilotageContratStatut, PilotageEstimation } from '@/types'
 import {
   PlusIcon, PencilIcon, TrashIcon, DocumentTextIcon,
   ExclamationTriangleIcon, PresentationChartLineIcon, CalculatorIcon,
-  ArrowDownTrayIcon, CheckIcon, EyeIcon, ComputerDesktopIcon,
+  ArrowDownTrayIcon, CheckIcon, EyeIcon, ComputerDesktopIcon, BellAlertIcon,
 } from '@heroicons/react/24/outline'
 
 // Plafond micro-entreprise (prestations de services / BNC) — à ajuster si le barème change
@@ -166,6 +167,9 @@ export default function PilotagePage() {
       pctProj: Math.min(100, (projection / PLAFOND) * 100),
     }
   }, [contrats, invoices])
+
+  // « À suivre » : relances/échéances dérivées des contrats + devis (CRM phase 1).
+  const suivi = useMemo(() => buildSuiviItems(contrats, invoices), [contrats, invoices])
 
   const alertes = useMemo(() => {
     const out: { tone: 'warn' | 'danger'; text: string }[] = []
@@ -424,6 +428,32 @@ export default function PilotagePage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* À suivre — relances & échéances dérivées des contrats (CRM) */}
+      {suivi.length > 0 && (
+        <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <BellAlertIcon className="w-4 h-4 text-blue-600" />
+            <h2 className="text-sm font-semibold text-gray-700">À suivre</h2>
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">{suivi.length}</span>
+          </div>
+          <div className="space-y-1.5">
+            {suivi.slice(0, 12).map((it) => (
+              <button key={it.key} onClick={() => router.push(`/pilotage/contrat/${it.contratId}${it.tab ? `?tab=${it.tab}` : ''}`)}
+                className="w-full flex items-start gap-2.5 text-left rounded-lg border border-gray-100 hover:border-blue-300 hover:bg-blue-50/40 px-3 py-2 transition">
+                <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${it.tone === 'danger' ? 'bg-red-500' : it.tone === 'warn' ? 'bg-amber-500' : 'bg-blue-400'}`} />
+                <span className="min-w-0 flex-1 text-sm">
+                  <span className="font-medium text-gray-800">{it.clientNom}</span>
+                  <span className="text-gray-400"> — </span>
+                  <span className={it.tone === 'danger' ? 'text-red-700' : 'text-gray-600'}>{it.text}</span>
+                </span>
+                <span className="text-gray-300 shrink-0">›</span>
+              </button>
+            ))}
+          </div>
+          {suivi.length > 12 && <p className="text-[11px] text-gray-400 mt-2">+ {suivi.length - 12} autre{suivi.length - 12 > 1 ? 's' : ''}…</p>}
+        </section>
       )}
 
       {/* Liste des contrats */}

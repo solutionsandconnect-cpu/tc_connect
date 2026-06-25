@@ -354,6 +354,16 @@ export interface SavedEstimation extends PilotageEstimation {
 // Collection : pilotage_contrats (pilotage de l'activité — contrats clients pro)
 export type PilotageContratStatut = 'prospect' | 'actif' | 'pause' | 'termine'
 
+// Suivi périodique récurrent d'un contrat (relevé quota, révision tarifaire…) — Pilotage Phase 2.
+// L'échéance se calcule depuis `dernierFait` (ou la date de début du contrat) + `intervalleMois`.
+export interface SuiviPeriodique {
+  id: string
+  label: string
+  intervalleMois: number    // périodicité en mois
+  dernierFait?: string      // AAAA-MM-JJ ; vide = jamais fait (ancré sur dateDebut/createdAt)
+  note?: string
+}
+
 // Entrées de l'estimateur de coûts d'infra (Firebase) — voir components/pilotage/InfraCostEstimator.tsx
 export interface InfraInputs {
   users: number
@@ -386,6 +396,10 @@ export interface PilotageContrat {
   devisNumber?: string | null   // numéro du devis relié (affichage)
   statut: PilotageContratStatut
   version?: string              // version du projet/contrat (éditable) — reprise par TOUS les documents générés
+  dureeEngagementMois?: number  // durée d'engagement de l'abonnement (mois ; défaut 12) → calcul reconduction/préavis « À suivre »
+  preavisMois?: number          // préavis de non-reconduction (mois ; défaut 2)
+  maquetteValideeLe?: string    // jalon « maquette validée » (AAAA-MM-JJ) → gèle le périmètre + rappel transitoire « À suivre »
+  suivisPeriodiques?: SuiviPeriodique[]  // suivis récurrents (relevé quota, révision tarifaire…) → échéances « À suivre » (Phase 2)
   notes?: string
   projet?: ProjetContent       // contenu projet partagé (rempli une fois, réutilisé par les documents)
   legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)

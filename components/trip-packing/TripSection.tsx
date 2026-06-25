@@ -167,7 +167,7 @@ export default function TripSection({
             />
           ) : (
             <>
-              <h3 className="text-sm font-semibold text-gray-800 truncate">{section.title}</h3>
+              <h3 className="text-sm font-semibold text-gray-800 break-words min-w-0">{section.title}</h3>
               {canEditSection && (
                 <button
                   onClick={e => { e.stopPropagation(); setTitleDraft(section.title); setEditing(true); setConfirmAction(null) }}
