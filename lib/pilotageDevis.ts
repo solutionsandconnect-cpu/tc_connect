@@ -234,10 +234,14 @@ export function buildDevisFromContrat(
   }
   // Valeurs standard, toujours présentes (enrichissent le devis sans ressaisie).
   addMod('Réversibilité des données', 'En fin de contrat, les données sont exportées dans un format réutilisable (CSV / JSON) ; elles restent la propriété du Client.')
-  // Pas d'« hébergement » ici (il est sur le compte du prestataire). Le NOM DE DOMAINE reste au Client
-  // (l'app tourne sur SON domaine) ; on le CONSTATE juste — sa connexion/création est VENDUE via l'option
-  // dédiée (« Création domaine… »), donc on ne re-mentionne pas « en option » ici (évite le doublon).
-  addMod('Prérequis client', "Contenus et données à intégrer (logos, listes, fichiers/exports), le nom de domaine du Client, accès aux éventuels comptes ou outils tiers à connecter, et un référent unique côté Client pour les validations et la recette.")
+  // Nom de domaine : modalité standard (auto sur chaque devis). Par défaut = adresse Vercel incluse ;
+  // domaine personnalisé = OPTIONNEL (au Client) et facturé en sus s'il en veut un. (≠ obligatoire.)
+  addMod('Nom de domaine', "Par défaut, l'application est livrée sur une adresse standard incluse (ex. votre-app.vercel.app). Un nom de domaine personnalisé (au nom du Client) est optionnel : sa fourniture est à la charge du Client, et sa connexion à l'application — ou la création d'un nouveau domaine — est réalisée par le Prestataire et facturée en sus.")
+  // E-mails : standard (Firebase) inclus ; e-mails brandés (auth. du domaine) ou service d'emailing dédié
+  // (SendGrid/Resend) = facturés en sus, compte tiers au nom du Client (coûts d'usage à sa charge).
+  addMod('Envoi d\'e-mails', "Par défaut, les e-mails transactionnels (réinitialisation de mot de passe, vérification de compte…) sont envoyés depuis une adresse standard, incluse. Les envoyer depuis le domaine du Client (authentification du domaine), et/ou intégrer un service d'e-mailing dédié (SendGrid, Resend…), sont optionnels et facturés en sus ; le compte du service tiers est ouvert au nom du Client, ses coûts d'usage restant à sa charge.")
+  // Hébergement non listé (il est sur le compte du prestataire) ; domaine & e-mails traités dans les modalités ci-dessus.
+  addMod('Prérequis client', "Contenus et données à intégrer (logos, listes, fichiers/exports), accès aux éventuels comptes ou outils tiers à connecter, et un référent unique côté Client pour les validations et la recette.")
   if (abo > 0) addMod('Garantie & support', "Correction des anomalies incluse pendant toute la durée de l'abonnement.")
   addMod('Validité', 'Devis valable 30 jours ; prix nets de TVA (TVA non applicable, art. 293 B du CGI) ; révisable si le périmètre ou les hypothèses évoluent.')
 
