@@ -25,7 +25,7 @@ import { defaultProjetContent, DEFAULT_PLANNING_ETAPES, DEFAULT_PLANNING_TEMPLAT
 import { StringListEditor, FonctionsEditor, PlanningEditor, TacheAjoutForm, TachesApercu, PlanningApercu, ProjetApercu, tauxHoraireFromTjm, prixFacture, estEnRetard } from '@/components/pilotage/ProjetUI'
 import { CharteEditor, CharteApercu, defaultCharte } from '@/components/pilotage/CharteUI'
 import EstimateurTarif from '@/components/pilotage/EstimateurTarif'
-import { computeTarif, stateFromEstimation, fmtEur, featuresToFonctions, type TarifResult } from '@/lib/pilotageEstimateur'
+import { computeTarif, stateFromEstimation, fmtEur, featuresToFonctions, fonctionsToFeatures, type TarifResult } from '@/lib/pilotageEstimateur'
 import { usePilotageCatalogue } from '@/hooks/usePilotageCatalogue'
 import { randomUUID } from '@/lib/uuid'
 import { EvolutionEditor, DEFAULT_EVOLUTION } from '@/components/pilotage/EvolutionEditor'
@@ -515,11 +515,29 @@ export default function ContratPage() {
   // Synchronise les Fonctionnalités du projet DEPUIS le calculateur (briques de l'estimation
   // sélectionnée) : catégorie = groupe catalogue, description = libellé client (sinon nom).
   const [foncSynced, setFoncSynced] = useState(false)
+  const [foncPushed, setFoncPushed] = useState(false)
   const syncFonctionsFromCalc = async () => {
     const selEst = contrat?.estimations?.find((e) => e.id === estSelectedId) ?? contrat?.estimations?.[0] ?? contrat?.estimation
     if (!selEst?.features?.length) return
     await persistProjet({ fonctionnalites: featuresToFonctions(selEst.features, catalogueItems) })
     setFoncSynced(true); setTimeout(() => setFoncSynced(false), 2000)
+  }
+  // Push inverse : copie les Fonctionnalités du projet DANS l'estimation sélectionnée (briques du calculateur).
+  // Préserve nom/durée des briques dont le libellé matche ; nouvelles en taille 'm'. Visible au prochain
+  // affichage du calculateur (il s'hydrate depuis l'estimation enregistrée).
+  const pushFonctionsToCalc = async () => {
+    if (!contrat) return
+    const ests = contrat.estimations ?? []
+    const sel = ests.find((e) => e.id === estSelectedId) ?? ests[0] ?? contrat.estimation
+    if (!sel) return  // pas d'estimation cible : créer un chiffrage d'abord depuis l'onglet Calculateur
+    const existingAsFeatures = (sel.features ?? []).map((e, i) => ({ id: String(i), ...e }))
+    const newFeatures = fonctionsToFeatures(formProjet.fonctionnalites, existingAsFeatures).map(({ id: _id, ...rest }) => rest)
+    const updatedEst = { ...sel, features: newFeatures }
+    const patch = ests.some((e) => e.id === sel.id)
+      ? { estimations: ests.map((e) => (e.id === sel.id ? updatedEst : e)) }
+      : { estimation: updatedEst }
+    try { await updateContrat(contrat.id, patch as Partial<PilotageContrat>); setFoncPushed(true); setTimeout(() => setFoncPushed(false), 2000) }
+    catch (e) { console.error('[push fonctions→calc]', e) }
   }
 
   // Migration douce : ancienne estimation unique → liste (une seule fois)
@@ -894,6 +912,7 @@ export default function ContratPage() {
                   initial={estSeed}
                   defaults={settings}
                   projetFonctions={formProjet.fonctionnalites}
+                  onCopyToFonctions={(feats) => persistProjet({ fonctionnalites: featuresToFonctions(feats, catalogueItems) })}
                   onChange={(est, t) => setEstLive({ est, tarif: t })}
                   footer={(
                     <div className="mt-3 flex items-center gap-2">
@@ -970,15 +989,22 @@ export default function ContratPage() {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                 </div>
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-1">
+                  <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                     <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Fonctionnalités</p>
-                    <button type="button" onClick={syncFonctionsFromCalc}
-                      title="Remplace la liste par les briques du calculateur (avec leur libellé client si renseigné)"
-                      className="flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 transition shrink-0">
-                      <ArrowDownTrayIcon className="w-3.5 h-3.5" /> {foncSynced ? '✓ Synchronisé' : 'Synchroniser depuis le calculateur'}
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button type="button" onClick={syncFonctionsFromCalc}
+                        title="Remplace cette liste par les briques du calculateur (catégorie + libellé client + durée)"
+                        className="text-[11px] font-medium text-blue-600 hover:text-blue-800 transition shrink-0">
+                        {foncSynced ? '✓ Repris' : '↓ Reprendre du calculateur'}
+                      </button>
+                      <button type="button" onClick={pushFonctionsToCalc}
+                        title="Copie ces fonctionnalités dans les briques du calculateur (durée moyenne par défaut pour les nouvelles, à rechiffrer)"
+                        className="text-[11px] font-medium text-emerald-700 hover:text-emerald-900 transition shrink-0">
+                        {foncPushed ? '✓ Copié' : '↑ Copier vers le calculateur'}
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-gray-400 mb-2">Ce que l'app <em>fait</em>. Édite ici librement, ou clique <strong>« Synchroniser »</strong> pour reprendre les <strong>briques du calculateur</strong> (avec leur libellé client).</p>
+                  <p className="text-[11px] text-gray-400 mb-2">Ce que l'app <em>fait</em>. Édite ici, ou échange avec le <strong>calculateur</strong> dans les deux sens (les boutons à droite).</p>
                   <FonctionsEditor items={formProjet.fonctionnalites} onChange={(v) => updP({ fonctionnalites: v })} />
                 </div>
                 <div>

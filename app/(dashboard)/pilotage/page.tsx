@@ -80,7 +80,10 @@ export default function PilotagePage() {
     setSeedEst(c.estimation)
     setSeedNonce((n) => n + 1)   // déclenche la ré-hydratation du composant
     setLinkedContrat(c)
-    setTimeout(() => estimateurRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+    setTimeout(() => {
+      if (estimateurRef.current) estimateurRef.current.open = true   // ouvre le calculateur (réduit par défaut)
+      estimateurRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 50)
   }
   const updateLinkedContrat = async () => {
     if (!linkedContrat || !live) return
@@ -249,7 +252,7 @@ export default function PilotagePage() {
       </div>
 
       {/* Estimateur de tarif (création sur-mesure) */}
-      <details ref={estimateurRef} open className="group bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <details ref={estimateurRef} className="group bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
         <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-semibold text-gray-700">
           <span className="inline-block transition group-open:rotate-90 text-gray-400">▸</span>
           <CalculatorIcon className="w-4 h-4 text-blue-600" /> Estimateur de tarif (création sur-mesure)
@@ -296,7 +299,7 @@ export default function PilotagePage() {
       </details>
 
       {/* Analyse inversée — d'un contrat déjà signé vers le taux réalisé */}
-      <details open className="group bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <details className="group bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
         <summary className="cursor-pointer list-none flex items-center gap-2 text-sm font-semibold text-gray-700">
           <span className="inline-block transition group-open:rotate-90 text-gray-400">▸</span>
           <CalculatorIcon className="w-4 h-4 text-emerald-600" /> Analyse d'un contrat signé (calcul inversé)

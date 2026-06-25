@@ -19,9 +19,10 @@ interface Props {
   onChange?: (estimation: PilotageEstimation, tarif: TarifResult) => void
   footer?: React.ReactNode                 // boutons d'action spécifiques à la page
   projetFonctions?: { categorie?: string; description: string }[]  // Fonctionnalités du projet → bouton « Reprendre »
+  onCopyToFonctions?: (features: Feature[]) => void                 // push briques → Fonctionnalités du projet
 }
 
-export default function EstimateurTarif({ initial, seedNonce, defaults, onChange, footer, projetFonctions }: Props) {
+export default function EstimateurTarif({ initial, seedNonce, defaults, onChange, footer, projetFonctions, onCopyToFonctions }: Props) {
   const init = useRef<EstimateurState>(initial ? stateFromEstimation(initial) : DEFAULT_ESTIMATEUR_STATE).current
 
   const [mode, setMode] = useState<'metier' | 'revente'>(init.mode)
@@ -234,7 +235,14 @@ export default function EstimateurTarif({ initial, seedNonce, defaults, onChange
             <button type="button" onClick={() => setFeatures((cur) => fonctionsToFeatures(projetFonctions, cur))}
               title="Remplace les briques par les Fonctionnalités du Contenu projet (taille moyenne par défaut pour les nouvelles, à rechiffrer)"
               className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 px-2 py-1 rounded-lg transition">
-              <PlusIcon className="w-3.5 h-3.5" /> Reprendre les fonctionnalités du projet
+              <PlusIcon className="w-3.5 h-3.5" /> ↓ Reprendre du projet
+            </button>
+          )}
+          {onCopyToFonctions && features.some((f) => (f.description?.trim() || f.nom.trim())) && (
+            <button type="button" onClick={() => onCopyToFonctions(features)}
+              title="Copie ces briques dans les Fonctionnalités du Contenu projet (catégorie + libellé client + durée)"
+              className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 px-2 py-1 rounded-lg transition">
+              <PlusIcon className="w-3.5 h-3.5" /> ↑ Copier vers les fonctionnalités
             </button>
           )}
           <button type="button" onClick={() => setShowCatalogue((v) => !v)}
