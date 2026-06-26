@@ -718,6 +718,8 @@ export interface Client {
   napCategorie?: string
   // Commercial
   statut?: 'Prospect' | 'Actif' | 'Inactif'
+  pipelineStage?: 'nouveau' | 'contacte' | 'rdv' | 'devis' | 'nego' | 'signe' | 'perdu'  // étape du pipeline de vente (prospects)
+  pipelineUpdatedAt?: Timestamp   // dernier changement d'étape (tri / « dernier contact »)
   commentConnuCoach?: string
   // Entreprise
   siret?: string

@@ -96,7 +96,7 @@ export function legalFieldGroups(type: PilotageDocumentType): LegalFieldGroup[] 
     { titre: 'Droits concédés', champs: [
       { key: 'etendueDroits', label: 'Étendue', placeholder: "ex : licence d'utilisation / cession exclusive" },
       { key: 'exclusivite', label: 'Exclusivité', placeholder: 'exclusive / non exclusive' },
-      { key: 'territoire', label: 'Territoire', placeholder: 'ex : France / monde entier' },
+      { key: 'territoire', label: 'Territoire', placeholder: 'ex : Monde entier (app accessible en ligne)' },
       { key: 'duree', label: 'Durée', placeholder: "ex : durée des droits d'auteur" },
       { key: 'prixCreation', label: 'Rémunération / prix (€)' },
       { key: 'prixAbo', label: 'Redevance mensuelle (€)' },
@@ -138,7 +138,7 @@ export function legalFieldGroupsAll(): LegalFieldGroup[] {
       champs: [
         { key: 'etendueDroits', label: 'Étendue', placeholder: "licence d'utilisation / cession exclusive", help: "Simple droit d'usage, ou cession complète des droits au client." },
         { key: 'exclusivite', label: 'Exclusivité', placeholder: 'exclusive / non exclusive', help: 'Non exclusive = tu peux revendre l’app à d’autres clients.' },
-        { key: 'territoire', label: 'Territoire', placeholder: 'ex : France / monde entier', help: 'Où le client peut exploiter l’app.' },
+        { key: 'territoire', label: 'Territoire', placeholder: 'ex : Monde entier (app accessible en ligne)', help: "Zone où le client peut exploiter l'app (≠ droit applicable, qui lui reste le droit français). Une app en ligne = « Monde entier » ; ne restreins (ex. France) que pour une revente/marque blanche limitée à un pays." },
       ],
     },
   ]

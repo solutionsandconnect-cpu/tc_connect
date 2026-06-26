@@ -30,6 +30,7 @@ import ClientEditModal from "@/components/ui/ClientEditModal";
 import { AbonnementModal } from "@/components/ui/AbonnementModal";
 import { buildWhatsAppUrl } from "@/components/ui/PhoneInput";
 import { useAbonnementsByClientId } from "@/hooks/useAbonnementsByClientId";
+import PipelineBoard, { type PipelineStage } from "@/components/clients/PipelineBoard";
 
 // ── Constantes planning ───────────────────────────────────────────────────────
 const TYPES_RDV_CLIENTS = [
@@ -1574,6 +1575,7 @@ export default function ClientsPage() {
   const [showBannerDetail, setShowBannerDetail] = useState(false);
   const [search, setSearch] = useState("");
   const [filterActif, setFilterActif] = useState<"all" | "actif" | "inactif">("all");
+  const [view, setView] = useState<"liste" | "pipeline">("liste");
   const [filterAbo, setFilterAbo] = useState<"incomplet" | "a-renouveler" | "sans-abo" | "abo-actif" | "prospect" | null>(null);
   const [filterCategorie, setFilterCategorie] = useState("");
   const [filterCompanyId, setFilterCompanyId] = useState("");
@@ -1708,6 +1710,15 @@ export default function ClientsPage() {
 
   if (!userProfile || !isAdmin) return null;
 
+  // Déplace un prospect dans le pipeline (drag ou select). Le statut suit l'étape :
+  // « Signé » → Actif, « Perdu » → Inactif, autres étapes → Prospect.
+  const movePipeline = async (client: Client, stage: PipelineStage) => {
+    const statut = stage === "signe" ? "Actif" : stage === "perdu" ? "Inactif" : "Prospect";
+    try {
+      await updateClient(client.id, { pipelineStage: stage, statut, pipelineUpdatedAt: Timestamp.now() });
+    } catch (e) { console.error("[pipeline move]", e); }
+  };
+
   return (
     <div className="min-h-screen">
       {/* HEADER */}
@@ -1716,9 +1727,19 @@ export default function ClientsPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Clients</h1>
           <p className="text-sm text-gray-500 mt-0.5">{clients.length} client{clients.length !== 1 ? "s" : ""}</p>
         </div>
-        <button onClick={() => setClientModal({ open: true, editing: null, isSC: false })} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition">
-          + Nouveau client
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border bg-white overflow-hidden">
+            {(["liste", "pipeline"] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)}
+                className={`px-3 py-2 text-sm font-medium transition ${view === v ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}>
+                {v === "liste" ? "Liste" : "Pipeline"}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setClientModal({ open: true, editing: null, isSC: false })} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition">
+            + Nouveau client
+          </button>
+        </div>
       </div>
 
       {/* FILTRES */}
@@ -1740,6 +1761,7 @@ export default function ClientsPage() {
             ))}
           </div>
         </div>
+        {view === "liste" && (<>
         <div className="flex gap-1.5 flex-wrap items-center">
           {([
             { key: "abo-actif",    label: "Abo actif",        on: "bg-green-600 text-white",  off: "bg-white border text-gray-600 hover:bg-gray-50" },
@@ -1779,10 +1801,11 @@ export default function ClientsPage() {
             </button>
           )}
         </div>
+        </>)}
       </div>
 
       {/* ALERTE ABONNEMENTS EXPIRANT */}
-      {filteredExpiringAbos.length > 0 && (() => {
+      {view === "liste" && filteredExpiringAbos.length > 0 && (() => {
         const now = Date.now();
         const overdue = filteredExpiringAbos.filter((a) => (a.dateFin as any).toMillis() < now);
         const soon = filteredExpiringAbos.filter((a) => (a.dateFin as any).toMillis() >= now);
@@ -1833,7 +1856,18 @@ export default function ClientsPage() {
         );
       })()}
 
+      {/* PIPELINE (Kanban des prospects) */}
+      {view === "pipeline" && (
+        <PipelineBoard
+          clients={clients}
+          search={search}
+          onOpen={(c) => setClientModal({ open: true, editing: c, isSC: false })}
+          onMove={movePipeline}
+        />
+      )}
+
       {/* LISTE */}
+      {view === "liste" && (<>
       <div className="flex justify-end mb-1.5">
         <button onClick={() => setCollapseAllTick((t) => t + 1)} className="text-xs text-gray-400 hover:text-gray-600 transition underline">
           Tout réduire
@@ -1865,6 +1899,7 @@ export default function ClientsPage() {
           />
         ))}
       </div>
+      </>)}
 
       <ClientEditModal
         client={clientModal.editing}
