@@ -28,6 +28,7 @@ import EstimateurTarif from '@/components/pilotage/EstimateurTarif'
 import { computeTarif, stateFromEstimation, fmtEur, featuresToFonctions, fonctionsToFeatures, type TarifResult } from '@/lib/pilotageEstimateur'
 import { usePilotageCatalogue } from '@/hooks/usePilotageCatalogue'
 import { randomUUID } from '@/lib/uuid'
+import { copyText } from '@/lib/clipboard'
 import { EvolutionEditor, DEFAULT_EVOLUTION } from '@/components/pilotage/EvolutionEditor'
 import { PerimetreEditor, splitPerimetre, type PerimetreItem } from '@/components/pilotage/PerimetreEditor'
 import { FicheNego } from '@/components/pilotage/FicheNego'
@@ -252,6 +253,27 @@ export default function ContratPage() {
 
   const [tab, setTab] = useState<TabKey>('documents')
   const [editing, setEditing] = useState(false)
+  // Espace client (portail public par lien)
+  const [portalCopied, setPortalCopied] = useState(false)
+  const portalLink = (typeof window !== 'undefined' && contrat?.portalToken)
+    ? `${window.location.origin}/espace/${contrat.portalToken}` : ''
+  const activatePortal = () => {
+    if (!contrat) return
+    updateContrat(contrat.id, { portalToken: randomUUID().replace(/-/g, '') } as Partial<PilotageContrat>)
+      .catch((e) => console.error('[portail activer]', e))
+  }
+  const regeneratePortal = () => {
+    if (!contrat) return
+    if (!confirm('Régénérer le lien ? L\'ancien lien cessera de fonctionner immédiatement.')) return
+    updateContrat(contrat.id, { portalToken: randomUUID().replace(/-/g, '') } as Partial<PilotageContrat>)
+      .catch((e) => console.error('[portail régénérer]', e))
+  }
+  const copyPortalLink = async () => {
+    if (!portalLink) return
+    const ok = await copyText(portalLink)
+    if (ok) { setPortalCopied(true); setTimeout(() => setPortalCopied(false), 2000) }
+    else window.prompt('Copiez le lien ci-dessous :', portalLink)
+  }
   const [formProjet, setFormProjet] = useState<ProjetContent>(defaultProjetContent())
   const [formLegal, setFormLegal] = useState<LegalFields>(defaultLegalFields())
   const [formCharte, setFormCharte] = useState<ChartGraphique>(defaultCharte())
@@ -719,6 +741,50 @@ export default function ContratPage() {
                 </div>
               </details>
             </div>
+
+            {/* Espace client : lien public où le client consulte et signe ses devis (portail /espace/[token]) */}
+            <div className="border border-gray-200 rounded-xl p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-gray-600">Espace client (lien à partager)</p>
+                {contrat.portalToken && (
+                  <button onClick={regeneratePortal}
+                    title="Génère un nouveau lien et révoque l'ancien"
+                    className="text-[11px] font-medium text-gray-500 hover:text-red-600 transition shrink-0">
+                    Régénérer
+                  </button>
+                )}
+              </div>
+              {!contrat.portalToken ? (
+                <>
+                  <p className="text-[11px] text-gray-400">
+                    Activez un lien sécurisé que le client ouvre sans compte pour consulter et <strong>signer son devis en ligne</strong>. Vous serez notifié à la signature.
+                  </p>
+                  <button onClick={activatePortal}
+                    className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">
+                    Activer l'espace client
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="bg-white border border-blue-100 rounded-lg px-3 py-2 flex items-center gap-2">
+                    <p className="text-xs text-gray-600 truncate flex-1">{portalLink}</p>
+                    <button onClick={copyPortalLink}
+                      className="text-xs font-semibold text-blue-700 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition shrink-0">
+                      {portalCopied ? 'Copié !' : 'Copier'}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <a href={`sms:?body=${encodeURIComponent(`Voici le lien pour consulter et signer votre devis : ${portalLink}`)}`}
+                      className="text-xs font-medium text-blue-700 border border-blue-300 bg-white hover:bg-blue-50 px-3 py-1.5 rounded-lg transition">SMS</a>
+                    <a href={`https://wa.me/?text=${encodeURIComponent(`Voici le lien pour consulter et signer votre devis : ${portalLink}`)}`} target="_blank" rel="noopener noreferrer"
+                      className="text-xs font-medium text-green-700 border border-green-300 bg-white hover:bg-green-50 px-3 py-1.5 rounded-lg transition">WhatsApp</a>
+                    <a href={`mailto:?subject=${encodeURIComponent('Votre devis')}&body=${encodeURIComponent(`Bonjour,\n\nVous pouvez consulter et signer votre devis via ce lien :\n${portalLink}\n\nBien à vous.`)}`}
+                      className="text-xs font-medium text-gray-700 border border-gray-300 bg-white hover:bg-gray-50 px-3 py-1.5 rounded-lg transition">Email</a>
+                  </div>
+                </>
+              )}
+            </div>
+
             {availableDocTypes.length === 0 ? (
               <p className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
                 Tous les types de documents ont été créés pour ce contrat. Chaque document n'existe qu'en un seul exemplaire (modifie-le ou régénère son PDF ci-dessous).

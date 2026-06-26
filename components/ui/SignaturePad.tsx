@@ -7,13 +7,16 @@ interface Props {
   subtitle?: string
   onConfirm: (dataUrl: string) => void
   onCancel: () => void
+  consentLabel?: string   // si fourni, une case à cocher (ex. « Bon pour accord ») devient obligatoire avant de confirmer
+  busy?: boolean          // envoi en cours → désactive les boutons (anti double-clic / double-envoi)
 }
 
 // Pavé de signature réutilisable (dessin ou import d'image). Renvoie un dataURL PNG.
-export default function SignaturePad({ title = 'Signature', subtitle = 'Dessinez ci-dessous ou importez une image de signature.', onConfirm, onCancel }: Props) {
+export default function SignaturePad({ title = 'Signature', subtitle = 'Dessinez ci-dessous ou importez une image de signature.', onConfirm, onCancel, consentLabel, busy = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [drawing, setDrawing] = useState(false)
   const [hasStroke, setHasStroke] = useState(false)
+  const [consent, setConsent] = useState(false)
   const lastPos = useRef<{ x: number; y: number } | null>(null)
 
   const getPos = (e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) => {
@@ -115,14 +118,25 @@ export default function SignaturePad({ title = 'Signature', subtitle = 'Dessinez
             <input type="file" accept="image/*" className="hidden" onChange={importFile} />
           </label>
         </div>
+        {consentLabel && (
+          <label className="flex items-start gap-2.5 mt-4 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 shrink-0"
+            />
+            <span className="text-xs text-gray-700 leading-relaxed">{consentLabel}</span>
+          </label>
+        )}
         <div className="flex gap-2 mt-4">
-          <button onClick={onCancel} className="flex-1 border rounded-lg py-2.5 text-sm text-gray-600 hover:bg-gray-100 transition">Annuler</button>
+          <button onClick={onCancel} disabled={busy} className="flex-1 border rounded-lg py-2.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-40 transition">Annuler</button>
           <button
-            onClick={() => { const c = canvasRef.current; if (c && hasStroke) onConfirm(c.toDataURL('image/png')) }}
-            disabled={!hasStroke}
+            onClick={() => { const c = canvasRef.current; if (c && hasStroke && (!consentLabel || consent) && !busy) onConfirm(c.toDataURL('image/png')) }}
+            disabled={busy || !hasStroke || (!!consentLabel && !consent)}
             className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-lg py-2.5 text-sm font-semibold transition"
           >
-            ✓ Confirmer la signature
+            {busy ? 'Signature en cours…' : '✓ Confirmer la signature'}
           </button>
         </div>
       </div>

@@ -12,7 +12,7 @@ import {
   DocumentTextIcon, ArrowRightOnRectangleIcon,
   BuildingOfficeIcon, UserGroupIcon, DocumentDuplicateIcon,
   ShieldCheckIcon, ChatBubbleLeftRightIcon, FolderOpenIcon,
-  ShoppingBagIcon, FireIcon, PresentationChartLineIcon,
+  ShoppingBagIcon, FireIcon, PresentationChartLineIcon, FolderIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeSolid, CalendarIcon as CalendarSolid,
@@ -205,6 +205,26 @@ export default function Navbar() {
               </div>
             )
           })}
+
+          {/* Espace client (compte rattaché à une fiche client Pilotage) */}
+          {userProfile?.linkedClientId && (
+            <div>
+              <div className="px-3 mb-1">
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Espace client</span>
+              </div>
+              <div className="space-y-0.5">
+                <button
+                  onClick={() => router.push('/mon-espace')}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                    pathname.startsWith('/mon-espace') ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <FolderIcon className="w-5 h-5 shrink-0" />
+                  Mon espace
+                </button>
+              </div>
+            </div>
+          )}
         </nav>
 
         {/* Déconnexion */}

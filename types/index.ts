@@ -47,6 +47,7 @@ export interface User {
   actif: boolean
   role_app: RoleApp
   droits?: Droits
+  linkedClientId?: string   // si ce compte est rattaché à une fiche client (espace client Pilotage)
   // Contact d'urgence (éditable depuis le profil)
   contactUrgenceNom?: string
   contactUrgenceTel?: string
@@ -400,6 +401,7 @@ export interface PilotageContrat {
   preavisMois?: number          // préavis de non-reconduction (mois ; défaut 2)
   maquetteValideeLe?: string    // jalon « maquette validée » (AAAA-MM-JJ) → gèle le périmètre + rappel transitoire « À suivre »
   suivisPeriodiques?: SuiviPeriodique[]  // suivis récurrents (relevé quota, révision tarifaire…) → échéances « À suivre » (Phase 2)
+  portalToken?: string | null   // jeton d'accès à l'espace client public (/espace/[token]) — généré à la demande, régénérable = révocation
   notes?: string
   projet?: ProjetContent       // contenu projet partagé (rempli une fois, réutilisé par les documents)
   legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)

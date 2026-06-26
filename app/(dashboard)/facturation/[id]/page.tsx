@@ -10,7 +10,7 @@ import {
 import { getCompany, listenCompanies } from "@/lib/companyService";
 import { getClient, updateClient } from "@/lib/clientService";
 import { downloadInvoicePDF, generateInvoicePDFBlob, itemNetTotal } from "@/lib/invoicePdf";
-import { uploadBlob } from "@/lib/uploadImage";
+import { uploadBlob, deleteImage } from "@/lib/uploadImage";
 import { buildInvoiceEmailText } from "@/lib/invoiceEmailTemplate";
 import { Timestamp } from "firebase/firestore";
 import type { Facture, FactureItem, FactureStatus, Echeance, EcheanceRef, Company, Client } from "@/types";
@@ -602,6 +602,23 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
     }
   };
 
+  // Annule la signature → le devis redevient signable par le client (rétractation / modification).
+  const handleUnsign = async () => {
+    if (!facture) return;
+    if (!confirm("Annuler la signature ?\n\nLe devis redeviendra signable par le client (utile s'il se rétracte ou si le devis doit être modifié).")) return;
+    try {
+      const oldUrl = facture.signatureUrl;
+      await updateFacture(id, { signed: false, status: "sent", signatureUrl: "" });
+      setFacture((p) => p ? { ...p, signed: false, status: "sent", signatureUrl: "" } : null);
+      // Supprime aussi le fichier de signature du Storage (signature admin = .png ;
+      // signature via le portail = data URL, déjà retirée du document → rien à supprimer).
+      if (oldUrl && oldUrl.startsWith("http")) await deleteImage(oldUrl);
+      showToast("Signature annulée — le devis est de nouveau signable.");
+    } catch {
+      showToast("Erreur lors de l'annulation", false);
+    }
+  };
+
   const handleUploadAndShare = async () => {
     if (!facture) return;
     setPdfUploading(true);
@@ -851,6 +868,12 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
           {isDevis && !facture.signed && (
             <button onClick={() => setSignModal(true)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition">
               ✍ Signer le devis
+            </button>
+          )}
+
+          {isDevis && facture.signed && (
+            <button onClick={handleUnsign} className="px-3 py-2 border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg text-sm font-medium transition">
+              ↩ Annuler la signature
             </button>
           )}
 
