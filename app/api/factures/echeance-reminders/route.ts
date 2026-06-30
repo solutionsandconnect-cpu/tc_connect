@@ -4,9 +4,12 @@ import { getAdminDb } from '@/lib/firebaseAdmin'
 const CRON_SECRET = process.env.CRON_SECRET
 
 /**
- * Rappels « facture à émettre » pour l'admin propriétaire du devis.
+ * Rappels « facture à émettre » pour les admins.
  * Pour chaque échéance d'un devis accepté non encore facturée, envoie une
  * notification (push + section Notifications) à J-3, J-1 et le jour J (J-0).
+ * Diffusé à tous les admins (toAdmins) — même ciblage robuste que les crons
+ * pilotage/espace ; le ciblage par userId du propriétaire ratait le push si
+ * l'abonnement n'était pas exactement rangé sous cet uid.
  */
 async function runReminders(req: Request) {
   const auth = req.headers.get('authorization')
@@ -59,7 +62,7 @@ async function runReminders(req: Request) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userId: ownerId,
+            toAdmins: true,
             title: '🧾 Facture à émettre',
             body: `${client} · ${label}${montant} — échéance ${when}.`,
             url: '/facturation?tab=devis',
