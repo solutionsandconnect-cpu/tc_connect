@@ -1400,12 +1400,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
               </>
             ) : (
               isSessionPastForLock
-                ? (questionnaireRempli ? (
-                    <button onClick={() => setShowQuestionnaireModal(true)}
-                      className="text-xs text-gray-500 border border-gray-200 px-3 py-1.5 rounded-lg transition">
-                      Voir
-                    </button>
-                  ) : null)
+                ? null
                 : (
                   <button onClick={openQuestionnaireDirect}
                     className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
