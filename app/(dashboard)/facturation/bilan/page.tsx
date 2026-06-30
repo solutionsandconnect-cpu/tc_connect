@@ -90,7 +90,12 @@ export default function BilanUrssafPage() {
     } else {
       data.dateReglement = newVal ? Timestamp.now() : null;
     }
-    await upsertUrssafPeriode(currentUser.uid, annee, mois, data as Parameters<typeof upsertUrssafPeriode>[3]);
+    try {
+      await upsertUrssafPeriode(currentUser.uid, annee, mois, data as Parameters<typeof upsertUrssafPeriode>[3]);
+    } catch (e) {
+      console.error("URSSAF toggleField échec", e);
+      alert("Impossible d'enregistrer : " + ((e as Error)?.message ?? e));
+    }
   }
 
   async function saveTaux(mois: number) {
@@ -100,7 +105,12 @@ export default function BilanUrssafPage() {
       return;
     }
     if (currentUser) {
-      await upsertUrssafPeriode(currentUser.uid, annee, mois, { taux: parsed });
+      try {
+        await upsertUrssafPeriode(currentUser.uid, annee, mois, { taux: parsed });
+      } catch (e) {
+        console.error("URSSAF saveTaux échec", e);
+        alert("Impossible d'enregistrer le taux : " + ((e as Error)?.message ?? e));
+      }
     }
     setEditingMois(null);
   }
