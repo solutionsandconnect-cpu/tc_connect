@@ -906,6 +906,7 @@ export interface Facture {
   signed?: boolean                  // Devis signé électroniquement
   signedAt?: Timestamp
   signatureUrl?: string              // URL Firebase Storage de l'image de signature
+  signToken?: string | null          // jeton d'accès au lien public de signature (/signer-devis/[token]) — généré à la demande, régénérable = révocation
   pdfUrl?: string                    // URL Firebase Storage du PDF généré
   convertedToFactureId?: string      // Facture créée depuis ce devis (legacy single)
   convertedToFactureIds?: string[]   // Toutes les factures créées depuis ce devis

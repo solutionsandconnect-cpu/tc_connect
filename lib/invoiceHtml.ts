@@ -108,6 +108,7 @@ function buildStyle(primary: string): string {
   .invpdf .logo{display:inline-flex;align-items:center;gap:10px;font-weight:800;font-size:19px;letter-spacing:.3px}
   .invpdf .logo .mark{width:34px;height:34px;border-radius:8px;background:var(--pri);color:#fff;
     display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;overflow:hidden}
+  .invpdf .logo .mark.has-img{border-radius:50%;background:transparent}
   .invpdf .logo .mark img{width:100%;height:100%;object-fit:contain}
   .invpdf .brand .sub{color:var(--muted);font-size:11.5px;margin-top:2px}
   .invpdf .doc-meta{text-align:right;flex-shrink:0}
@@ -317,7 +318,7 @@ export function buildInvoiceHtml(
   // ── En-tête ──────────────────────────────────────────────
   const companyName = company?.nom ?? "Solutions & Connect";
   const mark = assets.logoDataUrl
-    ? `<span class="mark"><img src="${assets.logoDataUrl}" alt=""/></span>`
+    ? `<span class="mark has-img"><img src="${assets.logoDataUrl}" alt=""/></span>`
     : `<span class="mark">${esc((companyName[0] ?? "S").toUpperCase())}</span>`;
   // (Contact / SIRET / TVA déplacés dans la carte « Prestataire » ci-dessous.)
   const statusChip = (() => {

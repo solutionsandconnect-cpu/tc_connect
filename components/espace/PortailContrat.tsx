@@ -119,12 +119,12 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
     () => data.devis.find((d) => d.id === selectedDevisId) ?? null,
     [data, selectedDevisId]
   )
-  const previewHtml = useMemo(() => {
-    if (!selectedDevis) return ''
+  const preview = useMemo(() => {
+    if (!selectedDevis) return { mainHtml: '', cgvHtml: null as string | null }
     return buildInvoiceHtml(selectedDevis, data.company ?? null, {
       logoDataUrl: data.company?.logoUrl ?? null,
       signatureDataUrl: selectedDevis.signatureUrl ?? null,
-    }).mainHtml
+    })
   }, [selectedDevis, data])
 
   const canSign = !!selectedDevis && !selectedDevis.signed
@@ -264,9 +264,13 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
                     </div>
                   </div>
 
-                  <div className="bg-gray-100 rounded-2xl border border-gray-200 p-3 sm:p-6 overflow-x-auto">
+                  <div className="bg-gray-100 rounded-2xl border border-gray-200 p-3 sm:p-6 overflow-x-auto space-y-4">
                     <div className="w-max mx-auto bg-white shadow-lg rounded-sm overflow-hidden"
-                      dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                      dangerouslySetInnerHTML={{ __html: preview.mainHtml }} />
+                    {preview.cgvHtml && (
+                      <div className="w-max mx-auto bg-white shadow-lg rounded-sm overflow-hidden"
+                        dangerouslySetInnerHTML={{ __html: preview.cgvHtml }} />
+                    )}
                   </div>
                 </>
               )}
