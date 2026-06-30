@@ -767,6 +767,7 @@ export interface Company {
   iban?: string
   bic?: string
   logoUrl?: string
+  signatureUrl?: string     // signature du prestataire (data URL ou URL) — affichée côté « Le prestataire » sur les devis
   mentionsLegales?: string
   couleurPrimaire?: string  // ex : "#2563eb"
   cgv?: string              // Conditions générales de vente (texte complet)
@@ -908,6 +909,7 @@ export interface Facture {
   signatureUrl?: string              // URL Firebase Storage de l'image de signature
   signToken?: string | null          // jeton d'accès au lien public de signature (/signer-devis/[token]) — généré à la demande, régénérable = révocation
   pdfUrl?: string                    // URL Firebase Storage du PDF généré
+  pdfReflectsSignature?: boolean     // le PDF stocké (pdfUrl) reflète l'état de signature courant (sinon = à régénérer)
   convertedToFactureId?: string      // Facture créée depuis ce devis (legacy single)
   convertedToFactureIds?: string[]   // Toutes les factures créées depuis ce devis
   clientLinkedUserId?: string          // Firebase Auth UID du client (pour requêtes côté utilisateur)

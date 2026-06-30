@@ -84,7 +84,7 @@ export function serialize(value: unknown): unknown {
 // Champs « prestataire » publics affichés sur chaque devis (sans danger à exposer).
 const COMPANY_FIELDS = [
   'nom', 'adresse', 'codePostal', 'ville', 'email', 'telephone', 'representant',
-  'siret', 'tva', 'iban', 'bic', 'logoUrl', 'couleurPrimaire', 'cgv', 'cgvDate',
+  'siret', 'tva', 'iban', 'bic', 'logoUrl', 'signatureUrl', 'couleurPrimaire', 'cgv', 'cgvDate',
 ] as const
 
 const DOC_FIELDS = ['type', 'titre', 'version', 'statut', 'pdfUrl', 'pdfNom', 'signe'] as const

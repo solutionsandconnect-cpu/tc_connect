@@ -124,6 +124,7 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
     return buildInvoiceHtml(selectedDevis, data.company ?? null, {
       logoDataUrl: data.company?.logoUrl ?? null,
       signatureDataUrl: selectedDevis.signatureUrl ?? null,
+      providerSignatureDataUrl: data.company?.signatureUrl ?? null,
     })
   }, [selectedDevis, data])
 
@@ -143,7 +144,9 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
     try {
       await onSign(selectedDevis.id, signatureDataUrl)
       setSignModal(false)
-      setToast('Merci ! Votre devis est signé. Le prestataire en est informé.')
+      setToast('Merci ! Votre devis est signé. Téléchargement en cours…')
+      // Re-télécharge directement la version signée (écrase l'ancienne).
+      downloadInvoicePDF({ ...selectedDevis, signed: true, signatureUrl: signatureDataUrl, status: 'accepted' }, data.company ?? null).catch(() => {})
     } catch (e) {
       setToast(e instanceof Error ? e.message : 'Erreur lors de la signature.')
     } finally {

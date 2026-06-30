@@ -5,18 +5,19 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useCompanies } from "@/hooks/useCompanies";
 import { createCompany, updateCompany, deleteCompany } from "@/lib/companyService";
+import SignaturePad from "@/components/ui/SignaturePad";
 import type { Company } from "@/types";
 
 type Form = {
   nom: string; adresse: string; codePostal: string; ville: string;
   email: string; telephone: string; representant: string; siret: string; tva: string;
-  iban: string; bic: string; logoUrl: string; couleurPrimaire: string; mentionsLegales: string;
+  iban: string; bic: string; logoUrl: string; signatureUrl: string; couleurPrimaire: string; mentionsLegales: string;
   cgv: string; cgvDate: string;
 };
 
 const EMPTY: Form = {
   nom: "", adresse: "", codePostal: "", ville: "", email: "",
-  telephone: "", representant: "", siret: "", tva: "", iban: "", bic: "", logoUrl: "",
+  telephone: "", representant: "", siret: "", tva: "", iban: "", bic: "", logoUrl: "", signatureUrl: "",
   couleurPrimaire: "#2563eb", mentionsLegales: "", cgv: "", cgvDate: "",
 };
 
@@ -165,6 +166,7 @@ export default function CompaniesPage() {
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [sigModal, setSigModal] = useState(false);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
@@ -175,7 +177,7 @@ export default function CompaniesPage() {
       ville: c.ville ?? "", email: c.email ?? "", telephone: c.telephone ?? "",
       representant: c.representant ?? "",
       siret: c.siret ?? "", tva: c.tva ?? "", iban: c.iban ?? "", bic: c.bic ?? "",
-      logoUrl: c.logoUrl ?? "", couleurPrimaire: c.couleurPrimaire ?? "#2563eb",
+      logoUrl: c.logoUrl ?? "", signatureUrl: c.signatureUrl ?? "", couleurPrimaire: c.couleurPrimaire ?? "#2563eb",
       mentionsLegales: c.mentionsLegales ?? "", cgv: c.cgv ?? "", cgvDate: c.cgvDate ?? "",
     });
     setError("");
@@ -201,6 +203,7 @@ export default function CompaniesPage() {
         iban: form.iban || undefined,
         bic: form.bic || undefined,
         logoUrl: form.logoUrl || undefined,
+        signatureUrl: form.signatureUrl || undefined,
         couleurPrimaire: form.couleurPrimaire || "#2563eb",
         mentionsLegales: form.mentionsLegales || undefined,
         cgv: form.cgv || undefined,
@@ -412,6 +415,21 @@ export default function CompaniesPage() {
                     <p className="text-xs text-gray-400 mt-1">Hébergez votre logo sur Firebase Storage ou Imgur et collez l'URL ici</p>
                   </div>
                   <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Ma signature (prestataire)</label>
+                    <p className="text-xs text-gray-400 mb-2">Apparaît côté « Le prestataire » sur tes devis. Le client, lui, signe de son côté.</p>
+                    {form.signatureUrl ? (
+                      <div className="flex items-center gap-3">
+                        <img src={form.signatureUrl} alt="Signature" className="max-h-16 border rounded-lg bg-gray-50 p-1" />
+                        <button type="button" onClick={() => setSigModal(true)} className="text-xs text-blue-600 hover:underline">Modifier</button>
+                        <button type="button" onClick={() => setForm((f) => ({ ...f, signatureUrl: "" }))} className="text-xs text-red-500 hover:underline">Retirer</button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => setSigModal(true)} className="border rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 transition">
+                        ✍ Dessiner ma signature
+                      </button>
+                    )}
+                  </div>
+                  <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1">Couleur principale</label>
                     <div className="flex items-center gap-3">
                       <input type="color" className="w-10 h-10 rounded border cursor-pointer" value={form.couleurPrimaire} onChange={set("couleurPrimaire")} />
@@ -432,6 +450,15 @@ export default function CompaniesPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {sigModal && (
+        <SignaturePad
+          title="Ma signature"
+          subtitle="Dessine (ou importe) ta signature de prestataire. Elle apparaîtra sur tes devis."
+          onConfirm={(dataUrl) => { setForm((f) => ({ ...f, signatureUrl: dataUrl })); setSigModal(false); }}
+          onCancel={() => setSigModal(false)}
+        />
       )}
     </div>
   );

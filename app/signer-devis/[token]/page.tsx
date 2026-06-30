@@ -46,6 +46,7 @@ export default function SignerDevisPage({ params }: { params: Promise<{ token: s
     return buildInvoiceHtml(devis, company, {
       logoDataUrl: company?.logoUrl ?? null,
       signatureDataUrl: devis.signatureUrl ?? null,
+      providerSignatureDataUrl: company?.signatureUrl ?? null,
     })
   }, [devis, company])
 
@@ -55,6 +56,7 @@ export default function SignerDevisPage({ params }: { params: Promise<{ token: s
     && !['accepted', 'rejected', 'cancelled'].includes(devis.status)
 
   const handleSign = async (signatureDataUrl: string) => {
+    if (!devis) return
     setSigning(true)
     try {
       const res = await fetch(`/api/devis-public/${token}/sign`, {
@@ -65,8 +67,12 @@ export default function SignerDevisPage({ params }: { params: Promise<{ token: s
       const d = await res.json()
       if (!res.ok) throw new Error(d.error || 'Erreur')
       setSignModal(false)
-      setToast('Merci ! Votre devis est signé. Le prestataire en est informé.')
-      load()  // rafraîchit en arrière-plan (ne bloque pas la fermeture du modal)
+      setToast('Merci ! Votre devis est signé. Téléchargement en cours…')
+      // Affiche immédiatement + re-télécharge la version signée (écrase l'ancienne).
+      const signed: Facture = { ...devis, signed: true, signatureUrl: signatureDataUrl, status: 'accepted' }
+      setDevis(signed)
+      downloadInvoicePDF(signed, company).catch(() => {})
+      load()  // resynchronise avec le serveur en arrière-plan (signedAt réel…)
     } catch (e) {
       setToast(e instanceof Error ? e.message : 'Erreur lors de la signature.')
     } finally {

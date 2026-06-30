@@ -99,14 +99,17 @@ async function buildPDF(facture: Facture, company?: Company | null) {
   const html2canvas = (await import("html2canvas-pro")).default;
 
   // Assets distants embarqués en data URL pour un rendu fiable.
-  const [logoDataUrl, signatureDataUrl] = await Promise.all([
+  const [logoDataUrl, signatureDataUrl, providerSignatureDataUrl] = await Promise.all([
     company?.logoUrl ? fetchImageAsDataUrl(company.logoUrl) : Promise.resolve(null),
     facture.type === "devis" && facture.signed && facture.signatureUrl
       ? fetchImageAsDataUrl(facture.signatureUrl)
       : Promise.resolve(null),
+    facture.type === "devis" && company?.signatureUrl
+      ? fetchImageAsDataUrl(company.signatureUrl)
+      : Promise.resolve(null),
   ]);
 
-  const { mainHtml, cgvHtml } = buildInvoiceHtml(facture, company, { logoDataUrl, signatureDataUrl });
+  const { mainHtml, cgvHtml } = buildInvoiceHtml(facture, company, { logoDataUrl, signatureDataUrl, providerSignatureDataUrl });
 
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const W = 210, H = 297;

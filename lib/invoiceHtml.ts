@@ -279,7 +279,8 @@ function buildStyle(primary: string): string {
 
 export interface InvoiceHtmlAssets {
   logoDataUrl?: string | null;
-  signatureDataUrl?: string | null;
+  signatureDataUrl?: string | null;           // signature du CLIENT (apposée à la signature du devis)
+  providerSignatureDataUrl?: string | null;   // signature du PRESTATAIRE (Société.signatureUrl)
 }
 
 export function buildInvoiceHtml(
@@ -598,18 +599,21 @@ export function buildInvoiceHtml(
   // Signature (devis)
   let sign = "";
   if (isDevis) {
+    // Côté PRESTATAIRE : la signature de la société (si configurée) — JAMAIS « Bon pour accord » (c'est l'engagement du client).
+    const providerSig = assets.providerSignatureDataUrl
+      ? `<img class="sig" src="${assets.providerSignatureDataUrl}" alt=""/><div class="bag">Établi le ${fmtDate(docDate ?? null)}</div>`
+      : `<div class="bag">Établi le ${fmtDate(docDate ?? null)}</div>`;
+    // Côté CLIENT : c'est ICI qu'on trouve « Bon pour accord » + la signature une fois le devis signé.
     const clientSig = facture.signed
       ? (assets.signatureDataUrl
-          ? `<img class="sig" src="${assets.signatureDataUrl}" alt=""/>${facture.signedAt ? `<div class="ok">Signé le ${fmtDate(facture.signedAt)}</div>` : ""}`
-          : `<div class="ok">Signé électroniquement${facture.signedAt ? `<small>le ${fmtDate(facture.signedAt)}</small>` : ""}</div>`)
+          ? `<img class="sig" src="${assets.signatureDataUrl}" alt=""/><div class="ok">Bon pour accord${facture.signedAt ? `<small>Signé le ${fmtDate(facture.signedAt)}</small>` : ""}</div>`
+          : `<div class="ok">Bon pour accord — signé électroniquement${facture.signedAt ? `<small>le ${fmtDate(facture.signedAt)}</small>` : ""}</div>`)
       : `<div class="bag">« Bon pour accord » — date &amp; signature</div>`;
     sign = `<div class="sign">
       <div class="b">
         <div class="role">Le prestataire</div>
         <div class="who">${esc(companyName)}</div>
-        ${facture.signed
-          ? `<div class="ok">Bon pour accord<small>Signé le ${fmtDate(facture.signedAt ?? docDate ?? null)}</small></div>`
-          : `<div class="bag">Établi le ${fmtDate(docDate ?? null)}</div>`}
+        ${providerSig}
       </div>
       <div class="b">
         <div class="role">Le client</div>

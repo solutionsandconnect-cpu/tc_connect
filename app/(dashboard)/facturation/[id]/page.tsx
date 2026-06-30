@@ -583,6 +583,21 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
     }
   };
 
+  // Régénère le PDF stocké (pdfUrl) pour qu'il reflète l'état de signature courant
+  // et écrase l'ancien. Ne fait rien si aucun PDF n'a encore été stocké/partagé.
+  const syncStoredPdf = async (overrides: Partial<Facture> = {}, base?: Facture) => {
+    const src = base ?? facture;
+    if (!src || !src.pdfUrl) return;
+    const snapshot: Facture = {
+      ...src, items, total, echeances, notes,
+      ...(src.type === "devis" ? { validiteJours } : {}), ...overrides,
+    };
+    const blob = await generateInvoicePDFBlob(snapshot, company);
+    const pdfUrl = await uploadBlob(blob, `users/${currentUser!.uid}/factures/${id}.pdf`);
+    await updateFacture(id, { pdfUrl, pdfReflectsSignature: !!snapshot.signed });
+    setFacture((p) => p ? { ...p, pdfUrl, pdfReflectsSignature: !!snapshot.signed } : null);
+  };
+
   const handleSignConfirm = async (dataUrl: string) => {
     try {
       const arr = dataUrl.split(",");
@@ -597,6 +612,8 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       setFacture((p) => p ? { ...p, signed: true, signedAt: now, signatureUrl } : null);
       setSignModal(false);
       showToast("Devis signé !");
+      // Régénère le PDF stocké avec la signature (écrase l'ancien) — non bloquant.
+      syncStoredPdf({ signed: true, signedAt: now, signatureUrl }).catch(() => {});
     } catch {
       showToast("Erreur lors de la signature", false);
     }
@@ -614,6 +631,8 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       // signature via le portail = data URL, déjà retirée du document → rien à supprimer).
       if (oldUrl && oldUrl.startsWith("http")) await deleteImage(oldUrl);
       showToast("Signature annulée — le devis est de nouveau signable.");
+      // Régénère le PDF stocké en version non signée (écrase l'ancien qui portait la signature) — non bloquant.
+      syncStoredPdf({ signed: false, status: "sent", signatureUrl: "" }).catch(() => {});
     } catch {
       showToast("Erreur lors de l'annulation", false);
     }
@@ -652,7 +671,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       const snapshot: Facture = { ...facture, items, total, echeances, notes, ...(facture.type === "devis" ? { validiteJours } : {}) };
       const blob = await generateInvoicePDFBlob(snapshot, company);
       const pdfUrl = await uploadBlob(blob, `users/${currentUser!.uid}/factures/${id}.pdf`);
-      const updates: Partial<Omit<Facture, "id">> = { pdfUrl };
+      const updates: Partial<Omit<Facture, "id">> = { pdfUrl, pdfReflectsSignature: !!facture.signed };
       if (facture.status === "draft") updates.status = "sent";
       await updateFacture(id, updates);
       setFacture((p) => p ? { ...p, ...updates } : null);
@@ -663,6 +682,20 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       setPdfUploading(false);
     }
   };
+
+  // Signature en ligne (client) : ton navigateur n'était pas ouvert au moment de signer,
+  // donc le PDF stocké n'a pas pu être régénéré. On le met à jour à l'ouverture du devis.
+  const autoSyncedRef = useRef(false);
+  useEffect(() => {
+    if (autoSyncedRef.current || !facture || !company) return;
+    if (facture.type === "devis" && facture.signed && facture.pdfUrl && !facture.pdfReflectsSignature) {
+      autoSyncedRef.current = true;
+      syncStoredPdf({}, facture)
+        .then(() => showToast("PDF mis à jour avec la signature."))
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facture, company]);
 
   const handlePDF = async () => {
     if (!facture) return;
