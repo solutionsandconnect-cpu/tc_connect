@@ -240,7 +240,19 @@ export default function Navbar() {
       </aside>
 
       {/* ── BOTTOM BAR mobile ── */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40">
+      {/* iOS PWA (standalone) : le rebond élastique repeint la barre `fixed` et la « décolle » au milieu
+         de l'écran au relâchement du scroll. On la promeut sur sa propre couche de composition GPU
+         (translateZ) pour qu'elle reste épinglée au viewport pendant l'overscroll. */}
+      <nav
+        className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40"
+        style={{
+          transform: 'translateZ(0)',
+          WebkitTransform: 'translateZ(0)',
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
+          WebkitBackfaceVisibility: 'hidden',
+        }}
+      >
         <div className="flex items-center justify-around px-1 pt-1" style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom, 8px))' }}>
           {mobileItems
             .filter((item) => {
