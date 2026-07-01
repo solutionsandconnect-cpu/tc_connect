@@ -569,7 +569,7 @@ export default function AdminParcoursPage() {
             <p className="text-sm text-gray-500">Séances de sport en groupe</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto -mx-1 px-1 sm:mx-0 sm:px-0 sm:overflow-visible sm:flex-wrap sm:justify-end">
+        <div className="flex items-center gap-2 overflow-x-auto -mx-1 -my-1.5 px-1 py-1.5 sm:mx-0 sm:my-0 sm:px-0 sm:py-0 sm:overflow-visible sm:flex-wrap sm:justify-end">
           <button
             onClick={() => router.push(`/admin/parcours-sportif/participants${homonymCount > 0 ? '?filter=homonyms' : ''}`)}
             className="relative flex items-center gap-2 shrink-0 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition"
