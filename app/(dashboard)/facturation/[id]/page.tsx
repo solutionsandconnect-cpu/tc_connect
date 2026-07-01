@@ -816,9 +816,10 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* HEADER */}
-      <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.push(`/facturation${facture.type === "devis" ? "?tab=devis" : ""}`)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-500 transition">←</button>
+      <div className="mb-6">
+        {/* Barre de navigation : retour + pager */}
+        <div className="flex items-center gap-3 mb-3">
+          <button onClick={() => router.push(`/facturation${facture.type === "devis" ? "?tab=devis" : ""}`)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 text-gray-500 transition shrink-0">←</button>
           {siblingIds.length > 1 && (() => {
             const idx = siblingIds.indexOf(id);
             const prev = siblingIds[idx - 1];
@@ -841,7 +842,11 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               </div>
             );
           })()}
-          <div>
+        </div>
+
+        {/* Titre + actions */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
               {editingNumber ? (
                 <input
@@ -938,10 +943,9 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               )
             })()}
           </div>
-        </div>
 
-        {/* ACTIONS */}
-        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {/* ACTIONS */}
+          <div className="flex items-center gap-2 flex-wrap sm:justify-end sm:shrink-0">
           <button onClick={handlePDF} disabled={generatingPdf} className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-60 text-white rounded-lg text-sm font-medium transition">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             {generatingPdf ? "Génération…" : "PDF"}
@@ -1015,6 +1019,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
               <button onClick={() => setConfirmDelete(false)} className="px-3 py-2 border rounded-lg text-sm font-medium hover:bg-gray-100 transition">Annuler</button>
             </div>
           )}
+        </div>
         </div>
       </div>
 
