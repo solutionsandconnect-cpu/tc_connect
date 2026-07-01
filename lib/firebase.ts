@@ -25,9 +25,14 @@ export const auth = getAuth(app);
 // au lieu de lever une erreur (ex. members[].permission pour un propriétaire,
 // ou items clonés sans dueDate/note/attachments lors d'une sauvegarde de modèle).
 // initializeFirestore lève si déjà initialisé (hot-reload Next) → fallback getFirestore.
+// experimentalForceLongPolling : sur mobile / réseau local (LAN), certains réseaux et
+// navigateurs bloquent le transport WebChannel streaming de Firestore → onSnapshot ne
+// renvoie jamais son premier snapshot → app bloquée sur le spinner. L'auto-détection
+// ne basculant pas de façon fiable, on FORCE le long polling (fiable, léger surcoût réseau
+// acceptable à cette échelle). Fonctionne aussi bien sur desktop.
 let _db;
 try {
-  _db = initializeFirestore(app, { ignoreUndefinedProperties: true });
+  _db = initializeFirestore(app, { ignoreUndefinedProperties: true, experimentalForceLongPolling: true });
 } catch {
   _db = getFirestore(app);
 }

@@ -37,27 +37,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null)
   const [userProfile, setUserProfile] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  // DEBUG TEMPORAIRE (diagnostic spinner mobile) — à retirer une fois réglé.
+  const [dbg, setDbg] = useState('auth: en attente…')
 
   useEffect(() => {
     let profileUnsub: (() => void) | null = null
 
-    const authUnsub = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user)
+    // Filet de sécurité : ne JAMAIS rester bloqué sur le spinner si l'auth ou Firestore
+    // ne répond pas (réseau mobile, WebChannel bloqué, persistance IndexedDB iOS…).
+    // Au pire, on affiche l'app après ce délai (redirige vers /login si pas de session).
+    const safety = setTimeout(() => { setDbg((d) => 'TIMEOUT 8s — ' + d); setLoading(false) }, 8000)
 
-      if (profileUnsub) { profileUnsub(); profileUnsub = null }
+    const authUnsub = onAuthStateChanged(
+      auth,
+      (user) => {
+        setCurrentUser(user)
+        setDbg(user ? `auth OK (${user.uid.slice(0, 6)}…) → chargement profil…` : 'aucune session → login')
 
-      if (user) {
-        profileUnsub = onSnapshot(doc(db, 'users', user.uid), (snap) => {
-          setUserProfile(snap.exists() ? { id: snap.id, ...snap.data() } as User : null)
+        if (profileUnsub) { profileUnsub(); profileUnsub = null }
+
+        if (user) {
+          profileUnsub = onSnapshot(
+            doc(db, 'users', user.uid),
+            (snap) => {
+              setUserProfile(snap.exists() ? { id: snap.id, ...snap.data() } as User : null)
+              setLoading(false)
+            },
+            (err) => {
+              // Lecture du profil impossible (permissions, réseau) → on débloque quand même l'app.
+              console.error('[auth] profile snapshot error', err)
+              setDbg('ERREUR profil: ' + ((err as any)?.code || (err as any)?.message || String(err)))
+              setLoading(false)
+            }
+          )
+        } else {
+          setUserProfile(null)
           setLoading(false)
-        })
-      } else {
-        setUserProfile(null)
+        }
+      },
+      (err) => {
+        console.error('[auth] onAuthStateChanged error', err)
+        setDbg('ERREUR auth: ' + ((err as any)?.code || (err as any)?.message || String(err)))
         setLoading(false)
       }
-    })
+    )
 
-    return () => { authUnsub(); if (profileUnsub) profileUnsub() }
+    return () => { clearTimeout(safety); authUnsub(); if (profileUnsub) profileUnsub() }
   }, [])
 
   const login = useCallback(async (email: string, password: string) => {
@@ -187,8 +212,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
   <AuthContext.Provider value={value}>
     {loading ? (
-      <div className="min-h-screen flex items-center justify-center bg-white">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-white gap-4 px-6">
         <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        {/* DEBUG TEMPORAIRE — diagnostic spinner mobile, à retirer */}
+        <p className="text-xs text-gray-500 text-center max-w-[300px] break-words">{dbg}</p>
       </div>
     ) : (
       children
