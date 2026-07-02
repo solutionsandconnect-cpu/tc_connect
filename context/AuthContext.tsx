@@ -37,8 +37,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null)
   const [userProfile, setUserProfile] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
-  // DEBUG TEMPORAIRE (diagnostic spinner mobile) — à retirer une fois réglé.
-  const [dbg, setDbg] = useState('auth: en attente…')
 
   useEffect(() => {
     let profileUnsub: (() => void) | null = null
@@ -46,13 +44,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Filet de sécurité : ne JAMAIS rester bloqué sur le spinner si l'auth ou Firestore
     // ne répond pas (réseau mobile, WebChannel bloqué, persistance IndexedDB iOS…).
     // Au pire, on affiche l'app après ce délai (redirige vers /login si pas de session).
-    const safety = setTimeout(() => { setDbg((d) => 'TIMEOUT 8s — ' + d); setLoading(false) }, 8000)
+    const safety = setTimeout(() => { setLoading(false) }, 8000)
 
     const authUnsub = onAuthStateChanged(
       auth,
       (user) => {
         setCurrentUser(user)
-        setDbg(user ? `auth OK (${user.uid.slice(0, 6)}…) → chargement profil…` : 'aucune session → login')
 
         if (profileUnsub) { profileUnsub(); profileUnsub = null }
 
@@ -66,7 +63,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (err) => {
               // Lecture du profil impossible (permissions, réseau) → on débloque quand même l'app.
               console.error('[auth] profile snapshot error', err)
-              setDbg('ERREUR profil: ' + ((err as any)?.code || (err as any)?.message || String(err)))
               setLoading(false)
             }
           )
@@ -77,7 +73,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
       (err) => {
         console.error('[auth] onAuthStateChanged error', err)
-        setDbg('ERREUR auth: ' + ((err as any)?.code || (err as any)?.message || String(err)))
         setLoading(false)
       }
     )
@@ -214,8 +209,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     {loading ? (
       <div className="min-h-screen flex flex-col items-center justify-center bg-white gap-4 px-6">
         <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-        {/* DEBUG TEMPORAIRE — diagnostic spinner mobile, à retirer */}
-        <p className="text-xs text-gray-500 text-center max-w-[300px] break-words">{dbg}</p>
       </div>
     ) : (
       children

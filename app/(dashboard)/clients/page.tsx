@@ -50,9 +50,14 @@ const toUpperName = (s: string) => s.toUpperCase();
 const toProperName = (s: string) =>
   s.split(/([\s-])/).map((p) => /[\s-]/.test(p) ? p : p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join("");
 
+// Formate une Date en 'YYYY-MM-DD' en heure LOCALE. toISOString() renvoie l'UTC,
+// ce qui décale la date à J-1 pour une date stockée à minuit local (France UTC+2).
+function toDateInputStr(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 function toDateInput(ts?: { seconds: number } | null) {
   if (!ts) return "";
-  return new Date(ts.seconds * 1000).toISOString().split("T")[0];
+  return toDateInputStr(new Date(ts.seconds * 1000));
 }
 function fromDateInput(s: string) {
   return s ? Timestamp.fromDate(new Date(s)) : undefined;
@@ -2084,7 +2089,7 @@ function AboDetailModal({ abo, linkedUserId, clientAddress, onClose, onEdit, onD
     const now = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
     setRdvForm({
       ...EMPTY_RDV_FORM,
-      date: d.toISOString().slice(0, 10),
+      date: toDateInputStr(d),
       heure_debut: now,
       heure_fin: addMinutesToTime(now, 60),
       adresse_rdv: clientAddress,
@@ -2109,7 +2114,7 @@ function AboDetailModal({ abo, linkedUserId, clientAddress, onClose, onEdit, onD
       if (match) abonnementId = match.id;
     }
     setRdvForm({
-      date: date ? date.toISOString().slice(0, 10) : '',
+      date: date ? toDateInputStr(date) : '',
       heure_debut: debut ? `${String(debut.getHours()).padStart(2,'0')}:${String(debut.getMinutes()).padStart(2,'0')}` : '',
       heure_fin: fin ? `${String(fin.getHours()).padStart(2,'0')}:${String(fin.getMinutes()).padStart(2,'0')}` : '',
       type_planning: rdv.type_planning || 'Séance',
