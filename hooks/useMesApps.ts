@@ -11,6 +11,7 @@ export interface MesApp {
   url: string
   client?: string
   description?: string
+  tags?: string[]
   actif?: boolean
   ordre?: number
   date_create?: any
