@@ -188,6 +188,19 @@ export default function OverviewSeancePage() {
     type_effort_exo_default: 'Durée (sec)' as string,
     tps_effort_exo_default: 30,
   })
+  // Édition des paramètres d'un circuit (admin uniquement)
+  const [editCircuit, setEditCircuit] = useState<SeanceData | null>(null)
+  const [savingEditCircuit, setSavingEditCircuit] = useState(false)
+  const [editCircuitForm, setEditCircuitForm] = useState({
+    type_seance: 'Circuit classique',
+    partie_seance: 'Corps de séance',
+    observations_seance: '',
+    nb_tours: 3,
+    recup_tours: 30,
+    tps_recup_exo_default: 5,
+    type_effort_exo_default: 'Durée (sec)' as string,
+    tps_effort_exo_default: 30,
+  })
   const [planning, setPlanning] = useState<PlanningData | null>(null)
   const [seances, setSeances] = useState<SeanceData[]>([])
   const [linkedPlanningInfos, setLinkedPlanningInfos] = useState<{ planningId: string; label: string; isRoot: boolean }[]>([])
@@ -444,6 +457,45 @@ export default function OverviewSeancePage() {
     }
   }
 
+  const openEditCircuit = (seance: SeanceData) => {
+    const s = seance as any
+    setEditCircuit(seance)
+    setEditCircuitForm({
+      type_seance: s.type_seance ?? 'Circuit classique',
+      partie_seance: s.partie_seance ?? 'Corps de séance',
+      observations_seance: s.observations_seance ?? '',
+      nb_tours: s.nb_tours ?? 3,
+      recup_tours: s.recup_tours ?? 30,
+      tps_recup_exo_default: s.tps_recup_exo_default ?? 5,
+      type_effort_exo_default: fromFirestoreEffortApercu(s.type_effort_exo_default || 'Durée (sec)'),
+      tps_effort_exo_default: s.tps_effort_exo_default ?? 30,
+    })
+  }
+
+  const handleSaveEditCircuit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editCircuit) return
+    setSavingEditCircuit(true)
+    try {
+      const payload = {
+        type_seance: editCircuitForm.type_seance,
+        partie_seance: editCircuitForm.partie_seance,
+        observations_seance: editCircuitForm.observations_seance,
+        nb_tours: Number(editCircuitForm.nb_tours),
+        recup_tours: Number(editCircuitForm.recup_tours),
+        tps_recup_exo_default: Number(editCircuitForm.tps_recup_exo_default),
+        type_effort_exo_default: toFirestoreEffortApercu(editCircuitForm.type_effort_exo_default),
+        tps_effort_exo_default: Number(editCircuitForm.tps_effort_exo_default),
+      }
+      await updateDoc(doc(db, 'seance', editCircuit.id), payload)
+      // Mise à jour optimiste du state local
+      setSeances(prev => prev.map(s => s.id === editCircuit.id ? ({ ...s, ...payload } as SeanceData) : s))
+      setEditCircuit(null)
+    } finally {
+      setSavingEditCircuit(false)
+    }
+  }
+
   const saveRpe = async (seanceId: string) => {
     setSavingRpe(s => ({ ...s, [seanceId]: true }))
     try {
@@ -625,35 +677,48 @@ export default function OverviewSeancePage() {
               <div key={seance.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
 
                 {/* Circuit header */}
-                <button
-                  className="w-full flex items-center justify-between p-4 text-left"
-                  onClick={() => setExpanded(e => ({ ...e, [seance.id]: !e[seance.id] }))}
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      {seance.num_circuit != null && (
-                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">Circuit {seance.num_circuit}</span>
+                <div className="flex items-stretch">
+                  <button
+                    className="flex-1 min-w-0 flex items-center justify-between p-4 text-left"
+                    onClick={() => setExpanded(e => ({ ...e, [seance.id]: !e[seance.id] }))}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        {seance.num_circuit != null && (
+                          <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">Circuit {seance.num_circuit}</span>
+                        )}
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          isDone ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600'
+                        }`}>
+                          {isDone ? '✓ Terminé' : '● À faire'}
+                        </span>
+                      </div>
+                      <p className="font-semibold text-gray-800">{seance.type_seance}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {seance.partie_seance} · {seance.nb_tours} tour(s) · Récup {seance.recup_tours}s
+                        {seance.programme.length > 0 && ` · ${seance.programme.length} exercice(s)`}
+                      </p>
+                      {isDone && rpe > 0 && (
+                        <p className={`text-xs font-bold mt-1 ${rpeColor(rpe)}`}>RPE circuit : {rpe}/10</p>
                       )}
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        isDone ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600'
-                      }`}>
-                        {isDone ? '✓ Terminé' : '● À faire'}
-                      </span>
                     </div>
-                    <p className="font-semibold text-gray-800">{seance.type_seance}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {seance.partie_seance} · {seance.nb_tours} tour(s) · Récup {seance.recup_tours}s
-                      {seance.programme.length > 0 && ` · ${seance.programme.length} exercice(s)`}
-                    </p>
-                    {isDone && rpe > 0 && (
-                      <p className={`text-xs font-bold mt-1 ${rpeColor(rpe)}`}>RPE circuit : {rpe}/10</p>
-                    )}
-                  </div>
-                  {isOpen
-                    ? <ChevronUpIcon className="w-5 h-5 text-gray-400 shrink-0 ml-2" />
-                    : <ChevronDownIcon className="w-5 h-5 text-gray-400 shrink-0 ml-2" />
-                  }
-                </button>
+                    {isOpen
+                      ? <ChevronUpIcon className="w-5 h-5 text-gray-400 shrink-0 ml-2" />
+                      : <ChevronDownIcon className="w-5 h-5 text-gray-400 shrink-0 ml-2" />
+                    }
+                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => openEditCircuit(seance)}
+                      title="Modifier le circuit"
+                      className="shrink-0 flex items-center px-3 border-l border-gray-50 text-gray-300 hover:text-blue-600 hover:bg-gray-50 transition"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
 
                 {isOpen && (
                   <div>
@@ -1304,6 +1369,83 @@ export default function OverviewSeancePage() {
             <button type="submit" disabled={savingCircuit}
               className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition">
               {savingCircuit ? 'Création...' : 'Créer'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal modifier circuit (admin) */}
+      <Modal isOpen={!!editCircuit} onClose={() => setEditCircuit(null)} title={editCircuit ? `Modifier le circuit ${(editCircuit as any).num_circuit ?? ''}`.trim() : 'Modifier le circuit'}>
+        <form onSubmit={handleSaveEditCircuit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Partie de séance</label>
+            <select value={editCircuitForm.partie_seance}
+              onChange={e => setEditCircuitForm({ ...editCircuitForm, partie_seance: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {PARTIES_SEANCE_APERCU.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type de circuit</label>
+            <select value={editCircuitForm.type_seance}
+              onChange={e => setEditCircuitForm({ ...editCircuitForm, type_seance: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {TYPES_SEANCE_APERCU.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nb tours</label>
+              <input type="number" min={1} value={editCircuitForm.nb_tours}
+                onChange={e => setEditCircuitForm({ ...editCircuitForm, nb_tours: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Récup entre tours (s)</label>
+              <input type="number" min={0} value={editCircuitForm.recup_tours}
+                onChange={e => setEditCircuitForm({ ...editCircuitForm, recup_tours: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type d'effort par défaut</label>
+            <select value={editCircuitForm.type_effort_exo_default}
+              onChange={e => setEditCircuitForm({ ...editCircuitForm, type_effort_exo_default: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              {TYPES_EFFORT_APERCU.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Effort par défaut {editCircuitForm.type_effort_exo_default === 'Répétitions' ? '(rép)' : editCircuitForm.type_effort_exo_default === 'Distance (m)' ? '(m)' : '(sec)'}
+              </label>
+              <input type="number" min={0} value={editCircuitForm.tps_effort_exo_default}
+                onChange={e => setEditCircuitForm({ ...editCircuitForm, tps_effort_exo_default: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Récup par défaut (s)</label>
+              <input type="number" min={0} value={editCircuitForm.tps_recup_exo_default}
+                onChange={e => setEditCircuitForm({ ...editCircuitForm, tps_recup_exo_default: Number(e.target.value) })}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Observations</label>
+            <textarea value={editCircuitForm.observations_seance}
+              onChange={e => setEditCircuitForm({ ...editCircuitForm, observations_seance: e.target.value })}
+              rows={2} placeholder="Notes sur ce circuit…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={() => setEditCircuit(null)}
+              className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button type="submit" disabled={savingEditCircuit}
+              className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition">
+              {savingEditCircuit ? 'Enregistrement…' : 'Enregistrer'}
             </button>
           </div>
         </form>
