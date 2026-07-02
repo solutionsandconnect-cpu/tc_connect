@@ -1878,7 +1878,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                     </div>
                     <p className="text-xs text-gray-500">
                       {seance.partie_seance} · {seance.nb_tours} tour(s)
-                      {(seance as any).tps_effort_exo_default ? ` · ${(seance as any).tps_effort_exo_default}${(seance as any).type_effort_exo_default === 'Durée (sec)' ? 's' : ' rép'}` : ''}
+                      {(seance as any).tps_effort_exo_default ? ` · ${(seance as any).tps_effort_exo_default}${(seance as any).type_effort_exo_default === 'Répétitions' ? ' rép' : 's'}` : ''}
                       {seance.recup_tours != null ? ` · récup tours ${seance.recup_tours}s` : ''}
                       {(seance as any).tps_recup_exo_default != null && (seance as any).tps_recup_exo_default !== seance.recup_tours ? ` · récup exo ${(seance as any).tps_recup_exo_default}s` : ''}
                     </p>
