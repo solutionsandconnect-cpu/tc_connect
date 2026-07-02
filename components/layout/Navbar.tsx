@@ -13,6 +13,7 @@ import {
   BuildingOfficeIcon, UserGroupIcon, DocumentDuplicateIcon,
   ShieldCheckIcon, ChatBubbleLeftRightIcon, FolderOpenIcon,
   ShoppingBagIcon, FireIcon, PresentationChartLineIcon, FolderIcon,
+  RectangleStackIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeSolid, CalendarIcon as CalendarSolid,
@@ -30,6 +31,7 @@ import {
   ShoppingBagIcon as ShoppingBagSolid,
   FireIcon as FireSolid,
   PresentationChartLineIcon as PresentationChartLineSolid,
+  RectangleStackIcon as RectangleStackSolid,
 } from '@heroicons/react/24/solid'
 
 // Structure organisée par sections
@@ -74,6 +76,7 @@ export const navSections = [
       { label: 'Utilisateurs',  href: '/users',         icon: UserGroupIcon,             iconActive: UserGroupSolid,    adminOnly: true, droit: null },
       { label: 'Droits d\'accès', href: '/droits',      icon: ShieldCheckIcon,           iconActive: ShieldSolid,       adminOnly: true, droit: null },
       { label: 'Notes',         href: '/notes',         icon: DocumentDuplicateIcon,     iconActive: DocumentDupSolid,  adminOnly: true, droit: null },
+      { label: 'Mes apps',      href: '/mes-apps',      icon: RectangleStackIcon,        iconActive: RectangleStackSolid, adminOnly: true, droit: null },
     ],
   },
 ]

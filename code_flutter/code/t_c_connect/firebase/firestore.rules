@@ -371,6 +371,11 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role_app == 'Admin';
     }
 
+    // Carnet des apps créées par le freelance (liens Vercel) — admin uniquement
+    match /mes_apps/{document} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
     match /{document=**} {
       allow read, write: if request.auth.token.email.matches("firebase@flutterflow.io");
     }
