@@ -52,7 +52,7 @@ export default function AccueilPage() {
   const shortcutApps = storeApps.filter(app => shortcutAppIds.includes(app.id) && !!app.route)
   const [allStoreSubs, setAllStoreSubs] = useState<any[]>([])
   const [pendingEcheances, setPendingEcheances] = useState<{ devis: any; echeance: any; index: number; daysLeft: number | null }[]>([])
-  const [seanceAccessAlerts, setSeanceAccessAlerts] = useState<{ client: any; type: 'to_configure' | 'expiring_soon' | 'expired' | 'to_restore' }[]>([])
+  const [seanceAccessAlerts, setSeanceAccessAlerts] = useState<{ client: any; type: 'to_configure' | 'expiring_soon' | 'to_restore' }[]>([])
   const [loading, setLoading] = useState(true)
 
   // Souscriptions boutique (admin uniquement → évite l'erreur de permission côté utilisateur)
@@ -167,7 +167,7 @@ export default function AccueilPage() {
           if (uid) userIdsWithSeances.add(uid)
         })
 
-        const alerts: { client: any; type: 'to_configure' | 'expiring_soon' | 'expired' | 'to_restore' }[] = []
+        const alerts: { client: any; type: 'to_configure' | 'expiring_soon' | 'to_restore' }[] = []
         for (const client of linkedClients) {
           const hasSeances = userIdsWithSeances.has(client.linkedUserId)
           if (!hasSeances) continue // pas de séances en ligne → pas concerné par l'accès séances
@@ -183,11 +183,11 @@ export default function AccueilPage() {
           } else if (!hasActif && hasInactif) {
             if (expiry === null) {
               alerts.push({ client, type: 'to_configure' })
-            } else if (expiry < now) {
-              alerts.push({ client, type: 'expired' })
-            } else if (expiry <= in7days) {
+            } else if (expiry >= now && expiry <= in7days) {
               alerts.push({ client, type: 'expiring_soon' })
             }
+            // expiry < now (déjà expiré) → aucune alerte : si rien n'a été changé avant
+            // l'échéance, c'est un blocage volontaire, inutile de le rappeler.
           }
         }
         setSeanceAccessAlerts(alerts)
@@ -672,20 +672,6 @@ export default function AccueilPage() {
                 </div>
                 <button onClick={clearExpiry} className="shrink-0 text-xs border border-orange-300 text-orange-700 hover:bg-orange-100 px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap">
                   Rétablir
-                </button>
-              </div>
-            )
-            if (type === 'expired') return (
-              <div key={client.id} className="flex items-center justify-between gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-                <div className="flex items-start gap-2">
-                  <span className="text-red-500 text-sm shrink-0">🔒</span>
-                  <div>
-                    <p className="text-sm font-semibold text-red-800">{name} — Accès séances expiré</p>
-                    <p className="text-xs text-red-600">Expiration : {expiry} · l'accès est automatiquement bloqué</p>
-                  </div>
-                </div>
-                <button onClick={clearExpiry} className="shrink-0 text-xs border border-red-300 text-red-700 hover:bg-red-100 px-3 py-1.5 rounded-lg font-medium transition whitespace-nowrap">
-                  Rétablir l'accès
                 </button>
               </div>
             )
