@@ -329,6 +329,11 @@ export default function ProfilPage() {
               <DocumentTextIcon className="w-4 h-4 text-gray-400 shrink-0" />
               <span className="text-sm text-gray-600">Conditions générales d'utilisation</span>
             </a>
+            <a href="/mentions-legales" target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition border-b border-gray-50">
+              <DocumentTextIcon className="w-4 h-4 text-gray-400 shrink-0" />
+              <span className="text-sm text-gray-600">Mentions légales</span>
+            </a>
             <a href="/data-deletion" target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-3 px-4 py-3 hover:bg-red-50 transition">
               <TrashIcon className="w-4 h-4 text-red-400 shrink-0" />

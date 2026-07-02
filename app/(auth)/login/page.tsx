@@ -304,6 +304,8 @@ export default function LoginPage() {
         <a href="/privacy-policy" className="hover:text-gray-600 hover:underline transition">Politique de confidentialité</a>
         <span>·</span>
         <a href="/terms" className="hover:text-gray-600 hover:underline transition">CGU</a>
+        <span>·</span>
+        <a href="/mentions-legales" className="hover:text-gray-600 hover:underline transition">Mentions légales</a>
       </div>
 
       {/* Dialog mot de passe oublié */}
