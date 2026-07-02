@@ -26,6 +26,24 @@ const prettyHost = (url: string) => {
   try { return new URL(url).host } catch { return url }
 }
 
+// Couleur déterministe par tag (même tag → même couleur). Classes en toutes lettres
+// pour que Tailwind les conserve au build (pas de concaténation dynamique de classes).
+const TAG_COLORS = [
+  { chip: 'bg-blue-50 text-blue-700',       hover: 'hover:bg-blue-100',    solid: 'bg-blue-600 text-white' },
+  { chip: 'bg-emerald-50 text-emerald-700', hover: 'hover:bg-emerald-100', solid: 'bg-emerald-600 text-white' },
+  { chip: 'bg-amber-50 text-amber-700',     hover: 'hover:bg-amber-100',   solid: 'bg-amber-600 text-white' },
+  { chip: 'bg-violet-50 text-violet-700',   hover: 'hover:bg-violet-100',  solid: 'bg-violet-600 text-white' },
+  { chip: 'bg-rose-50 text-rose-700',       hover: 'hover:bg-rose-100',    solid: 'bg-rose-600 text-white' },
+  { chip: 'bg-cyan-50 text-cyan-700',       hover: 'hover:bg-cyan-100',    solid: 'bg-cyan-600 text-white' },
+  { chip: 'bg-lime-50 text-lime-700',       hover: 'hover:bg-lime-100',    solid: 'bg-lime-600 text-white' },
+  { chip: 'bg-fuchsia-50 text-fuchsia-700', hover: 'hover:bg-fuchsia-100', solid: 'bg-fuchsia-600 text-white' },
+]
+const tagColor = (t: string) => {
+  let h = 0
+  for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0
+  return TAG_COLORS[h % TAG_COLORS.length]
+}
+
 export default function MesAppsPage() {
   const router = useRouter()
   const { userProfile } = useAuth()
@@ -178,10 +196,11 @@ export default function MesAppsPage() {
         <div className="flex gap-1.5 flex-wrap mb-3 items-center">
           {allTags.map((t) => {
             const on = filterTags.includes(t)
+            const c = tagColor(t)
             return (
               <button key={t}
                 onClick={() => setFilterTags((prev) => on ? prev.filter((x) => x !== t) : [...prev, t])}
-                className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${on ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition ${on ? c.solid : `${c.chip} ${c.hover}`}`}>
                 #{t}
               </button>
             )
@@ -241,12 +260,15 @@ export default function MesAppsPage() {
 
               {(app.tags ?? []).length > 0 && (
                 <div className="flex gap-1 flex-wrap mb-2">
-                  {(app.tags ?? []).map((t) => (
-                    <button key={t} onClick={() => setFilterTags((prev) => prev.includes(t) ? prev : [...prev, t])}
-                      className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition">
-                      #{t}
-                    </button>
-                  ))}
+                  {(app.tags ?? []).map((t) => {
+                    const c = tagColor(t)
+                    return (
+                      <button key={t} onClick={() => setFilterTags((prev) => prev.includes(t) ? prev : [...prev, t])}
+                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full transition ${c.chip} ${c.hover}`}>
+                        #{t}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
 
@@ -289,9 +311,9 @@ export default function MesAppsPage() {
             {form.tags.length > 0 && (
               <div className="flex gap-1.5 flex-wrap mb-2">
                 {form.tags.map((t) => (
-                  <span key={t} className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">
+                  <span key={t} className={`flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${tagColor(t).chip}`}>
                     #{t}
-                    <button type="button" onClick={() => removeTag(t)} className="text-blue-400 hover:text-blue-700">
+                    <button type="button" onClick={() => removeTag(t)} className="opacity-60 hover:opacity-100">
                       <XMarkIcon className="w-3 h-3" />
                     </button>
                   </span>
@@ -310,12 +332,15 @@ export default function MesAppsPage() {
             </div>
             {allTags.filter((t) => !form.tags.some((x) => x.toLowerCase() === t.toLowerCase())).length > 0 && (
               <div className="flex gap-1.5 flex-wrap mt-2">
-                {allTags.filter((t) => !form.tags.some((x) => x.toLowerCase() === t.toLowerCase())).map((t) => (
-                  <button key={t} type="button" onClick={() => addTag(t)}
-                    className="text-[11px] px-2 py-0.5 rounded-full border border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 transition">
-                    + {t}
-                  </button>
-                ))}
+                {allTags.filter((t) => !form.tags.some((x) => x.toLowerCase() === t.toLowerCase())).map((t) => {
+                  const c = tagColor(t)
+                  return (
+                    <button key={t} type="button" onClick={() => addTag(t)}
+                      className={`text-[11px] px-2 py-0.5 rounded-full transition ${c.chip} ${c.hover}`}>
+                      + {t}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
