@@ -44,9 +44,20 @@ function getRdvGroupKey(p: any, aboPeriods: AboPeriods): string | null {
   if (!userId) return null
   const periods = aboPeriods[userId]
   if (!periods || periods.length === 0) return null
+  // Rattachement explicite prioritaire : si le RDV référence un abonnement connu de ce client,
+  // on le rattache à cet abonnement même si sa date sort de la fenêtre [dateDebut, dateFin].
+  const aboId = p?.abonnementId
+  if (aboId && periods.some((per) => per.id === aboId)) return `${userId}:${aboId}`
   const ms = startOfDayMs((p?.date_planning?.seconds ?? 0) * 1000)
-  const match = periods.find((per) => ms >= per.start && ms <= per.end)
-  return match ? `${userId}:${match.id}` : null
+  if (ms <= 0) return null
+  // Sinon : l'abonnement le plus proche dans le temps. La date sert de repère, jamais de filtre
+  // bloquant — un RDV hors des bornes (rattrapage après la fin, séance avancée…) reste compté.
+  let best: string | null = null, bestDist = Infinity
+  for (const per of periods) {
+    const dist = ms >= per.start && ms <= per.end ? 0 : ms < per.start ? per.start - ms : ms - per.end
+    if (dist < bestDist) { bestDist = dist; best = per.id }
+  }
+  return best ? `${userId}:${best}` : null
 }
 
 function getRdvSequence(item: any, plannings: any[], aboPeriods: AboPeriods) {

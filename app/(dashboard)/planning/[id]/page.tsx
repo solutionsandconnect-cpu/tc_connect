@@ -321,27 +321,39 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   useEffect(() => {
     if (!planning || !clientId) { setRdvSequence(null); return }
     const type = (planning as any).type_planning || 'Séance'
-    const rdvSec = (planning as any).heure_planning_debut?.seconds ?? (planning as any).date_planning?.seconds ?? 0
-    const ms = startOfDayMs(rdvSec * 1000)
     const aboStart = (a: any) => a.dateDebut?.toMillis ? startOfDayMs(a.dateDebut.toMillis()) : 0
     const aboEnd = (a: any) => a.dateFin?.toMillis ? endOfDayMs(a.dateFin.toMillis()) : Infinity
-    const abo = clientAbonnements.find((a) => a.id === (planning as any).abonnementId)
-      ?? clientAbonnements.find((a) => ms > 0 && ms >= aboStart(a) && ms <= aboEnd(a))
-    if (!abo) { setRdvSequence(null); return }
-    const start = aboStart(abo)
-    const end = aboEnd(abo)
+    const periods = clientAbonnements.map((a) => ({ id: a.id, start: aboStart(a), end: aboEnd(a) }))
+    if (periods.length === 0) { setRdvSequence(null); return }
     const getUid = (p: any) =>
       p.ref_client?.id || p.ref_client?.path?.split('/').pop() ||
       (typeof p.ref_client === 'string' && p.ref_client ? p.ref_client.split('/').pop() : undefined) ||
       p.ref_users?.id || p.ref_users?.path?.split('/').pop() ||
       (typeof p.ref_users === 'string' && p.ref_users ? p.ref_users.split('/').pop() : undefined)
+    // Abonnement d'un RDV : rattachement explicite (abonnementId) sinon l'abonnement le plus
+    // proche dans le temps. La date sert de repère, jamais de filtre bloquant : un RDV hors des
+    // bornes [dateDebut, dateFin] (rattrapage après la fin, séance avancée…) reste rattaché.
+    const assignAbo = (p: any): string | null => {
+      const pAboId = (p as any).abonnementId
+      if (pAboId && periods.some((per) => per.id === pAboId)) return pAboId
+      const pSec = (p as any).heure_planning_debut?.seconds ?? (p as any).date_planning?.seconds ?? 0
+      const pms = startOfDayMs(pSec * 1000)
+      if (pms <= 0) return null
+      let best: string | null = null, bestDist = Infinity
+      for (const per of periods) {
+        const dist = pms >= per.start && pms <= per.end ? 0 : pms < per.start ? per.start - pms : pms - per.end
+        if (dist < bestDist) { bestDist = dist; best = per.id }
+      }
+      return best
+    }
+    const aboId = assignAbo(planning)
+    if (!aboId) { setRdvSequence(null); return }
     const grouped = plannings
-      .filter((p) => {
-        if (getUid(p) !== clientId) return false
-        const pSec = (p as any).heure_planning_debut?.seconds ?? (p as any).date_planning?.seconds ?? 0
-        const pms = startOfDayMs(pSec * 1000)
-        return pms > 0 && pms >= start && pms <= end && ((p as any).type_planning || 'Séance') === type
-      })
+      .filter((p) =>
+        getUid(p) === clientId &&
+        ((p as any).type_planning || 'Séance') === type &&
+        assignAbo(p) === aboId
+      )
       .sort((a, b) => {
         const sa = (a as any).heure_planning_debut?.seconds ?? (a as any).date_planning?.seconds ?? 0
         const sb = (b as any).heure_planning_debut?.seconds ?? (b as any).date_planning?.seconds ?? 0
