@@ -16,6 +16,7 @@ import AdresseAutocomplete from "@/components/ui/AdresseAutocomplete";
 import SuggestInput from "@/components/ui/SuggestInput";
 import { PhoneInput } from "@/components/ui/PhoneInput";
 import type { User, AbonnementEtat } from "@/types";
+import { ALL_BRANDS, BRANDS, normalizeMarques, type Brand } from "@/lib/brand";
 
 const PROFESSIONS = [
   "Agriculteur", "Architecte", "Assistant maternel", "Auxiliaire de vie",
@@ -43,6 +44,7 @@ type UserForm = {
   nom: string; prenom: string; indicatif_tel: string; phone_number: string; photo_url: string;
   genre: string; date_naissance: string; profession: string;
   adresse_postale: string; rue_adresse: string; ville_adresse: string; code_postale_adresse: string;
+  marques: Brand[];
 };
 
 export default function UsersPage() {
@@ -79,7 +81,7 @@ export default function UsersPage() {
 
   // ── Modal édition utilisateur ─────────────────────────────
   const [editModal, setEditModal] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
-  const emptyEditForm: UserForm = { nom: "", prenom: "", indicatif_tel: "+33", phone_number: "", photo_url: "", genre: "", date_naissance: "", profession: "", adresse_postale: "", rue_adresse: "", ville_adresse: "", code_postale_adresse: "" };
+  const emptyEditForm: UserForm = { nom: "", prenom: "", indicatif_tel: "+33", phone_number: "", photo_url: "", genre: "", date_naissance: "", profession: "", adresse_postale: "", rue_adresse: "", ville_adresse: "", code_postale_adresse: "", marques: ["coaching"] };
   const [editForm, setEditForm] = useState<UserForm>(emptyEditForm);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
@@ -89,6 +91,11 @@ export default function UsersPage() {
   const openEdit = (u: User) => {
     const uu = u as any;
     const dnDate = uu.date_naissance?.toDate?.();
+    // Espace(s) : lit User.marques ; sinon repli sur le client lié ; sinon coaching par défaut.
+    const linkedClient = clients.find((c) => c.id === uu.linkedClientId || (c as any).linkedUserId === u.id);
+    const marques: Brand[] = (Array.isArray(uu.marques) && uu.marques.length) || uu.marque
+      ? normalizeMarques(uu)
+      : linkedClient ? normalizeMarques(linkedClient as any) : ["coaching"];
     setEditForm({
       nom: u.nom ?? "",
       prenom: u.prenom ?? "",
@@ -102,6 +109,7 @@ export default function UsersPage() {
       rue_adresse: uu.rue_adresse ?? "",
       ville_adresse: uu.ville_adresse ?? "",
       code_postale_adresse: uu.code_postale_adresse ?? "",
+      marques,
     });
     setEditError("");
     setEditModal({ open: true, user: u });
@@ -139,6 +147,8 @@ export default function UsersPage() {
         rue_adresse: editForm.rue_adresse.trim() || undefined,
         ville_adresse: editForm.ville_adresse.trim() || undefined,
         code_postale_adresse: editForm.code_postale_adresse.trim() || undefined,
+        marques: editForm.marques,
+        marque: editForm.marques[0], // repli mono-univers (déprécié)
       });
       setEditModal({ open: false, user: null });
     } catch {
@@ -449,6 +459,27 @@ export default function UsersPage() {
                 Email de connexion : <span className="font-medium text-gray-700">{editModal.user?.email}</span>
                 <p className="text-xs text-gray-400 mt-0.5">Non modifiable (identifiant de connexion)</p>
               </div>
+              {editModal.user?.role_app !== "Admin" && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Espace(s) d&apos;accès</label>
+                  <div className="flex gap-2">
+                    {ALL_BRANDS.map((b) => {
+                      const on = editForm.marques.includes(b);
+                      return (
+                        <button key={b} type="button"
+                          onClick={() => setEditForm((f) => {
+                            const next = on ? f.marques.filter((x) => x !== b) : [...f.marques, b];
+                            return { ...f, marques: next.length ? next : f.marques }; // garder au moins un
+                          })}
+                          className={`flex-1 py-2 rounded-lg text-sm font-medium border transition ${on ? "bg-blue-600 text-white border-blue-600" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                          {BRANDS[b].nom}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Le ou les espaces que voit cette personne (au moins un). Utile pour les comptes sans fiche client (ex. inscription via un parcours sportif).</p>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Téléphone</label>
                 <PhoneInput

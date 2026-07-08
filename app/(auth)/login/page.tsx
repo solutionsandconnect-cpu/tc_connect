@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
+import { useBrand } from '@/context/BrandContext'
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { EyeIcon, EyeSlashIcon, XMarkIcon } from '@heroicons/react/24/outline'
@@ -17,6 +18,9 @@ export default function LoginPage() {
 
   const [tab, setTab] = useState<Tab>(initialTab)
   const { login, register, resetPassword } = useAuth()
+  const { brand } = useBrand()
+  // Nom affiché à l'entrée : « Enezo » sur le domaine Enezo, « TC Connect » ailleurs (coaching inchangé).
+  const nomEntree = brand === 'enezo' ? 'Enezo' : 'TC Connect'
   const router = useRouter()
 
   // Connexion
@@ -116,7 +120,7 @@ export default function LoginPage() {
 
       {/* Titre */}
       <p className="mt-8 mb-4 text-3xl font-bold text-gray-900 tracking-tight">
-        TC Connect
+        {nomEntree}
       </p>
 
       {/* Card */}

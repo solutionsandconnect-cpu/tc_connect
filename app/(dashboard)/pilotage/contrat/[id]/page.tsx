@@ -181,7 +181,7 @@ function LegalApercu({ legal }: { legal: LegalFields }) {
             {g.champs.map((ch) => (
               <div key={ch.key} className={ch.multiline ? 'sm:col-span-2' : ''}>
                 <dt className="text-[11px] text-gray-400">{ch.label}</dt>
-                <dd className="text-sm text-gray-700 whitespace-pre-wrap">{legal[ch.key]}</dd>
+                <dd className="text-sm text-gray-700 whitespace-pre-wrap">{ch.kind === 'toggle' ? (legal[ch.key] === 'oui' ? 'Oui' : 'Non') : legal[ch.key]}</dd>
               </div>
             ))}
           </dl>
@@ -1284,14 +1284,25 @@ export default function ContratPage() {
                       </summary>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 border-t border-gray-100">
                         {grp.champs.map((ch) => (
-                          <div key={ch.key} className={ch.multiline || ch.kind === 'taglist' ? 'sm:col-span-2' : ''}>
-                            <label className="block text-[11px] font-medium text-gray-600 mb-1">{ch.label}</label>
-                            {ch.kind === 'taglist' ? (
-                              <TagListField value={formLegal[ch.key] ?? ''} onChange={(v) => updL(ch.key, v)}
-                                placeholder={ch.placeholder} suggestions={ch.suggestions} />
+                          <div key={ch.key} className={ch.multiline || ch.kind === 'taglist' || ch.kind === 'toggle' ? 'sm:col-span-2' : ''}>
+                            {ch.kind === 'toggle' ? (
+                              <label className="flex items-start gap-2 cursor-pointer">
+                                <input type="checkbox" checked={formLegal[ch.key] === 'oui'}
+                                  onChange={(e) => updL(ch.key, e.target.checked ? 'oui' : 'non')}
+                                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                                <span className="text-[11px] font-medium text-gray-600">{ch.label}</span>
+                              </label>
                             ) : (
-                              <AutoTextarea value={formLegal[ch.key] ?? ''} onChange={(v) => updL(ch.key, v)}
-                                placeholder={ch.placeholder} multiline={!!ch.multiline} />
+                              <>
+                                <label className="block text-[11px] font-medium text-gray-600 mb-1">{ch.label}</label>
+                                {ch.kind === 'taglist' ? (
+                                  <TagListField value={formLegal[ch.key] ?? ''} onChange={(v) => updL(ch.key, v)}
+                                    placeholder={ch.placeholder} suggestions={ch.suggestions} />
+                                ) : (
+                                  <AutoTextarea value={formLegal[ch.key] ?? ''} onChange={(v) => updL(ch.key, v)}
+                                    placeholder={ch.placeholder} multiline={!!ch.multiline} />
+                                )}
+                              </>
                             )}
                             {ch.help && <p className="text-[10px] text-gray-400 mt-0.5">{ch.help}</p>}
                           </div>

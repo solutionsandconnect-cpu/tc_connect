@@ -2,6 +2,9 @@
 
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
+import { useBrand } from '@/context/BrandContext'
+import { type Brand } from '@/lib/brand'
+import { BrandSwitcher, BrandMark } from '@/components/layout/BrandSwitcher'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useMessagerieUnread } from '@/hooks/useMessagerieUnread'
 import { usePendingSubscriptions } from '@/hooks/usePendingSubscriptions'
@@ -40,12 +43,12 @@ export const navSections = [
     label: null, // pas de titre pour la section principale
     items: [
       { label: 'Accueil',           href: '/accueil',        icon: HomeIcon,                  iconActive: HomeSolid,         adminOnly: false, droit: null },
-      { label: 'Planning',          href: '/planning',       icon: CalendarIcon,              iconActive: CalendarSolid,     adminOnly: false, droit: 'planning' as const },
-      { label: 'Parcours Sportif',  href: '/mes-parcours',   icon: FireIcon,                  iconActive: FireSolid,         adminOnly: false, nonAdminOnly: true, droit: 'parcoursSportif' as const },
+      { label: 'Planning',          href: '/planning',       icon: CalendarIcon,              iconActive: CalendarSolid,     adminOnly: false, droit: 'planning' as const, marques: ['coaching'] as Brand[] },
+      { label: 'Parcours Sportif',  href: '/mes-parcours',   icon: FireIcon,                  iconActive: FireSolid,         adminOnly: false, nonAdminOnly: true, droit: 'parcoursSportif' as const, marques: ['coaching'] as Brand[] },
       { label: 'Notifications',     href: '/notifications',  icon: BellIcon,                  iconActive: BellSolid,         adminOnly: false, droit: 'notifications' as const },
       { label: 'Messagerie',        href: '/messagerie',     icon: ChatBubbleLeftRightIcon,   iconActive: ChatSolid,         adminOnly: false, droit: null },
       { label: 'Documents',         href: '/documents',      icon: FolderOpenIcon,            iconActive: FolderSolid,       adminOnly: false, droit: null },
-      { label: 'Boutique',          href: '/boutique',       icon: ShoppingBagIcon,           iconActive: ShoppingBagSolid,  adminOnly: false, droit: 'boutique' as const },
+      { label: 'Boutique',          href: '/boutique',       icon: ShoppingBagIcon,           iconActive: ShoppingBagSolid,  adminOnly: false, droit: 'boutique' as const, marques: ['enezo'] as Brand[] },
       { label: 'Mon profil',        href: '/profil',         icon: UserIcon,                  iconActive: UserSolid,         adminOnly: false, droit: null },
     ],
   },
@@ -88,20 +91,26 @@ export const navItems: any[] = navSections.flatMap((s) => s.items as any[])
 // Mobile bottom bar
 const mobileItems = [
   { label: 'Accueil',  href: '/accueil',       icon: HomeIcon,                iconActive: HomeSolid,         adminOnly: false, nonAdminOnly: false },
-  { label: 'Planning', href: '/planning',      icon: CalendarIcon,            iconActive: CalendarSolid,     adminOnly: false, nonAdminOnly: false },
+  { label: 'Planning', href: '/planning',      icon: CalendarIcon,            iconActive: CalendarSolid,     adminOnly: false, nonAdminOnly: false, marques: ['coaching'] as Brand[] },
   { label: 'Notifs',   href: '/notifications', icon: BellIcon,                iconActive: BellSolid,         adminOnly: false, nonAdminOnly: false },
   { label: 'Messages', href: '/messagerie',    icon: ChatBubbleLeftRightIcon, iconActive: ChatSolid,         adminOnly: false, nonAdminOnly: false },
   { label: 'Clients',  href: '/clients',       icon: UsersIcon,               iconActive: UsersSolid,        adminOnly: true,  nonAdminOnly: false },
-  { label: 'Boutique', href: '/boutique',      icon: ShoppingBagIcon,         iconActive: ShoppingBagSolid,  adminOnly: false, nonAdminOnly: true  },
+  { label: 'Boutique', href: '/boutique',      icon: ShoppingBagIcon,         iconActive: ShoppingBagSolid,  adminOnly: false, nonAdminOnly: true, marques: ['enezo'] as Brand[] },
   { label: 'Profil',   href: '/profil',        icon: UserIcon,                iconActive: UserSolid,         adminOnly: false, nonAdminOnly: false },
 ]
 
-export default function Navbar() {
+export default function Navbar({ offsetTop = false }: { offsetTop?: boolean }) {
   const pathname = usePathname()
   const router = useRouter()
   const { logout, userProfile } = useAuth()
   const isAdmin = userProfile?.role_app === 'Admin'
   const droits = userProfile?.droits
+  const { brand, allowedBrands, canSwitch, setBrand } = useBrand()
+
+  // Un item marqué d'un/plusieurs univers est masqué si l'univers actif n'en fait pas partie.
+  // Admin = voit tout (aucun filtre de marque). Item sans `marques` = partagé.
+  const brandAllows = (item: { marques?: Brand[] }) =>
+    isAdmin || !item.marques || item.marques.includes(brand)
 
   const { unreadCount } = useNotifications()
   const messagerieUnread = useMessagerieUnread()
@@ -116,13 +125,21 @@ export default function Navbar() {
   return (
     <>
       {/* ── SIDEBAR desktop ── */}
-      <aside className="hidden lg:flex flex-col fixed top-0 left-0 h-full w-64 bg-white border-r border-gray-200 z-40">
+      {/* offsetTop = bandeau d'impersonation présent (h-11) : on décale la sidebar dessous pour ne pas masquer le logo. */}
+      <aside className={`hidden lg:flex flex-col fixed left-0 w-64 bg-white border-r border-gray-200 z-40 ${offsetTop ? 'top-11 h-[calc(100%-2.75rem)]' : 'top-0 h-full'}`}>
 
         {/* Logo + user */}
         <div className="px-4 py-4 border-b border-gray-100 space-y-3">
           <button onClick={() => router.push('/accueil')} className="flex items-center gap-2.5 hover:opacity-80 transition">
-            <img src="/logo.PNG" alt="TC Connect" className="w-8 h-8 object-contain rounded-lg" />
-            <h1 className="text-lg font-bold text-blue-600">TC Connect</h1>
+            {brand === 'enezo' ? (
+              // Wordmark Enezo (contient déjà le nom) — remplace le combo cible+texte.
+              <img src="/logo-enezo-wordmark.png" alt="Enezo" className="h-8 w-auto object-contain" />
+            ) : (
+              <>
+                <BrandMark b={brand} className="w-8 h-8" />
+                <h1 className="text-lg font-bold text-blue-600">TC Connect</h1>
+              </>
+            )}
           </button>
           {userProfile && (
             <button onClick={() => router.push('/profil')} className="flex items-center gap-2.5 w-full hover:bg-gray-50 rounded-xl px-1 py-1 transition">
@@ -142,6 +159,12 @@ export default function Navbar() {
               </div>
             </button>
           )}
+          {canSwitch && (
+            <div>
+              <span className="block px-1 mb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Espace</span>
+              <BrandSwitcher brands={allowedBrands} active={brand} onSelect={setBrand} />
+            </div>
+          )}
         </div>
 
         {/* Liens groupés */}
@@ -151,6 +174,7 @@ export default function Navbar() {
             const visibleItems = section.items.filter((item) => {
               if (item.adminOnly && !isAdmin) return false
               if ((item as any).nonAdminOnly && isAdmin) return false
+              if (!brandAllows(item as any)) return false
               if (!isAdmin && item.droit) {
                 if (item.droit === 'exercices') return (droits as any)?.exercices === true
                 return (droits as any)?.[item.droit] !== false
@@ -181,12 +205,19 @@ export default function Navbar() {
                       <button
                         key={item.href}
                         onClick={() => router.push(item.href)}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                        className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
                           isActive
                             ? 'bg-blue-50 text-blue-600'
                             : 'text-gray-600 hover:bg-gray-100'
                         }`}
                       >
+                        {/* Rail « tu es ici » : Or sous Enezo (accent rare), transparent ailleurs. */}
+                        {isActive && (
+                          <span
+                            className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-r-full"
+                            style={{ background: 'var(--brand-accent, transparent)' }}
+                          />
+                        )}
                         <span className="relative shrink-0">
                           <Icon className="w-5 h-5" />
                           {badgeCount > 0 && (
@@ -209,8 +240,8 @@ export default function Navbar() {
             )
           })}
 
-          {/* Espace client (compte rattaché à une fiche client Pilotage) */}
-          {userProfile?.linkedClientId && (
+          {/* Espace client (compte rattaché à une fiche client Pilotage) — univers Enezo */}
+          {userProfile?.linkedClientId && brandAllows({ marques: ['enezo'] }) && (
             <div>
               <div className="px-3 mb-1">
                 <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Espace client</span>
@@ -261,6 +292,7 @@ export default function Navbar() {
             .filter((item) => {
               if (item.adminOnly && !isAdmin) return false
               if (item.nonAdminOnly && isAdmin) return false
+              if (!brandAllows(item as any)) return false
               if (!isAdmin && (item as any).droit) {
                 return (droits as any)?.[(item as any).droit] !== false
               }
@@ -278,10 +310,17 @@ export default function Navbar() {
                 <button
                   key={item.href}
                   onClick={() => router.push(item.href)}
-                  className={`flex flex-col items-center gap-0.5 flex-1 py-2 rounded-xl transition ${
+                  className={`relative flex flex-col items-center gap-0.5 flex-1 py-2 rounded-xl transition ${
                     isActive ? 'text-blue-600' : 'text-gray-400'
                   }`}
                 >
+                  {/* Rail « tu es ici » : Or sous Enezo (accent rare), transparent ailleurs. */}
+                  {isActive && (
+                    <span
+                      className="absolute top-0 h-0.5 w-6 rounded-full"
+                      style={{ background: 'var(--brand-accent, transparent)' }}
+                    />
+                  )}
                   <span className="relative">
                     <Icon className="w-6 h-6" />
                     {mobileBadge > 0 && (

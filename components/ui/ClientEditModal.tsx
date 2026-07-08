@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Timestamp, collection, addDoc, doc } from 'firebase/firestore'
+import { Timestamp, collection, addDoc, doc, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
 import { useClientNotes } from '@/hooks/useClientNotes'
@@ -18,6 +18,7 @@ import type {
   Client, Objectif, AntecedentMedical, AntecedentSportif,
   MaterialItem, StructureItem, AutreCoachItem, SuiviPasse, PlanningSlot, ContactSupplementaire,
 } from '@/types'
+import { ALL_BRANDS, BRANDS, normalizeMarques, type Brand } from '@/lib/brand'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -138,6 +139,7 @@ function toProperName(s: string) {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ClientForm = {
+  marques: Brand[]
   prenom: string; nom: string; email: string; indicatif_tel: string; telephone: string; genre: string
   dateNaissance: string; adresse: string; ville: string; codePostal: string
   profession: string; sportPratique: string; niveauSportif: string; actif: boolean
@@ -159,6 +161,7 @@ type ClientForm = {
 }
 
 const EMPTY_CLIENT: ClientForm = {
+  marques: ["coaching"],
   prenom: "", nom: "", email: "", indicatif_tel: "+33", telephone: "", genre: "", dateNaissance: "",
   adresse: "", ville: "", codePostal: "", profession: "", sportPratique: "",
   niveauSportif: "", actif: true, siret: "", nomEntreprise: "", adresseEntreprise: "", representantEntreprise: "",
@@ -874,7 +877,7 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
     if (!isOpen) return
     setError(""); setActiveTab("identite")
     if (!client) {
-      setForm(EMPTY_CLIENT); setShowEntreprise(false); return
+      setForm({ ...EMPTY_CLIENT, marques: isSC ? ["enezo"] : ["coaching"] }); setShowEntreprise(false); return
     }
     const cc = client as any
     let materielItems: MaterialItem[] = Array.isArray(cc.materielItems) ? cc.materielItems
@@ -899,6 +902,7 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
       })
     }
     setForm({
+      marques: (Array.isArray(cc.marques) && cc.marques.length) || cc.marque ? normalizeMarques(cc) : (isSC ? ["enezo"] : ["coaching"]),
       prenom: client.prenom ?? "", nom: client.nom ?? "", email: client.email ?? "", indicatif_tel: (client as any).indicatif_tel ?? "+33", telephone: client.telephone ?? "", genre: (client as any).genre ?? "",
       dateNaissance: toDateInput(client.dateNaissance ?? null), adresse: client.adresse ?? "",
       ville: client.ville ?? "", codePostal: client.codePostal ?? "", profession: client.profession ?? "",
@@ -959,6 +963,8 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
       const f = form
       const data: any = {
         userId: currentUser!.uid,
+        marques: f.marques,
+        marque: f.marques[0], // repli mono-univers (déprécié) pour lecteurs legacy
         prenom: (f.prenom ?? "").trim(), nom: (f.nom ?? "").trim(),
         email: f.email || undefined, indicatif_tel: f.indicatif_tel || undefined, telephone: f.telephone || undefined, genre: f.genre || undefined,
         dateNaissance: fromDateInput(f.dateNaissance),
@@ -989,6 +995,11 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
       }
       if (client) {
         await updateClient(client.id, data)
+        // Propage l'espace vers le compte lié : la marque effective est lue sur le User, pas le Client.
+        const linkedUserId = (client as any).linkedUserId
+        if (linkedUserId) {
+          await updateDoc(doc(db, "users", linkedUserId), { marques: f.marques, marque: f.marques[0] })
+        }
       } else {
         const { id: newId } = await createClient(data)
         if (newId && f.pendingNotes.length) {
@@ -1053,6 +1064,27 @@ export default function ClientEditModal({ client, isOpen, onClose, onSaved, isSC
 
             {/* ── TAB: IDENTITÉ ── */}
             {activeTab === "identite" && <>
+              <Section title="Marque">
+                <Field label="Univers de rattachement">
+                  <div className="flex gap-2">
+                    {ALL_BRANDS.map((b) => {
+                      const on = form.marques.includes(b)
+                      return (
+                        <button key={b} type="button"
+                          onClick={() => setForm((p) => {
+                            const next = on ? p.marques.filter((x) => x !== b) : [...p.marques, b]
+                            return { ...p, marques: next.length ? next : p.marques } // garder au moins un
+                          })}
+                          className={`flex-1 py-2 rounded-lg text-sm font-medium border transition ${on ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                          {BRANDS[b].nom}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Détermine le ou les espaces client que verra cette personne (au moins un). Cocher les deux = accès aux deux univers avec sélecteur in-app. « Enezo » = clients de l&apos;activité dev.</p>
+                </Field>
+              </Section>
+
               <Section title="Identité">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="Prénom"><input className={inputCls} placeholder="Jean (optionnel pour sociétés)" value={form.prenom ?? ""} onChange={(e) => setForm((p) => ({ ...p, prenom: toProperName(e.target.value) }))} /></Field>

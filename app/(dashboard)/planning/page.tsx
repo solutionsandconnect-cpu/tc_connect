@@ -20,6 +20,7 @@ import {
   BoltIcon, CheckCircleIcon,
 } from '@heroicons/react/24/outline'
 import { useActivites } from '@/hooks/useActivites'
+import BrandGuard from '@/components/BrandGuard'
 
 const ETATS = ['Non calé', 'Calé', 'Annulé', 'Effectué']
 
@@ -215,6 +216,14 @@ const emptyForm = {
 type ViewMode = 'semaine' | 'mois'
 
 export default function PlanningPage() {
+  return (
+    <BrandGuard allow={['coaching']}>
+      <PlanningPageInner />
+    </BrandGuard>
+  )
+}
+
+function PlanningPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { currentUser, userProfile } = useAuth()

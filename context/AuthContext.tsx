@@ -119,6 +119,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (c.codePostal) userData.code_postale_adresse = c.codePostal
         if (c.profession) userData.profession = c.profession
         userData.linkedClientId = clientSnap.docs[0].id
+        // Propage l'espace/marque du client vers le compte (source lue par BrandContext).
+        if (Array.isArray(c.marques) && c.marques.length) { userData.marques = c.marques; userData.marque = c.marques[0] }
+        else if (c.marque) { userData.marques = [c.marque]; userData.marque = c.marque }
       }
     } catch {}
 

@@ -18,6 +18,8 @@ import {
 import Badge from '@/components/ui/Badge'
 import { formatHeure, getEtatBadge } from '@/lib/planningUtils'
 import { navItems } from '@/components/layout/Navbar'
+import { useBrand } from '@/context/BrandContext'
+import { BrandSwitcher } from '@/components/layout/BrandSwitcher'
 import { useStoreApps } from '@/hooks/useStoreApps'
 import { useTrips } from '@/hooks/useTrips'
 import { tripProgress } from '@/lib/tripsService'
@@ -40,6 +42,7 @@ export default function AccueilPage() {
   const router = useRouter()
   const isAdmin = userProfile?.role_app === 'Admin'
   const droits = userProfile?.droits as any
+  const { brand, allowedBrands, canSwitch, setBrand } = useBrand()
 
   const [rdvAujourdhui, setRdvAujourdhui] = useState<any[]>([])
   const [activitesAujourdhui, setActivitesAujourdhui] = useState<any[]>([])
@@ -457,6 +460,14 @@ export default function AccueilPage() {
   return (
     <div className="space-y-6">
 
+      {/* Sélecteur d'espace — mobile uniquement (desktop = dans la sidebar) */}
+      {canSwitch && (
+        <div className="lg:hidden">
+          <span className="block mb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Espace</span>
+          <BrandSwitcher brands={allowedBrands} active={brand} onSelect={setBrand} />
+        </div>
+      )}
+
       {/* En-tête */}
       <div>
         <h1 className="text-2xl font-bold text-gray-800">
@@ -847,6 +858,7 @@ export default function AccueilPage() {
           if (mobileBarHrefs.includes(item.href)) return false
           if (item.adminOnly && !isAdmin) return false
           if (item.nonAdminOnly && isAdmin) return false
+          if (!isAdmin && item.marques && !item.marques.includes(brand)) return false
           if (!isAdmin && item.droit) {
             if (item.droit === 'exercices') return droits?.exercices === true
             return droits?.[item.droit] !== false

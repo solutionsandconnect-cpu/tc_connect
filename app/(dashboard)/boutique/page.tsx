@@ -11,6 +11,7 @@ import { doc, updateDoc, getDoc, Timestamp, collection, addDoc, getDocs, query, 
 import { db } from "@/lib/firebase";
 import { copyText } from "@/lib/clipboard";
 import Modal from "@/components/ui/Modal";
+import BrandGuard from "@/components/BrandGuard";
 import { DEFAULT_DROITS } from "@/types";
 import type { StoreApp, StoreSubStatut, StoreReview, StoreSubscription } from "@/types";
 
@@ -35,6 +36,14 @@ const PERIOD_LABEL: Record<StoreApp["periodicite"], string> = {
 };
 
 export default function BoutiquePage() {
+  return (
+    <BrandGuard allow={["enezo"]}>
+      <BoutiquePageInner />
+    </BrandGuard>
+  );
+}
+
+function BoutiquePageInner() {
   const router = useRouter();
   const { currentUser, userProfile } = useAuth();
   const isAdmin = userProfile?.role_app === "Admin";

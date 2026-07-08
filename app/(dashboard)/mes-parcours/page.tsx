@@ -29,6 +29,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { StarIcon as StarSolid } from '@heroicons/react/24/solid'
 import { StarIcon as StarOutline } from '@heroicons/react/24/outline'
+import BrandGuard from '@/components/BrandGuard'
 
 interface Review {
   id: string
@@ -135,6 +136,14 @@ const BENEFITS = [
 ]
 
 export default function MesParcoursPage() {
+  return (
+    <BrandGuard allow={['coaching']}>
+      <MesParcoursPageInner />
+    </BrandGuard>
+  )
+}
+
+function MesParcoursPageInner() {
   const { currentUser, userProfile } = useAuth()
   const router = useRouter()
   const isAdmin = userProfile?.role_app === 'Admin'

@@ -88,6 +88,37 @@
   --color-warning:      #F9CF58;
 }
 
+/* ── Thème Enezo ────────────────────────────────────────────────────────────
+   Marque Enezo = Petrol #377684 / Petrol foncé #2B5E6A (charte).
+   Comme toute la couleur primaire de l'app passe par la famille `blue-*`
+   (elle-même remappée sur le gris Flutter #737374 par défaut), il suffit de
+   re-surcharger `--color-blue-*` en Petrol quand l'espace actif est Enezo :
+   toute l'app (boutons, états actifs, focus, liens…) se re-thème d'un coup.
+   `:root[data-brand="enezo"]` (spécificité 0,2,0) bat le `:root`/`@theme` par défaut.
+   `data-brand` est posé sur <html> par le BrandContext selon la marque active. */
+:root[data-brand="enezo"] {
+  --color-blue-50:  #eef3f4;
+  --color-blue-100: #d5e2e5;
+  --color-blue-200: #aec8ce;
+  --color-blue-300: #7fa8b1;
+  --color-blue-400: #558a95;
+  --color-blue-500: #3f7d8a;
+  --color-blue-600: #377684;  /* Petrol (primaire) */
+  --color-blue-700: #2b5e6a;  /* Petrol foncé */
+  --color-blue-800: #244e58;
+  --color-blue-900: #1e4149;
+  /* Accent Or (charte Enezo, « accent rare ») : réservé aux indicateurs d'état
+     actif (rail « tu es ici » de la nav, coche du sélecteur d'espace). Non défini
+     hors Enezo → les usages retombent via `var(--brand-accent, …)` sur transparent
+     (rail) ou le primaire (coche) → coaching strictement inchangé. */
+  --brand-accent: #d2a244;
+}
+
+/* Charte Enezo : titres en Montserrat (le corps reste en Inter). Coaching = inchangé. */
+:root[data-brand="enezo"] :is(h1, h2, h3) {
+  font-family: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

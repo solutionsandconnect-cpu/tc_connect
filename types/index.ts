@@ -48,6 +48,8 @@ export interface User {
   role_app: RoleApp
   droits?: Droits
   linkedClientId?: string   // si ce compte est rattaché à une fiche client (espace client Pilotage)
+  marques?: ('coaching' | 'enezo')[]  // univers autorisés (« une app, deux portes ») — multi ; absent/vide = coaching
+  marque?: 'coaching' | 'enezo'  // (DÉPRÉCIÉ) ancien champ mono-univers, gardé en repli de lecture
   // Contact d'urgence (éditable depuis le profil)
   contactUrgenceNom?: string
   contactUrgenceTel?: string
@@ -260,6 +262,12 @@ export interface LegalFields {
   // Modalité « Reconduction & résiliation » du devis (préavis, plafond de révision tarifaire…).
   // Vide = texte standard auto (préavis 2 mois, révision annuelle possible).
   reconduction: string
+  // Clause de référence commerciale (contrat de prestation), tri-état 'oui'/'non' :
+  // 'oui' (défaut) = insère un article autorisant le Prestataire à citer le nom/logo du Client
+  // et à présenter l'app réalisée dans sa communication (par dérogation à la confidentialité).
+  // 'non' = pas d'article. Tri-état (pas vide) pour que le décochage PERSISTE au rechargement
+  // (resetForms n'écrase le défaut qu'avec une valeur sauvegardée non-vide).
+  clauseReference?: string
 }
 
 // Contenu structuré « projet » (partagé par le contrat, réutilisé par les documents)
@@ -672,6 +680,8 @@ export interface ContactSupplementaire {
 export interface Client {
   id: string
   userId: string            // UID du coach propriétaire
+  marques?: ('coaching' | 'enezo')[]  // univers de rattachement (« une app, deux portes ») — multi ; absent/vide = coaching
+  marque?: 'coaching' | 'enezo'  // (DÉPRÉCIÉ) ancien champ mono-univers, gardé en repli de lecture
   prenom: string
   nom: string
   email?: string

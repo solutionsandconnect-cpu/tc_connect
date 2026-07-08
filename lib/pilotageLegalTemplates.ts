@@ -16,13 +16,13 @@ export function defaultLegalFields(over: Partial<LegalFields> = {}): LegalFields
     date: '', lieu: '', objet: '', prixCreation: '', prixAbo: '',
     donneesTraitees: '', finalites: '', personnesConcernees: '', dureeConservation: '', sousTraitantsUlterieurs: '',
     etendueDroits: '', exclusivite: '', territoire: '', duree: '',
-    ajustementsInclus: '', reconduction: '',
+    ajustementsInclus: '', reconduction: '', clauseReference: 'oui',
     ...over,
   }
 }
 
 // ── Schéma de saisie (pour générer le formulaire d'édition) ─────────────────
-export interface LegalFieldDef { key: keyof LegalFields; label: string; placeholder?: string; multiline?: boolean; help?: string; kind?: 'taglist'; suggestions?: string[] }
+export interface LegalFieldDef { key: keyof LegalFields; label: string; placeholder?: string; multiline?: boolean; help?: string; kind?: 'taglist' | 'toggle'; suggestions?: string[] }
 
 // Sous-traitants ultérieurs proposés (clic = ajout) — à ne garder QUE ceux réellement utilisés.
 export const SOUS_TRAITANTS_SUGGESTIONS = [
@@ -141,6 +141,12 @@ export function legalFieldGroupsAll(): LegalFieldGroup[] {
         { key: 'territoire', label: 'Territoire', placeholder: 'ex : Monde entier (app accessible en ligne)', help: "Zone où le client peut exploiter l'app (≠ droit applicable, qui lui reste le droit français). Une app en ligne = « Monde entier » ; ne restreins (ex. France) que pour une revente/marque blanche limitée à un pays." },
       ],
     },
+    {
+      titre: 'Référence & communication (contrat de prestation)',
+      champs: [
+        { key: 'clauseReference', label: 'Autoriser la référence commerciale', kind: 'toggle', help: "Coché = ajoute au contrat de prestation un article t'autorisant à citer le nom/logo du client et à présenter l'app réalisée dans ta communication (site, portfolio, réseaux). Version forte, par dérogation à la confidentialité." },
+      ],
+    },
   ]
 }
 
@@ -177,6 +183,25 @@ function entreLesSoussignes(f: LegalFields, rolePresta: string, roleClient: stri
     `${g(f, 'prestataireNom')}, ${g(f, 'prestataireStatut')}, immatriculée sous le numéro SIRET ${g(f, 'prestataireSiret')}, dont le siège est situé ${g(f, 'prestataireAdresse')}, représentée par ${g(f, 'prestataireRepresentant')}, ci-après « ${rolePresta} » ;`,
     `Et ${g(f, 'clientNom')}${clientParts.length ? `, ${clientParts.join(', ')}` : ''}, ci-après « ${roleClient} » ;`,
     `Il a été convenu ce qui suit.`,
+  ]
+}
+
+// Articles de fin du contrat de prestation. La clause de référence commerciale (version forte,
+// opt-in via f.clauseReference) est insérée AVANT le droit applicable, qui est alors renuméroté 14.
+function prestationClotureArticles(f: LegalFields): LegalArticle[] {
+  const droitApplicable = (n: number): LegalArticle => ({
+    titre: `Article ${n} — Droit applicable et litiges`,
+    paragraphes: [
+      `Le présent contrat est soumis au droit français. À défaut d'accord amiable, tout litige sera porté devant les tribunaux compétents.`,
+    ],
+  })
+  if (f.clauseReference !== 'oui') return [droitApplicable(13)]
+  return [
+    { titre: 'Article 13 — Référence commerciale et communication', paragraphes: [
+      `Le Client autorise expressément le Prestataire, y compris par dérogation à l'article « Confidentialité » du présent contrat, à utiliser librement, comme il l'entend, son nom, sa dénomination sociale et son logo, ainsi qu'à présenter l'application réalisée (captures d'écran, description, démonstration) à titre de référence dans l'ensemble de ses supports de communication, présents et à venir (site internet, portfolio, réseaux sociaux, propositions commerciales, présentations).`,
+      `Cette autorisation est consentie à titre gratuit, sans limitation de durée ni de territoire, et à titre irrévocable pendant la durée du contrat et postérieurement à celui-ci ; le Client renonce à s'y opposer. Le Prestataire s'abstient toutefois de divulguer les données personnelles des utilisateurs de l'application.`,
+    ] },
+    droitApplicable(14),
   ]
 }
 
@@ -225,9 +250,7 @@ function buildPrestation(f: LegalFields): LegalDocStruct {
       { titre: 'Article 12 — Résiliation', paragraphes: [
         `En cas de manquement grave non réparé sous 30 jours après mise en demeure, chaque partie peut résilier le contrat. L'abonnement peut être résilié par chaque partie avec un préavis d'un mois.`,
       ] },
-      { titre: 'Article 13 — Droit applicable et litiges', paragraphes: [
-        `Le présent contrat est soumis au droit français. À défaut d'accord amiable, tout litige sera porté devant les tribunaux compétents.`,
-      ] },
+      ...prestationClotureArticles(f),
     ],
     cloture: clotureSignatures(f),
     signataires: { roleA: 'Le Prestataire', roleB: 'Le Client' },

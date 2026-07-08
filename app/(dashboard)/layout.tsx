@@ -183,7 +183,7 @@ export default function DashboardLayout({
         </div>
       )}
 
-      <Navbar />
+      <Navbar offsetTop={!!impersonation} />
 
       <main className={`lg:ml-64 pb-nav-safe lg:pb-0 min-h-screen overflow-x-clip${impersonation ? ' pt-11' : ''}`}>
         <div className="px-4 py-6 min-w-0">

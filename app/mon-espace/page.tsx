@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { FolderIcon, ArrowRightIcon } from '@heroicons/react/24/outline'
+import BrandGuard from '@/components/BrandGuard'
 
 interface ContratItem {
   id: string
@@ -19,6 +20,14 @@ const STATUT: Record<string, { label: string; cls: string }> = {
 }
 
 export default function MonEspacePage() {
+  return (
+    <BrandGuard allow={['enezo']}>
+      <MonEspacePageInner />
+    </BrandGuard>
+  )
+}
+
+function MonEspacePageInner() {
   const { currentUser, loading: authLoading } = useAuth()
   const [contrats, setContrats] = useState<ContratItem[] | null>(null)
   const [error, setError] = useState('')
