@@ -91,7 +91,7 @@ Pour toute question ou assistance, n'hésitez pas à revenir vers nous :<br>
               </td>
               <td style="text-align: right;">
                 <a href="https://www.facebook.com/share/14SVaPgDpL/?mibextid=wwXIfr" style="display: inline-block; margin-right: 5px;"><img src="https://drive.google.com/thumbnail?id=1keeN2l14ufTvY5hHUQOGJwSADT-9KWhg" width="24" style="border-radius: 50%;"></a>
-                <a href="https://www.instagram.com/solutionsandconnect/" style="display: inline-block; margin-right: 5px;"><img src="https://drive.google.com/thumbnail?id=14oeulhQPW-JDld8qJSorg5m6IcM7EX5z" width="24" style="border-radius: 50%;"></a>
+                <a href="https://www.instagram.com/enezo.officiel/" style="display: inline-block; margin-right: 5px;"><img src="https://drive.google.com/thumbnail?id=14oeulhQPW-JDld8qJSorg5m6IcM7EX5z" width="24" style="border-radius: 50%;"></a>
                 <a href="https://wa.me/33679408254" style="display: inline-block;"><img src="https://drive.google.com/thumbnail?id=1yJQUZRvuNFRBZhvTlo341nF5R6SmSpLy" width="24" style="border-radius: 50%;"></a>
               </td>
             </tr>
