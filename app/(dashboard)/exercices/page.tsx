@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { useExercices } from '@/hooks/useExercices'
-import { uploadImage } from '@/lib/uploadImage'
+import { uploadImage, deleteImage } from '@/lib/uploadImage'
 import Modal from '@/components/ui/Modal'
 import { PlusIcon, MagnifyingGlassIcon, PhotoIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
@@ -88,8 +88,11 @@ export default function ExercicesPage() {
   const handleImageUpload = async (file: File) => {
     setUploadingImage(true)
     try {
+      const prev = form.image_exercice
       const url = await uploadImage(file, `exercices/${Date.now()}_${file.name}`)
       setForm((f) => ({ ...f, image_exercice: url }))
+      // Remplacement d'une image uploadée dans cette session mais pas encore enregistrée → nettoyage.
+      if (prev && prev !== editItem?.image_exercice) await deleteImage(prev)
     } catch {
       alert("Erreur lors de l'upload de l'image")
     } finally {
@@ -100,7 +103,10 @@ export default function ExercicesPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (editItem) {
+      const oldImage = editItem.image_exercice
       await updateExercice(editItem.id, form)
+      // Image retirée ou remplacée → supprimer l'ancienne du stockage.
+      if (oldImage && oldImage !== form.image_exercice) await deleteImage(oldImage)
     } else {
       await addExercice(form as any)
     }
@@ -366,7 +372,14 @@ export default function ExercicesPage() {
             Annuler
           </button>
           <button
-            onClick={() => showDeleteConfirm && deleteExercice(showDeleteConfirm).then(() => setShowDeleteConfirm(null))}
+            onClick={() => {
+              if (!showDeleteConfirm) return
+              const ex = exercices.find((e) => e.id === showDeleteConfirm)
+              deleteExercice(showDeleteConfirm).then(() => {
+                if (ex?.image_exercice) deleteImage(ex.image_exercice) // nettoyage Storage
+                setShowDeleteConfirm(null)
+              })
+            }}
             className="flex-1 bg-red-500 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition"
           >
             Supprimer

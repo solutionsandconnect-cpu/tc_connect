@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useExercices } from '@/hooks/useExercices'
-import { uploadImage } from '@/lib/uploadImage'
+import { uploadImage, deleteImage } from '@/lib/uploadImage'
 import Modal from '@/components/ui/Modal'
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon,
@@ -74,8 +74,12 @@ export default function DetailExercicePage() {
   const handleImageUpload = async (file: File) => {
     setUploadingImage(true)
     try {
+      const prev = form.image_exercice
       const url = await uploadImage(file, `exercices/${Date.now()}_${file.name}`)
       setForm((f) => ({ ...f, image_exercice: url }))
+      // Remplacement d'une image uploadée dans CETTE session mais pas encore enregistrée → on la nettoie.
+      // (L'image déjà enregistrée, elle, n'est supprimée qu'à l'enregistrement, pour ne rien perdre si on annule.)
+      if (prev && prev !== exercice.image_exercice) await deleteImage(prev)
     } catch {
       alert("Erreur lors de l'upload de l'image")
     } finally {
@@ -85,13 +89,18 @@ export default function DetailExercicePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    const oldImage = exercice.image_exercice
     await updateExercice(id, form)
+    // Image retirée ou remplacée → supprimer l'ancienne du stockage (plus d'orphelin).
+    if (oldImage && oldImage !== form.image_exercice) await deleteImage(oldImage)
     setExercice({ ...exercice, ...form })
     setShowEditModal(false)
   }
 
   const handleDelete = async () => {
+    const image = exercice.image_exercice
     await deleteExercice(id)
+    if (image) await deleteImage(image)
     router.push('/exercices')
   }
 
