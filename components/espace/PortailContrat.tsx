@@ -154,7 +154,7 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
     }
   }
 
-  const companyName = data.company?.nom || 'Solutions & Connect'
+  const companyName = data.company?.nom || 'Enezo'
 
   return (
     <div className="min-h-screen bg-gray-50">

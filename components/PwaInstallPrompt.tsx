@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ArrowDownTrayIcon, XMarkIcon, ShareIcon } from '@heroicons/react/24/outline'
+import { useBrand } from '@/context/BrandContext'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -11,6 +12,8 @@ type BeforeInstallPromptEvent = Event & {
 const DISMISS_KEY = 'pwa-install-dismissed'
 
 export default function PwaInstallPrompt() {
+  const { brand } = useBrand()
+  const nomApp = brand === 'enezo' ? 'Enezo' : 'TC Connect'
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null)
   const [visible, setVisible] = useState(false)
   const [isIos, setIsIos] = useState(false)
@@ -73,7 +76,7 @@ export default function PwaInstallPrompt() {
             <ArrowDownTrayIcon className="w-5 h-5 text-blue-600" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-900">Installer TC Connect</p>
+            <p className="text-sm font-semibold text-gray-900">Installer {nomApp}</p>
             <p className="text-xs text-gray-500 mt-0.5">
               Ajoutez l&apos;app à votre écran d&apos;accueil pour une vraie expérience d&apos;application et recevoir les notifications.
             </p>

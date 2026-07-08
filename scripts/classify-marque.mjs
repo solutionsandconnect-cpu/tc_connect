@@ -84,7 +84,7 @@ async function main() {
   factures.forEach((d) => { const f = d.data(); if (f.contratId) addReason(f.clientId, 'facture liée à un contrat') })
   abos.forEach((d) => {
     const a = d.data()
-    if (a.categorie === 'S&C') addReason(a.clientId, 'abonnement catégorie S&C')
+    if (a.categorie === 'S&C' || a.categorie === 'Enezo') addReason(a.clientId, `abonnement catégorie ${a.categorie}`)
     else if (isEnezoCompany(a.companyNom)) addReason(a.clientId, `abonnement société « ${a.companyNom} »`)
   })
 

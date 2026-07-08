@@ -27,10 +27,10 @@ export default function DataDeletionPage() {
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-5">
               <p className="text-sm text-gray-600 mb-1">Envoyez un e-mail à :</p>
               <a
-                href="mailto:solutionsandconnect@gmail.com?subject=Demande de suppression de compte TC Connect&body=Bonjour,%0D%0A%0D%0AJe souhaite supprimer mon compte TC Connect et l'ensemble de mes données personnelles.%0D%0A%0D%0AMon adresse e-mail de compte : [votre email]%0D%0A%0D%0ACordialement"
+                href="mailto:contact@enezo.fr?subject=Demande de suppression de compte TC Connect&body=Bonjour,%0D%0A%0D%0AJe souhaite supprimer mon compte TC Connect et l'ensemble de mes données personnelles.%0D%0A%0D%0AMon adresse e-mail de compte : [votre email]%0D%0A%0D%0ACordialement"
                 className="text-lg font-semibold text-blue-600 hover:underline"
               >
-                solutionsandconnect@gmail.com
+                contact@enezo.fr
               </a>
               <p className="text-sm text-gray-500 mt-2">
                 Objet : <em>Demande de suppression de compte TC Connect</em>
@@ -76,7 +76,7 @@ export default function DataDeletionPage() {
               Pour toute question sur la gestion de vos données personnelles, consultez notre{' '}
               <a href="/privacy-policy" className="text-blue-600 hover:underline">Politique de confidentialité</a>{' '}
               ou contactez-nous à{' '}
-              <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>.
+              <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>.
             </p>
           </section>
         </div>

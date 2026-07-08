@@ -5,11 +5,11 @@ export type { LegalFields } from '@/types'
 
 export function defaultLegalFields(over: Partial<LegalFields> = {}): LegalFields {
   return {
-    prestataireNom: 'Solutions & Connect',
+    prestataireNom: 'Enezo',
     prestataireStatut: 'micro-entreprise (entrepreneur individuel)',
     prestataireSiret: '',
     prestataireAdresse: '',
-    prestataireEmail: 'solutionsandconnect@gmail.com',
+    prestataireEmail: 'contact@enezo.fr',
     prestataireTel: '+33 6 79 40 82 54',
     prestataireRepresentant: '',
     clientNom: '', clientRepresentant: '', clientAdresse: '', clientSiret: '',

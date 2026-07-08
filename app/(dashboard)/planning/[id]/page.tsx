@@ -57,7 +57,7 @@ const NOTE_TYPES_BASE = ['Observation', 'Alerte', 'Bilan', 'Objectif', 'Autre']
 const NOTE_TYPES_KEY = 'tc_note_types_custom'
 const TYPES_RDV = [
   { groupe: 'TC', options: ['Séance', 'Programme', 'Rendez-vous informations', 'Rendez-vous bilan', 'Règlement TC', 'Séance en autonomie', 'Autre activité', 'Parcours sportif'] },
-  { groupe: 'S&C', options: ['Rendez-vous infos S&C', 'Rendez-vous bilan S&C', 'Règlement S&C'] },
+  { groupe: 'Enezo', options: ['Rendez-vous infos Enezo', 'Rendez-vous bilan Enezo', 'Règlement Enezo'] },
   { groupe: 'FFD', options: ['Détection', 'Règlement FFD'] },
   { groupe: 'EMF', options: ['Séminaire', 'Règlement EMF'] },
 ]
@@ -945,7 +945,8 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   const mapsLink = adresse ? `https://maps.google.com/?q=${encodeURIComponent(adresse)}` : null
   const lastWithCr = derniersRdv.find((r) => r.observations_rdv || r.cr_rdv_moi || r.cr_rdv_client)
 
-  const isSC = ((planning as any).type_planning ?? '').includes('S&C')
+  // Enezo (ex S&C) : type_planning migré contient « Enezo » ; on garde « S&C » pour les non-migrés.
+  const isSC = /S&C|Enezo/.test((planning as any).type_planning ?? '')
 
   // Verrou questionnaire : RDV passé (heure_planning_fin, sinon fin de journée de date_planning)
   const sessionEndForLock: Date | null = (() => {

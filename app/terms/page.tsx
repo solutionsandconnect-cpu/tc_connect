@@ -17,7 +17,7 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">1. Objet</h2>
             <p>
               Les présentes Conditions Générales d'Utilisation (CGU) régissent l'accès et l'utilisation de
-              l'application TC Connect, éditée par Solutions &amp; Connect. En utilisant l'Application, vous
+              l'application TC Connect, éditée par Enezo (Teddy BLOUET, entrepreneur individuel). En utilisant l'Application, vous
               acceptez ces CGU sans réserve.
             </p>
           </section>
@@ -72,7 +72,7 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">6. Propriété intellectuelle</h2>
             <p>
               L'ensemble des éléments de l'Application (code source, interfaces, logos, contenus) sont la
-              propriété exclusive de Solutions &amp; Connect, protégés par le droit de la propriété
+              propriété exclusive de Teddy BLOUET (Enezo), protégés par le droit de la propriété
               intellectuelle. Toute reproduction ou utilisation non autorisée est interdite.
             </p>
           </section>
@@ -100,7 +100,7 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">9. Résiliation</h2>
             <p>
               Vous pouvez supprimer votre compte à tout moment en nous contactant à{' '}
-              <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>{' '}
+              <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>{' '}
               ou via la fonctionnalité de suppression de compte dans l'Application. La résiliation entraîne
               la suppression de vos données conformément à notre politique de confidentialité.
             </p>
@@ -118,7 +118,7 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">11. Contact</h2>
             <p>
               Pour toute question :{' '}
-              <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>
+              <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>
             </p>
           </section>
         </div>

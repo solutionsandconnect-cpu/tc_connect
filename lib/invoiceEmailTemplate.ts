@@ -11,7 +11,7 @@ export interface InvoiceEmailVars {
 }
 
 const TEL = "+33 6 79 40 82 54";
-const MAIL = "solutionsandconnect@gmail.com";
+const MAIL = "contact@enezo.fr";
 
 export function buildInvoiceEmailHtml({ clientName, docLabel, number, dateEnvoi, pdfUrl }: InvoiceEmailVars): string {
   const label = docLabel.toLowerCase();
@@ -64,7 +64,7 @@ Pour toute question ou assistance, n'hésitez pas à revenir vers nous :<br>
     <tr><td height="10"></td></tr>
     <tr>
       <td style="text-align: center;">
-        <h2 style="margin: 0; font-size: 18px; color: #000001; font-weight: 600;">Solutions &amp; Connect</h2>
+        <h2 style="margin: 0; font-size: 18px; color: #000001; font-weight: 600;">Enezo</h2>
       </td>
     </tr>
     <tr>
@@ -106,7 +106,7 @@ Pour toute question ou assistance, n'hésitez pas à revenir vers nous :<br>
     </tr>
     <tr>
       <td style="text-align: center; font-size: 12px; max-width: 300px; margin: auto; padding-top: 1rem;">
-        <p style="margin: 0;">&copy; ${new Date().getFullYear()} Solutions &amp; Connect</p>
+        <p style="margin: 0;">&copy; ${new Date().getFullYear()} Enezo</p>
       </td>
     </tr>
   </tbody>
@@ -134,6 +134,6 @@ export function buildInvoiceEmailText({ clientName, docLabel, number, dateEnvoi,
     `📧 ${MAIL}`,
     ``,
     `Cordialement,`,
-    `Solutions & Connect`,
+    `Enezo`,
   ].join("\n");
 }

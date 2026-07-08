@@ -35,7 +35,7 @@ import PipelineBoard, { type PipelineStage } from "@/components/clients/Pipeline
 // ── Constantes planning ───────────────────────────────────────────────────────
 const TYPES_RDV_CLIENTS = [
   { groupe: 'TC', options: ['Séance', 'Programme', 'Rendez-vous informations', 'Rendez-vous bilan', 'Règlement TC', 'Séance en autonomie', 'Autre activité', 'Parcours sportif'] },
-  { groupe: 'S&C', options: ['Rendez-vous infos S&C', 'Rendez-vous bilan S&C', 'Règlement S&C'] },
+  { groupe: 'Enezo', options: ['Rendez-vous infos Enezo', 'Rendez-vous bilan Enezo', 'Règlement Enezo'] },
   { groupe: 'FFD', options: ['Détection', 'Règlement FFD'] },
   { groupe: 'EMF', options: ['Séminaire', 'Règlement EMF'] },
 ]
@@ -164,13 +164,13 @@ const ETAT_STYLE: Record<string, string> = {
 };
 const ETAT_OPTIONS: AbonnementEtat[] = ["Prospect", "Actif", "Inactif"];
 
-const CATEGORIES_ABO = ["Teddy Coaching", "FFD", "EMF", "S&C"];
+const CATEGORIES_ABO = ["Teddy Coaching", "FFD", "EMF", "Enezo"];
 
 const TYPE_SUIVI_OPTIONS: Record<string, string[]> = {
   "Teddy Coaching": ["Coaching", "Plan d'entrainement", "Coaching + Plan d'entrainement", "Parcours Sportif", "Testing", "Suivi collectif à distance", "Programme 20 minutes - 1 Objectif", "Boutique TC"],
   "FFD": ["Détection", "Suivi de joueurs", "Pack d'accompagnement FFD", "Formation FFD"],
   "EMF": ["Formation EMF"],
-  "S&C": ["Solutions & Connect", "Acces TC-Connect"],
+  "Enezo": ["Enezo", "Acces TC-Connect"],
 };
 
 const STATUT_STYLE: Record<string, string> = {
@@ -1256,9 +1256,11 @@ function AboCard({ abo, onEdit, onDelete, onClick, displayName, isHighlighted, r
 }
 
 function isSCOnly(abonnements: Abonnement[]) {
-  return abonnements.length > 0 && abonnements.every(
-    (a) => (a.companyNom ?? "").toLowerCase().replace(/[&\s]/g, "").includes("solutions")
-  )
+  // Enezo (ex « Solutions & Connect ») : companyNom migré = « Enezo » ; on garde « solutions » pour les non-migrés.
+  return abonnements.length > 0 && abonnements.every((a) => {
+    const n = (a.companyNom ?? "").toLowerCase().replace(/[&\s]/g, "")
+    return n.includes("solutions") || n.includes("enezo")
+  })
 }
 
 function ClientRow({ client, isAdmin, abonnements, aboLoading, collapseAllTick, highlightAboId, rdvCountsMap, onEdit, onDelete, onAddAbo, onEditAbo, onDeleteAbo, onViewAbo }: {

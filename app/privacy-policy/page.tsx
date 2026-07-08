@@ -17,7 +17,7 @@ export default function PrivacyPolicyPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">1. Présentation</h2>
             <p>
               TC Connect (ci-après « l'Application ») est une application de gestion destinée aux coachs sportifs
-              et à leurs clients. Elle est éditée par Solutions &amp; Connect. La présente politique de
+              et à leurs clients. Elle est éditée par Enezo (Teddy BLOUET, entrepreneur individuel). La présente politique de
               confidentialité explique comment nous collectons, utilisons, conservons et protégeons vos données
               personnelles conformément au Règlement Général sur la Protection des Données (RGPD — UE 2016/679)
               et à la loi Informatique et Libertés.
@@ -27,8 +27,8 @@ export default function PrivacyPolicyPage() {
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-3">2. Responsable du traitement</h2>
             <p>
-              <strong>Solutions &amp; Connect</strong><br />
-              Contact : <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>
+              <strong>Enezo</strong> — Teddy BLOUET, entrepreneur individuel<br />
+              Contact : <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>
             </p>
           </section>
 
@@ -102,7 +102,7 @@ export default function PrivacyPolicyPage() {
               <li><strong>Droit de retirer votre consentement</strong> à tout moment pour les traitements basés sur le consentement</li>
             </ul>
             <p className="mt-3">
-              Pour exercer vos droits, contactez-nous à : <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>.
+              Pour exercer vos droits, contactez-nous à : <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>.
               Nous répondrons dans un délai de 30 jours. Vous pouvez également saisir la CNIL (
               <a href="https://www.cnil.fr" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">www.cnil.fr</a>).
             </p>
@@ -137,7 +137,7 @@ export default function PrivacyPolicyPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">12. Contact</h2>
             <p>
               Pour toute question relative à cette politique ou à vos données personnelles :<br />
-              <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>
+              <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>
             </p>
           </section>
         </div>

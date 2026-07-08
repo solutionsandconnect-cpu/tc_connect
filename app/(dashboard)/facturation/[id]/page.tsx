@@ -787,7 +787,7 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                     ? `${(client.nom ?? "").toUpperCase()} ${client.prenom ?? ""}`.trim()
                     : (facture.clientName || "");
                   const dateEnvoi = fmtDate((facture.dateEcheance ?? facture.date ?? facture.createdAt) ?? null);
-                  const subject = encodeURIComponent(`${docLabel} ${facture.number} — Solutions & Connect`);
+                  const subject = encodeURIComponent(`${docLabel} ${facture.number} — Enezo`);
                   const body = encodeURIComponent(buildInvoiceEmailText({
                     clientName, docLabel, number: facture.number,
                     dateEnvoi, pdfUrl: facture.pdfUrl,

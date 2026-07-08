@@ -19,12 +19,12 @@ export default function MentionsLegalesPage() {
               L'application <strong>TC Connect</strong> est éditée par :
             </p>
             <p className="mt-2">
-              <strong>Solutions &amp; Connect</strong> — entreprise individuelle (micro-entreprise)<br />
-              Exploitant : Teddy BLOUET<br />
+              <strong>Teddy BLOUET</strong> — entrepreneur individuel (micro-entreprise)<br />
+              Nom commercial : <strong>Enezo</strong> (anciennement « Solutions &amp; Connect »)<br />
               16 rue des Violettes, 56760 Pénestin, France<br />
               SIRET : 851 982 058 00014<br />
               Téléphone : <a href="tel:+33679408254" className="text-blue-600 hover:underline">06 79 40 82 54</a><br />
-              E-mail : <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>
+              E-mail : <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>
             </p>
             <p className="mt-2 text-sm text-gray-500">
               TVA non applicable, article 293 B du Code général des impôts (franchise en base de TVA).
@@ -35,7 +35,7 @@ export default function MentionsLegalesPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">2. Directeur de la publication</h2>
             <p>
               Le directeur de la publication est <strong>Teddy BLOUET</strong>, en qualité d'exploitant de
-              l'entreprise individuelle Solutions &amp; Connect.
+              son entreprise individuelle (nom commercial « Enezo »).
             </p>
           </section>
 
@@ -60,7 +60,7 @@ export default function MentionsLegalesPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">4. Propriété intellectuelle</h2>
             <p>
               L'ensemble des éléments de l'application (code source, interfaces, logos, textes, contenus) sont la
-              propriété exclusive de Solutions &amp; Connect, sauf mention contraire. Toute reproduction,
+              propriété exclusive de Teddy BLOUET (Enezo), sauf mention contraire. Toute reproduction,
               représentation ou utilisation, totale ou partielle, sans autorisation écrite préalable, est
               interdite et constitue une contrefaçon sanctionnée par le Code de la propriété intellectuelle.
             </p>
@@ -73,7 +73,7 @@ export default function MentionsLegalesPage() {
               <a href="/privacy-policy" className="text-blue-600 hover:underline">politique de confidentialité</a>,
               conforme au Règlement Général sur la Protection des Données (RGPD — UE 2016/679). Vous pouvez
               exercer vos droits à tout moment à l'adresse{' '}
-              <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>,
+              <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>,
               ou saisir la CNIL (<a href="https://www.cnil.fr" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">www.cnil.fr</a>).
             </p>
           </section>
@@ -90,7 +90,7 @@ export default function MentionsLegalesPage() {
             <h2 className="text-xl font-semibold text-gray-900 mb-3">7. Contact</h2>
             <p>
               Pour toute question :{' '}
-              <a href="mailto:solutionsandconnect@gmail.com" className="text-blue-600 hover:underline">solutionsandconnect@gmail.com</a>
+              <a href="mailto:contact@enezo.fr" className="text-blue-600 hover:underline">contact@enezo.fr</a>
             </p>
           </section>
         </div>

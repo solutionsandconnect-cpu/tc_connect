@@ -282,7 +282,7 @@ export interface ProjetPlanning {
 }
 export interface ProjetTache {
   description: string; date: string; fait: boolean
-  pour: 'client' | 'sc'                                  // qui réalise la tâche (client ou moi/S&C)
+  pour: 'client' | 'sc'                                  // qui réalise la tâche (client ou moi/Enezo ; valeur 'sc' = interne, affichée « Moi »)
   facturation?: 'inclus' | 'maintenance' | 'facturer'    // statut de facturation (évolution payante ?)
   tempsH?: number                                        // temps estimé en heures (si « à facturer ») → prix = tempsH × TJM/7
   facturee?: boolean                                     // déjà facturée (sort de l'alerte « à facturer »)
@@ -802,7 +802,7 @@ export interface Abonnement {
   companyId?: string
   companyNom?: string
   titre?: string            // kept for backward compat
-  categorie: string         // 'Teddy Coaching' | 'FFD' | 'EMF' | 'S&C'
+  categorie: string         // 'Teddy Coaching' | 'FFD' | 'EMF' | 'Enezo' (ex 'S&C')
   typeSuivi?: string        // kept for backward compat
   frequence?: string
   tarifUnitaire?: number

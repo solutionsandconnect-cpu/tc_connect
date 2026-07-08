@@ -43,7 +43,7 @@ export const DEFAULT_EVOLUTION: DevisEvolution = {
     },
   ],
   tableau: 'Offre | Tarif indicatif\nFormule Essentiel | ~149 €/mois\nFormule Pro | ~299 €/mois\nMise en service par client | 500 – 1 500 €',
-  note: "Dans tous les cas, Solutions & Connect conserve la propriété de la solution ; le client en devient revendeur / partenaire sous licence. Les tarifs sont indicatifs ; le modèle définitif est arrêté dans un devis distinct.",
+  note: "Dans tous les cas, Enezo conserve la propriété de la solution ; le client en devient revendeur / partenaire sous licence. Les tarifs sont indicatifs ; le modèle définitif est arrêté dans un devis distinct.",
 }
 
 // Éditeur de la section « Évolution » du devis (bloc structuré : intro, Q/R, étapes, panneaux, tableau, note).

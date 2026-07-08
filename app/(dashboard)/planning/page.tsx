@@ -79,7 +79,7 @@ function getRdvSequence(item: any, plannings: any[], aboPeriods: AboPeriods) {
 
 const TYPES_RDV = [
   { groupe: 'TC', options: ['Séance', 'Programme', 'Rendez-vous informations', 'Rendez-vous bilan', 'Règlement TC', 'Séance en autonomie', 'Autre activité', 'Parcours sportif'] },
-  { groupe: 'S&C', options: ['Rendez-vous infos S&C', 'Rendez-vous bilan S&C', 'Règlement S&C'] },
+  { groupe: 'Enezo', options: ['Rendez-vous infos Enezo', 'Rendez-vous bilan Enezo', 'Règlement Enezo'] },
   { groupe: 'FFD', options: ['Détection', 'Règlement FFD'] },
   { groupe: 'EMF', options: ['Séminaire', 'Règlement EMF'] },
 ]

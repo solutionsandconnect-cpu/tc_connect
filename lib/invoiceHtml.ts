@@ -317,7 +317,7 @@ export function buildInvoiceHtml(
   const docDate = facture.date ?? facture.createdAt;
 
   // ── En-tête ──────────────────────────────────────────────
-  const companyName = company?.nom ?? "Solutions & Connect";
+  const companyName = company?.nom ?? "Enezo";
   const mark = assets.logoDataUrl
     ? `<span class="mark has-img"><img src="${assets.logoDataUrl}" alt=""/></span>`
     : `<span class="mark">${esc((companyName[0] ?? "S").toUpperCase())}</span>`;

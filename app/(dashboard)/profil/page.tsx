@@ -6,6 +6,7 @@ import { doc, updateDoc } from 'firebase/firestore'
 import { updatePassword, EmailAuthProvider, reauthenticateWithCredential, verifyBeforeUpdateEmail } from 'firebase/auth'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
+import { useBrand } from '@/context/BrandContext'
 import { uploadImage } from '@/lib/uploadImage'
 import { usePushNotifications } from '@/hooks/usePushNotifications'
 import Modal from '@/components/ui/Modal'
@@ -39,6 +40,9 @@ const toProperName = (s: string) =>
 
 export default function ProfilPage() {
   const { userProfile, currentUser, logout } = useAuth()
+  const { brand } = useBrand()
+  // Nom de l'app affiché (prompt d'installation) selon la marque active.
+  const nomApp = brand === 'enezo' ? 'Enezo' : 'TC Connect'
   const isAdmin = userProfile?.role_app === 'Admin'
   const droits = userProfile?.droits
   const router = useRouter()
@@ -556,7 +560,7 @@ export default function ProfilPage() {
             ) : (
               <>
                 <p className="text-xs text-gray-400 mb-3">
-                  Ajoutez TC Connect à votre écran d&apos;accueil pour une vraie expérience d&apos;application et recevoir les notifications.
+                  Ajoutez {nomApp} à votre écran d&apos;accueil pour une vraie expérience d&apos;application et recevoir les notifications.
                 </p>
                 <ol className="space-y-2 text-sm text-gray-700">
                   {installPlatform === 'ios' && (
@@ -576,7 +580,7 @@ export default function ProfilPage() {
                   {installPlatform === 'desktop' && (
                     <>
                       <li className="flex gap-2"><span className="font-semibold text-blue-600">1.</span> Dans <strong>Chrome</strong> ou <strong>Edge</strong>, regardez à droite de la barre d&apos;adresse.</li>
-                      <li className="flex gap-2"><span className="font-semibold text-blue-600">2.</span> Cliquez sur l&apos;icône <strong>Installer</strong> (un écran avec une flèche), ou menu <strong>⋮</strong> → <strong>« Installer TC Connect »</strong>.</li>
+                      <li className="flex gap-2"><span className="font-semibold text-blue-600">2.</span> Cliquez sur l&apos;icône <strong>Installer</strong> (un écran avec une flèche), ou menu <strong>⋮</strong> → <strong>« Installer {nomApp} »</strong>.</li>
                       <li className="flex gap-2"><span className="font-semibold text-blue-600">3.</span> Confirmez avec <strong>Installer</strong>.</li>
                     </>
                   )}

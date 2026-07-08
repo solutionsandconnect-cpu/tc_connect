@@ -87,9 +87,9 @@ export async function generatePilotageDocPdf(
   const setDraw = (c: [number, number, number]) => pdf.setDrawColor(c[0], c[1], c[2])
 
   // Coordonnées de pied de page (société si dispo, sinon valeurs S&C)
-  const fNom = company?.nom || 'Solutions & Connect'
+  const fNom = company?.nom || 'Enezo'
   const fTel = company?.telephone || '+33 6 79 40 82 54'
-  const fEmail = company?.email || 'solutionsandconnect@gmail.com'
+  const fEmail = company?.email || 'contact@enezo.fr'
   const footerLine = `${fTel}  ·  ${fEmail}  ·  © ${new Date().getFullYear()} ${fNom}`
 
   // Logo + signature (chargés une fois)

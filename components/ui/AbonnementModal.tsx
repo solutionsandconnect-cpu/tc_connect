@@ -12,13 +12,13 @@ import type { Abonnement, AbonnementEtat, Objectif } from '@/types'
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 
-export const CATEGORIES_ABO = ['Teddy Coaching', 'FFD', 'EMF', 'S&C']
+export const CATEGORIES_ABO = ['Teddy Coaching', 'FFD', 'EMF', 'Enezo']
 
 export const TYPE_SUIVI_OPTIONS: Record<string, string[]> = {
   'Teddy Coaching': ['Coaching', "Plan d'entrainement", "Coaching + Plan d'entrainement", 'Parcours Sportif', 'Testing', 'Suivi collectif à distance', 'Programme 20 minutes - 1 Objectif', 'Boutique TC'],
   'FFD': ['Détection', 'Suivi de joueurs', "Pack d'accompagnement FFD", 'Formation FFD'],
   'EMF': ['Formation EMF'],
-  'S&C': ['Solutions & Connect', 'Acces TC-Connect'],
+  'Enezo': ['Enezo', 'Acces TC-Connect'],
 }
 
 const ETAT_OPTIONS: AbonnementEtat[] = ['Prospect', 'Actif', 'Inactif']

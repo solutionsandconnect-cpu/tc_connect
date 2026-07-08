@@ -377,10 +377,10 @@ export default function ContratPage() {
     const devisTs = linkedDevis ? (linkedDevis.date ?? linkedDevis.createdAt) : null
     const docDateStr = devisTs?.seconds ? new Date(devisTs.seconds * 1000).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')
     const prefill = defaultLegalFields({
-      prestataireNom: company?.nom || 'Solutions & Connect',
+      prestataireNom: company?.nom || 'Enezo',
       prestataireSiret: company?.siret || '',
       prestataireAdresse: prestaAdresse,
-      prestataireEmail: company?.email || 'solutionsandconnect@gmail.com',
+      prestataireEmail: company?.email || 'contact@enezo.fr',
       prestataireTel: company?.telephone || '+33 6 79 40 82 54',
       prestataireRepresentant: company?.representant || '',
       clientNom: cli?.nomEntreprise || contrat.clientNom || '',
@@ -879,7 +879,7 @@ export default function ContratPage() {
             )}
 
             <p className="text-[11px] text-gray-400">
-              Les documents projet (cahier des charges, bilan, besoins) partagent le <strong>contenu projet</strong> saisi sous l'onglet dédié. Le logo et les coordonnées viennent de ta société « {company?.nom ?? 'Solutions & Connect'} ». Le PDF généré est <strong>conservé</strong> : <strong>Ouvrir</strong> ré-affiche le même fichier, <strong>Mettre à jour</strong> le régénère depuis le contenu actuel (pense à <strong>enregistrer</strong> tes modifications avant).
+              Les documents projet (cahier des charges, bilan, besoins) partagent le <strong>contenu projet</strong> saisi sous l'onglet dédié. Le logo et les coordonnées viennent de ta société « {company?.nom ?? 'Enezo'} ». Le PDF généré est <strong>conservé</strong> : <strong>Ouvrir</strong> ré-affiche le même fichier, <strong>Mettre à jour</strong> le régénère depuis le contenu actuel (pense à <strong>enregistrer</strong> tes modifications avant).
             </p>
           </div>
         )}
