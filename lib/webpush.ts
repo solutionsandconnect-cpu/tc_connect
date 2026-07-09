@@ -36,10 +36,10 @@ async function deliver(ref: FirebaseFirestore.DocumentReference, subscription: a
 
 export async function sendPushToUser(userId: string, payload: PushPayload) {
   const db = getAdminDb()
-  const ref = db.collection('push_subscriptions').doc(userId)
-  const snap = await ref.get()
-  if (!snap.exists) return
-  await deliver(ref, snap.data()!.subscription, payload)
+  // Une souscription par appareil (docs indexés par hash d'endpoint) → on envoie
+  // à TOUS les appareils du compte, plus seulement au dernier abonné.
+  const snap = await db.collection('push_subscriptions').where('userId', '==', userId).get()
+  await Promise.allSettled(snap.docs.map(d => deliver(d.ref, d.data().subscription, payload)))
 }
 
 export async function sendPushToAdmins(payload: PushPayload) {

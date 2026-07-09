@@ -157,11 +157,14 @@ export function usePushNotifications() {
       try { localStorage.setItem(optOutKey(currentUser.uid), '1') } catch {}
       const reg = await navigator.serviceWorker.ready
       const sub = await reg.pushManager.getSubscription()
+      const endpoint = sub?.endpoint
       if (sub) await sub.unsubscribe()
       await fetch('/api/push/subscribe', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: currentUser.uid }),
+        // endpoint → ne supprime que la souscription de CET appareil (les autres
+        // appareils du compte gardent le push).
+        body: JSON.stringify({ userId: currentUser.uid, endpoint }),
       })
       setSubscribed(false)
     } catch (err: any) {
