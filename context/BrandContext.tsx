@@ -7,14 +7,15 @@
 // Univers autorisés : Admin → tous ; sinon les `marques` du profil (repli `marque` déprécié, défaut coaching).
 // Univers actif, dans l'ordre :
 //   1. Override dev   (?brand=enezo | ?brand=coaching)         — si autorisé
-//   2. Domaine        (host → hostToBrand, résolu au SSR via `initialBrand`)
-//                       — si autorisé, OU si pas (encore) de profil (login / chargement) :
-//                         le domaine est l'ENTRÉE, il habille avant connexion.
-//   3. Choix in-app   (sélecteur « changer d'espace », persisté) — si autorisé
+//   AVANT connexion (aucun profil chargé) : le domaine habille l'ENTRÉE (login / chargement).
+//   UNE FOIS CONNECTÉ :
+//   2. Choix in-app   (sélecteur « changer d'espace », persisté) — si autorisé → PRIME sur le domaine
+//                       (sinon l'Admin, autorisé partout, resterait collé à la marque du domaine).
+//   3. Domaine        (host → hostToBrand, résolu au SSR via `initialBrand`) — si autorisé
 //   4. Univers principal (marques[0])
 //   5. Défaut coaching
 // On ne laisse JAMAIS un utilisateur CONNECTÉ voir un univers hors de son ensemble autorisé
-// (hors Admin qui voit tout). Le seul cas où le domaine passe outre = aucun profil chargé.
+// (hors Admin qui voit tout).
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
@@ -88,14 +89,28 @@ export function BrandProvider({
 
   const { brand, source } = useMemo<{ brand: Brand; source: BrandSource }>(() => {
     const ok = (b: Brand | null): b is Brand => !!b && allowedBrands.includes(b)
+    // 1. Override dev (?brand=) — toujours prioritaire.
     const override = readUrlOverride()
     if (ok(override)) return { brand: override, source: 'override' }
+
     // Domaine : `initialBrand` (résolu au SSR) fait foi ; repli client sur le hostname.
     const fromHost = initialBrand ?? (typeof window !== 'undefined' ? hostToBrand(window.location.hostname) : null)
-    // Honoré s'il est autorisé, OU tant qu'aucun profil n'est chargé (login / chargement) :
-    // le domaine habille l'entrée avant connexion. Une fois connecté, on reste dans l'autorisé.
-    if (fromHost && (ok(fromHost) || !userProfile)) return { brand: fromHost, source: 'domaine' }
+
+    // 2. AVANT profil chargé (login / chargement) : le domaine habille l'entrée (zéro flash).
+    if (!userProfile) {
+      if (fromHost) return { brand: fromHost, source: 'domaine' }
+      return { brand: DEFAULT_BRAND, source: 'defaut' }
+    }
+
+    // 3. Connecté : un CHOIX in-app explicite (sélecteur « changer d'espace ») prime sur le
+    //    domaine → sinon l'Admin (autorisé partout) resterait collé à la marque du domaine et
+    //    le sélecteur ne changerait jamais les couleurs.
     if (ok(choice)) return { brand: choice, source: 'choix' }
+
+    // 4. Sinon le domaine, s'il fait partie des univers autorisés (« jamais l'univers de l'autre »).
+    if (ok(fromHost)) return { brand: fromHost, source: 'domaine' }
+
+    // 5. Univers principal, puis défaut.
     if (allowedBrands[0]) return { brand: allowedBrands[0], source: 'principal' }
     return { brand: DEFAULT_BRAND, source: 'defaut' }
   }, [allowedBrands, choice, initialBrand, userProfile])
