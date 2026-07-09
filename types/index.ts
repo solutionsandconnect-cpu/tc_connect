@@ -780,6 +780,7 @@ export interface Company {
   signatureUrl?: string     // signature du prestataire (data URL ou URL) — affichée côté « Le prestataire » sur les devis
   mentionsLegales?: string
   couleurPrimaire?: string  // ex : "#2563eb"
+  marque?: 'coaching' | 'enezo'  // univers de la société (« une app, deux portes ») : pilote le thème du lien public de signature de devis ; absent = coaching
   cgv?: string              // Conditions générales de vente (texte complet)
   cgvDate?: string          // Date de mise à jour des CGV (ex : "2024-01-15")
   createdAt: Timestamp

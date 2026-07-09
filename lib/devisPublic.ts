@@ -14,7 +14,7 @@ const MAX_SIGNATURE_BYTES = 700 * 1024
 // Champs « prestataire » publics (sans danger à exposer sur un devis).
 const COMPANY_FIELDS = [
   'nom', 'adresse', 'codePostal', 'ville', 'email', 'telephone', 'representant',
-  'siret', 'tva', 'iban', 'bic', 'logoUrl', 'signatureUrl', 'couleurPrimaire', 'cgv', 'cgvDate',
+  'siret', 'tva', 'iban', 'bic', 'logoUrl', 'signatureUrl', 'couleurPrimaire', 'marque', 'cgv', 'cgvDate',
 ] as const
 
 // Construit le payload public (devis assaini + société) pour la page de signature.

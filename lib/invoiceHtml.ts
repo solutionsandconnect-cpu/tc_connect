@@ -106,10 +106,11 @@ function buildStyle(primary: string): string {
     border-bottom:3px solid var(--pri);padding-bottom:14px;margin-bottom:16px}
   .invpdf .brand{display:flex;flex-direction:column;gap:2px}
   .invpdf .logo{display:inline-flex;align-items:center;gap:10px;font-weight:800;font-size:19px;letter-spacing:.3px}
-  .invpdf .logo .mark{width:34px;height:34px;border-radius:8px;background:var(--pri);color:#fff;
-    display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;overflow:hidden}
+  .invpdf .logo .mark{width:46px;height:46px;border-radius:8px;background:var(--pri);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;overflow:hidden}
   .invpdf .logo .mark.has-img{border-radius:50%;background:transparent}
-  .invpdf .logo .mark img{width:100%;height:100%;object-fit:contain}
+  /* cover (au lieu de contain) : le logo remplit le cercle en rognant sa marge → il paraît plus grand */
+  .invpdf .logo .mark img{width:100%;height:100%;object-fit:cover}
   .invpdf .brand .sub{color:var(--muted);font-size:11.5px;margin-top:2px}
   .invpdf .doc-meta{text-align:right;flex-shrink:0}
   .invpdf .doc-meta h1{font-size:23px;letter-spacing:1px;color:var(--pri);text-transform:uppercase;margin-bottom:6px}

@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Facture, Company } from '@/types'
+import { brandConfig } from '@/lib/brand'
 import { buildInvoiceHtml } from '@/lib/invoiceHtml'
 import { downloadInvoicePDF } from '@/lib/invoicePdf'
 import SignaturePad from '@/components/ui/SignaturePad'
@@ -41,6 +42,15 @@ export default function SignerDevisPage({ params }: { params: Promise<{ token: s
 
   useEffect(() => { load() }, [load])
 
+  // Ouvre la page sous la marque de la SOCIÉTÉ du devis (thème Petrol/Or pour Enezo) :
+  // sur ce lien public il n'y a pas de compte connecté, donc le BrandProvider reste sur
+  // la marque du domaine → on force `data-brand` d'après `company.marque` une fois chargée.
+  useEffect(() => {
+    if (typeof document === 'undefined' || !company) return
+    const brand = company.marque === 'enezo' ? 'enezo' : 'coaching'
+    document.documentElement.setAttribute('data-brand', brand)
+  }, [company])
+
   const preview = useMemo(() => {
     if (!devis) return { mainHtml: '', cgvHtml: null as string | null }
     return buildInvoiceHtml(devis, company, {
@@ -50,7 +60,8 @@ export default function SignerDevisPage({ params }: { params: Promise<{ token: s
     })
   }, [devis, company])
 
-  const primary = company?.couleurPrimaire || '#2563eb'
+  // Couleur des boutons : celle de la société si définie, sinon celle de sa marque (Petrol pour Enezo).
+  const primary = company?.couleurPrimaire || brandConfig(company?.marque).couleurPrimaire
   const companyName = company?.nom || 'Devis'
   const canSign = !!devis && !devis.signed
     && !['accepted', 'rejected', 'cancelled'].includes(devis.status)

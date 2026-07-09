@@ -11,14 +11,14 @@ import type { Company } from "@/types";
 type Form = {
   nom: string; adresse: string; codePostal: string; ville: string;
   email: string; telephone: string; representant: string; siret: string; tva: string;
-  iban: string; bic: string; logoUrl: string; signatureUrl: string; couleurPrimaire: string; mentionsLegales: string;
+  iban: string; bic: string; logoUrl: string; signatureUrl: string; couleurPrimaire: string; marque: string; mentionsLegales: string;
   cgv: string; cgvDate: string;
 };
 
 const EMPTY: Form = {
   nom: "", adresse: "", codePostal: "", ville: "", email: "",
   telephone: "", representant: "", siret: "", tva: "", iban: "", bic: "", logoUrl: "", signatureUrl: "",
-  couleurPrimaire: "#2563eb", mentionsLegales: "", cgv: "", cgvDate: "",
+  couleurPrimaire: "#2563eb", marque: "coaching", mentionsLegales: "", cgv: "", cgvDate: "",
 };
 
 const inputCls = "w-full min-w-0 border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition";
@@ -178,6 +178,7 @@ export default function CompaniesPage() {
       representant: c.representant ?? "",
       siret: c.siret ?? "", tva: c.tva ?? "", iban: c.iban ?? "", bic: c.bic ?? "",
       logoUrl: c.logoUrl ?? "", signatureUrl: c.signatureUrl ?? "", couleurPrimaire: c.couleurPrimaire ?? "#2563eb",
+      marque: c.marque ?? "coaching",
       mentionsLegales: c.mentionsLegales ?? "", cgv: c.cgv ?? "", cgvDate: c.cgvDate ?? "",
     });
     setError("");
@@ -205,6 +206,7 @@ export default function CompaniesPage() {
         logoUrl: form.logoUrl || undefined,
         signatureUrl: form.signatureUrl || undefined,
         couleurPrimaire: form.couleurPrimaire || "#2563eb",
+        marque: (form.marque === "enezo" ? "enezo" : "coaching") as "coaching" | "enezo",
         mentionsLegales: form.mentionsLegales || undefined,
         cgv: form.cgv || undefined,
         cgvDate: form.cgvDate || undefined,
@@ -230,7 +232,7 @@ export default function CompaniesPage() {
     showToast("Société supprimée");
   };
 
-  const set = (field: keyof Form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const set = (field: keyof Form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }));
 
   if (!userProfile || !isAdmin) return null;
@@ -435,6 +437,14 @@ export default function CompaniesPage() {
                       <input type="color" className="w-10 h-10 rounded border cursor-pointer" value={form.couleurPrimaire} onChange={set("couleurPrimaire")} />
                       <input className={inputCls + " flex-1"} placeholder="#2563eb" value={form.couleurPrimaire} onChange={set("couleurPrimaire")} />
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Univers (marque)</label>
+                    <select className={inputCls} value={form.marque} onChange={set("marque")}>
+                      <option value="coaching">Teddy Coaching</option>
+                      <option value="enezo">Enezo</option>
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">Marque (thème + logo) sous laquelle s'ouvre le lien public de signature des devis de cette société.</p>
                   </div>
                 </div>
               </section>
