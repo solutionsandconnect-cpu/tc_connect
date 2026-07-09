@@ -81,3 +81,16 @@ export function hostToBrand(host: string | null | undefined): Brand | null {
 export function brandConfig(brand: Brand | undefined | null): BrandConfig {
   return BRANDS[brand ?? DEFAULT_BRAND] ?? BRANDS[DEFAULT_BRAND]
 }
+
+/**
+ * Origine (scheme + host) à utiliser pour un LIEN PUBLIC envoyé à un client, selon la marque.
+ * Enezo → son domaine dédié (`app.enezo.fr`) : on n'expose jamais une URL « tc-connect » à un client Enezo.
+ * Coaching (ou marque absente) → l'origine courante (le domaine coaching dédié n'est pas encore branché).
+ */
+export function publicLinkOrigin(brand: Brand | null | undefined, currentOrigin: string): string {
+  if (brand === 'enezo') {
+    const domain = BRANDS.enezo.domaines[0]
+    if (domain) return `https://${domain}`
+  }
+  return currentOrigin
+}

@@ -8,6 +8,7 @@ import {
   getFacture, updateFacture, deleteFacture, convertDevisToFacture, generateNextEcheanceFacture,
 } from "@/lib/facturationService";
 import { getCompany, listenCompanies } from "@/lib/companyService";
+import { publicLinkOrigin } from "@/lib/brand";
 import { getClient, updateClient } from "@/lib/clientService";
 import { downloadInvoicePDF, generateInvoicePDFBlob, itemNetTotal } from "@/lib/invoicePdf";
 import { uploadBlob, deleteImage } from "@/lib/uploadImage";
@@ -1931,7 +1932,9 @@ export default function FactureDetailPage({ params }: { params: Promise<{ id: st
                   </button>
                 </>
               ) : (() => {
-                const signLink = `${typeof window !== "undefined" ? window.location.origin : ""}/signer-devis/${facture.signToken}`;
+                // Lien sur le domaine de la MARQUE de la société (Enezo → app.enezo.fr) : pas d'URL « tc-connect » à un client Enezo.
+                const origin = publicLinkOrigin(company?.marque, typeof window !== "undefined" ? window.location.origin : "");
+                const signLink = `${origin}/signer-devis/${facture.signToken}`;
                 const msg = `Bonjour,\n\nVoici votre devis ${facture.number} à consulter et signer en ligne :\n\n${signLink}\n\nCordialement`;
                 const phone = (client?.telephone ?? "").replace(/\D/g, "");
                 return (
