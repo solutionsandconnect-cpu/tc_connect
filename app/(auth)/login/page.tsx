@@ -18,9 +18,11 @@ export default function LoginPage() {
 
   const [tab, setTab] = useState<Tab>(initialTab)
   const { login, register, resetPassword } = useAuth()
-  const { brand } = useBrand()
+  // Page d'ENTRÉE : on suit le DOMAINE (host), pas le choix in-app — un Admin déjà connecté
+  // avec un espace « coaching » mémorisé doit quand même voir Enezo sur app.enezo.fr.
+  const { domainBrand } = useBrand()
   // Nom affiché à l'entrée : « Enezo » sur le domaine Enezo, « TC Connect » ailleurs (coaching inchangé).
-  const nomEntree = brand === 'enezo' ? 'Enezo' : 'TC Connect'
+  const nomEntree = domainBrand === 'enezo' ? 'Enezo' : 'TC Connect'
   const router = useRouter()
 
   // Connexion
@@ -118,10 +120,18 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col items-center px-4">
 
-      {/* Titre */}
-      <p className="mt-8 mb-4 text-3xl font-bold text-gray-900 tracking-tight">
-        {nomEntree}
-      </p>
+      {/* Titre / logo — logo Enezo sur la porte Enezo, texte ailleurs (coaching inchangé). */}
+      {domainBrand === 'enezo' ? (
+        <img
+          src="/logo-enezo-wordmark.png"
+          alt="Enezo"
+          className="mt-8 mb-4 h-14 w-auto object-contain"
+        />
+      ) : (
+        <p className="mt-8 mb-4 text-3xl font-bold text-gray-900 tracking-tight">
+          {nomEntree}
+        </p>
+      )}
 
       {/* Card */}
       <div

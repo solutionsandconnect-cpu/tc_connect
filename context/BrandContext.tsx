@@ -29,6 +29,9 @@ type BrandSource = 'override' | 'domaine' | 'choix' | 'principal' | 'defaut'
 interface BrandContextType {
   /** Univers actuellement affiché. */
   brand: Brand
+  /** Univers du DOMAINE (host), indépendant de la connexion et d'un choix in-app.
+   *  À utiliser sur les pages d'ENTRÉE (login) qui doivent toujours refléter l'URL. */
+  domainBrand: Brand
   config: BrandConfig
   /** Univers auxquels le compte a droit (Admin = tous). */
   allowedBrands: Brand[]
@@ -43,6 +46,7 @@ const STORAGE_KEY = 'tc.activeBrand'
 
 const BrandContext = createContext<BrandContextType>({
   brand: DEFAULT_BRAND,
+  domainBrand: DEFAULT_BRAND,
   config: BRANDS[DEFAULT_BRAND],
   allowedBrands: [DEFAULT_BRAND],
   canSwitch: false,
@@ -121,14 +125,21 @@ export function BrandProvider({
     if (typeof document !== 'undefined') document.documentElement.setAttribute('data-brand', brand)
   }, [brand])
 
+  // Marque du DOMAINE : `initialBrand` (SSR) fait foi ; repli client sur le hostname ; défaut coaching.
+  const domainBrand = useMemo<Brand>(
+    () => initialBrand ?? (typeof window !== 'undefined' ? hostToBrand(window.location.hostname) : null) ?? DEFAULT_BRAND,
+    [initialBrand]
+  )
+
   const value = useMemo<BrandContextType>(() => ({
     brand,
+    domainBrand,
     config: BRANDS[brand],
     allowedBrands,
     canSwitch: allowedBrands.length >= 2,
     setBrand,
     source,
-  }), [brand, allowedBrands, setBrand, source])
+  }), [brand, domainBrand, allowedBrands, setBrand, source])
 
   return <BrandContext.Provider value={value}>{children}</BrandContext.Provider>
 }

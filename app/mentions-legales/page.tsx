@@ -1,26 +1,28 @@
 import type { Metadata } from 'next'
+import { getAppName } from '@/lib/brandServer'
 
-export const metadata: Metadata = {
-  title: 'Mentions légales — TC Connect',
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: `Mentions légales — ${await getAppName()}` }
 }
 
-export default function MentionsLegalesPage() {
+export default async function MentionsLegalesPage() {
+  const nomApp = await getAppName()
   return (
     <div className="min-h-screen bg-white">
-      <div className="max-w-3xl mx-auto px-6 py-12">
+      <div className="w-full px-6 md:px-10 lg:px-16 py-12">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Mentions légales</h1>
-        <p className="text-sm text-gray-500 mb-8">Dernière mise à jour : 2 juillet 2026</p>
+        <p className="text-sm text-gray-500 mb-8">Dernière mise à jour : 10 juillet 2026</p>
 
         <div className="space-y-8 text-gray-700 leading-relaxed">
 
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-3">1. Éditeur de l'application</h2>
             <p>
-              L'application <strong>TC Connect</strong> est éditée par :
+              L'application <strong>{nomApp}</strong> est éditée par :
             </p>
             <p className="mt-2">
               <strong>Teddy BLOUET</strong> — entrepreneur individuel (micro-entreprise)<br />
-              Nom commercial : <strong>Enezo</strong> (anciennement « Solutions &amp; Connect »)<br />
+              Nom commercial : <strong>Enezo</strong><br />
               16 rue des Violettes, 56760 Pénestin, France<br />
               SIRET : 851 982 058 00014<br />
               Téléphone : <a href="tel:+33679408254" className="text-blue-600 hover:underline">06 79 40 82 54</a><br />
