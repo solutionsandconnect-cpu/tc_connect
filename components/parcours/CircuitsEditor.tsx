@@ -54,7 +54,7 @@ function ExerciseNameInput({
         />
       </div>
       {open && matches.length > 0 && (
-        <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-y-auto">
+        <div className="absolute z-50 left-0 mt-1 min-w-full w-max max-w-[min(22rem,calc(100vw-2rem))] bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-y-auto">
           {matches.map((ex) => (
             <button
               key={ex.id}
@@ -68,7 +68,7 @@ function ExerciseNameInput({
                 <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0" />
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-800 truncate">{ex.nom_exercice}</p>
+                <p className="text-sm font-medium text-gray-800 leading-snug break-words">{ex.nom_exercice}</p>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {ex.partie_prioritaire && (
                     <span className="text-[10px] text-gray-400">{ex.partie_prioritaire}</span>
@@ -263,7 +263,7 @@ export default function CircuitsEditor({
                 })
                 return (
                   <div key={ex.id} className="px-5 py-3 space-y-2">
-                    <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
                       {/* Move up/down */}
                       <div className="flex flex-col gap-0.5 shrink-0">
                         <button onClick={() => moveExercise(circuit.id, ex.id, 'up')} disabled={ei === 0}
@@ -293,49 +293,52 @@ export default function CircuitsEditor({
                             : c))
                         }}
                       />
-                      {circuit.type === 'amrap' ? (
-                        /* AMRAP : champ reps texte libre */
-                        <input
-                          type="text"
-                          value={ex.reps ?? ''}
-                          onChange={(e) => updateExercise(circuit.id, ex.id, 'reps', e.target.value)}
-                          placeholder="Répétitions (ex: 10, variable…)"
-                          className="flex-1 border border-orange-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 min-w-0"
-                        />
-                      ) : (
-                        <>
-                          {/* Temps effort */}
-                          <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
-                            <span className="text-xs font-medium text-blue-600">Effort</span>
-                            <input type="number" min={0} value={ex.tempsEffort}
-                              onChange={(e) => updateExercise(circuit.id, ex.id, 'tempsEffort', Math.max(0, parseInt(e.target.value) || 0))}
-                              className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                            <span className="text-xs text-gray-400">s</span>
-                          </label>
-                          {/* Récup entre exos */}
-                          <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
-                            <span className="text-xs font-medium text-green-600">Récup</span>
-                            <input type="number" min={0} value={ex.recupEntreExos}
-                              onChange={(e) => updateExercise(circuit.id, ex.id, 'recupEntreExos', Math.max(0, parseInt(e.target.value) || 0))}
-                              className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-400" />
-                            <span className="text-xs text-gray-400">s</span>
-                          </label>
-                          {/* Temps exercice */}
-                          <span className="text-xs text-gray-400 shrink-0 w-12 text-right">
-                            {ex.tempsEffort + ex.recupEntreExos > 0 ? formatSeconds(ex.tempsEffort + ex.recupEntreExos) : '—'}
-                          </span>
-                        </>
-                      )}
-                      {/* Toggle options */}
-                      <button onClick={toggleExpand}
-                        className={`text-[10px] font-medium px-2 py-0.5 rounded-lg border transition shrink-0 ${isExpanded ? 'bg-orange-50 border-orange-200 text-orange-600' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}>
-                        Options
-                      </button>
-                      {/* Supprimer exo */}
-                      <button onClick={() => removeExercise(circuit.id, ex.id)}
-                        className="p-1 text-gray-300 hover:text-red-400 transition shrink-0">
-                        <TrashIcon className="w-4 h-4" />
-                      </button>
+                      {/* Paramètres : passent sous le nom sur mobile (w-full), en ligne sur desktop */}
+                      <div className={`flex items-center gap-2 sm:gap-3 flex-wrap w-full sm:w-auto pl-9 sm:pl-0 mt-1 sm:mt-0 ${circuit.type === 'amrap' ? 'sm:flex-1' : ''}`}>
+                        {circuit.type === 'amrap' ? (
+                          /* AMRAP : champ reps texte libre */
+                          <input
+                            type="text"
+                            value={ex.reps ?? ''}
+                            onChange={(e) => updateExercise(circuit.id, ex.id, 'reps', e.target.value)}
+                            placeholder="Répétitions (ex: 10, variable…)"
+                            className="flex-1 border border-orange-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 min-w-0"
+                          />
+                        ) : (
+                          <>
+                            {/* Temps effort */}
+                            <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
+                              <span className="text-xs font-medium text-blue-600">Effort</span>
+                              <input type="number" min={0} value={ex.tempsEffort}
+                                onChange={(e) => updateExercise(circuit.id, ex.id, 'tempsEffort', Math.max(0, parseInt(e.target.value) || 0))}
+                                className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                              <span className="text-xs text-gray-400">s</span>
+                            </label>
+                            {/* Récup entre exos */}
+                            <label className="flex items-center gap-1.5 text-sm text-gray-600 shrink-0">
+                              <span className="text-xs font-medium text-green-600">Récup</span>
+                              <input type="number" min={0} value={ex.recupEntreExos}
+                                onChange={(e) => updateExercise(circuit.id, ex.id, 'recupEntreExos', Math.max(0, parseInt(e.target.value) || 0))}
+                                className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-400" />
+                              <span className="text-xs text-gray-400">s</span>
+                            </label>
+                            {/* Temps exercice */}
+                            <span className="text-xs text-gray-400 shrink-0 w-12 text-right">
+                              {ex.tempsEffort + ex.recupEntreExos > 0 ? formatSeconds(ex.tempsEffort + ex.recupEntreExos) : '—'}
+                            </span>
+                          </>
+                        )}
+                        {/* Toggle options */}
+                        <button onClick={toggleExpand}
+                          className={`text-[10px] font-medium px-2 py-0.5 rounded-lg border transition shrink-0 ${isExpanded ? 'bg-orange-50 border-orange-200 text-orange-600' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}>
+                          Options
+                        </button>
+                        {/* Supprimer exo */}
+                        <button onClick={() => removeExercise(circuit.id, ex.id)}
+                          className="p-1 text-gray-300 hover:text-red-400 transition shrink-0 ml-auto sm:ml-0">
+                          <TrashIcon className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                     {isExpanded && (
                       <div className="pl-10 space-y-1.5">
