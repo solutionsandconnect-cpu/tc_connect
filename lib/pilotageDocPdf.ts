@@ -92,9 +92,13 @@ export async function generatePilotageDocPdf(
   const fEmail = company?.email || 'contact@enezo.fr'
   const footerLine = `${fTel}  ·  ${fEmail}  ·  © ${new Date().getFullYear()} ${fNom}`
 
-  // Logo + signature (chargés une fois)
+  // Logo + signatures (chargés une fois)
   const logoData = company?.logoUrl ? await fetchImageAsDataUrl(company.logoUrl) : null
-  const signData = docu.signatureUrl ? await fetchImageAsDataUrl(docu.signatureUrl) : null
+  // Signature PRESTATAIRE (case roleA) : celle du document si posée, sinon celle de la société (« signé par défaut »).
+  const providerSigUrl = docu.signatureUrl || company?.signatureUrl || null
+  const signData = providerSigUrl ? await fetchImageAsDataUrl(providerSigUrl) : null
+  // Signature CLIENT (case roleB) : posée depuis l'espace client (data URL).
+  const clientSignData = docu.clientSignatureUrl ? await fetchImageAsDataUrl(docu.clientSignatureUrl) : null
   const drawLogo = () => {
     if (!logoData) return
     try {
@@ -156,30 +160,36 @@ export async function generatePilotageDocPdf(
       if (legal.signataires) {
         const top = y
         const sigBorder: [number, number, number] = [210, 213, 219]
-        const drawSigBox = (bx: number, role: string, name: string, withSig: boolean) => {
+        const drawSigBox = (bx: number, role: string, name: string, sig: string | null) => {
           setDraw(sigBorder); pdf.setLineWidth(0.2); pdf.roundedRect(bx, top, sigBw, sigBh, 2, 2)
           setText(teal); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8)
           pdf.text(role.toUpperCase(), bx + 5, top + 7)
           setText(dark); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(10)
           pdf.text(name || '—', bx + 5, top + 13)
-          if (withSig && signData) {
+          if (sig) {
             try {
-              const sp = pdf.getImageProperties(signData)
+              const sp = pdf.getImageProperties(sig)
               const r = Math.min((sigBw - 14) / sp.width, 13 / sp.height)
-              pdf.addImage(signData, 'PNG', bx + 5, top + 16, sp.width * r, sp.height * r)
+              pdf.addImage(sig, 'PNG', bx + 5, top + 16, sp.width * r, sp.height * r)
             } catch { /* signature ignorée si illisible */ }
           }
           setText(gray); pdf.setFont('helvetica', 'italic'); pdf.setFontSize(7)
           pdf.text('Précédé de « lu et approuvé », date et signature', bx + 5, top + sigBh - 4)
         }
-        drawSigBox(margin, legal.signataires.roleA, fNom, true)
-        drawSigBox(margin + sigBw + sigGap, legal.signataires.roleB, docu.clientNom || '', false)
+        drawSigBox(margin, legal.signataires.roleA, fNom, signData)
+        drawSigBox(margin + sigBw + sigGap, legal.signataires.roleB, docu.clientNom || '', clientSignData)
         y = top + sigBh
-        if (signData) {
-          const when = docu.signeLe ? ' le ' + new Date(docu.signeLe.toMillis()).toLocaleDateString('fr-FR') : ''
+        // Mention de signature électronique (prestataire et/ou client).
+        const mentions: string[] = []
+        if (signData) mentions.push(`${legal.signataires.roleA} : ${docu.signatairePar || fNom}`)
+        if (clientSignData) {
+          const when = docu.clientSigneLe ? ' le ' + new Date(docu.clientSigneLe.toMillis()).toLocaleDateString('fr-FR') : ''
+          mentions.push(`${legal.signataires.roleB} : ${docu.clientSignatairePar || docu.clientNom || ''}${when}`)
+        }
+        if (mentions.length) {
           ensure(6); y += 4
           setText(gray); pdf.setFont('helvetica', 'italic'); pdf.setFontSize(8)
-          pdf.text(`Signé électroniquement${docu.signatairePar ? ' par ' + docu.signatairePar : ''}${when}.`, margin, y)
+          pdf.text(`Signé électroniquement — ${mentions.join('  ·  ')}.`, margin, y)
         }
       }
       footer()

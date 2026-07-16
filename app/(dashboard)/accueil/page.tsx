@@ -13,7 +13,7 @@ import { usePendingSubscriptions } from '@/hooks/usePendingSubscriptions'
 import { useUnseenDocuments } from '@/hooks/useUnseenDocuments'
 import {
   CalendarIcon, ChevronRightIcon,
-  MapPinIcon, GlobeAltIcon, BoltIcon,
+  MapPinIcon, GlobeAltIcon, BoltIcon, FolderIcon,
 } from '@heroicons/react/24/outline'
 import Badge from '@/components/ui/Badge'
 import { formatHeure, getEtatBadge } from '@/lib/planningUtils'
@@ -25,6 +25,14 @@ import { useTrips } from '@/hooks/useTrips'
 import { tripProgress } from '@/lib/tripsService'
 import { listenStoreSubscriptions, updateStoreSubscription, updateSubWithEvent, appendSubEvent, computeDateFin, suspendExpiredSubscriptions } from '@/lib/storeService'
 import { cleanupArchivedSubscriptions } from '@/lib/storeCleanup'
+
+// Libellés de statut des contrats affichés dans « Mes contrats » (espace client Enezo)
+const CONTRAT_STATUT: Record<string, { label: string; cls: string }> = {
+  prospect: { label: 'Proposition', cls: 'bg-amber-100 text-amber-700' },
+  actif: { label: 'En cours', cls: 'bg-green-100 text-green-700' },
+  pause: { label: 'En pause', cls: 'bg-gray-100 text-gray-600' },
+  termine: { label: 'Terminé', cls: 'bg-gray-100 text-gray-500' },
+}
 
 // Ajoute une période (mensuel = +1 mois, annuel = +1 an) à un timestamp ms
 function addPeriodMs(fromMs: number, periodicite: string): number {
@@ -47,6 +55,7 @@ export default function AccueilPage() {
   const [rdvAujourdhui, setRdvAujourdhui] = useState<any[]>([])
   const [activitesAujourdhui, setActivitesAujourdhui] = useState<any[]>([])
   const [prochainsRdv, setProchainsRdv] = useState<any[]>([])
+  const [monEspaceContrats, setMonEspaceContrats] = useState<{ id: string; appNom: string | null; clientNom: string; statut: string }[]>([])
 
   const { apps: storeApps } = useStoreApps()
   const { voyages: ccLists } = useTrips()
@@ -82,6 +91,21 @@ export default function AccueilPage() {
     fetchStats()
     checkAndCreateNotifications()
   }, [currentUser])
+
+  // Contrats rattachés au compte (section « Mes contrats » — espace client Enezo uniquement)
+  useEffect(() => {
+    if (!currentUser || isAdmin || brand !== 'enezo') { setMonEspaceContrats([]); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const idToken = await currentUser.getIdToken()
+        const res = await fetch('/api/mon-espace', { headers: { Authorization: `Bearer ${idToken}` } })
+        const d = await res.json()
+        if (!cancelled && res.ok) setMonEspaceContrats(d.contrats ?? [])
+      } catch { /* silencieux : la section reste simplement masquée */ }
+    })()
+    return () => { cancelled = true }
+  }, [currentUser, isAdmin, brand])
 
   useEffect(() => {
     if (!currentUser || !isAdmin) return
@@ -479,6 +503,44 @@ export default function AccueilPage() {
           })}
         </p>
       </div>
+
+      {/* Mes contrats — espace client Enezo (masqué si aucun contrat rattaché) */}
+      {monEspaceContrats.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-700">Mes contrats</h2>
+            {monEspaceContrats.length > 3 && (
+              <button
+                onClick={() => router.push('/mon-espace')}
+                className="group flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+              >
+                Tout voir
+                <ChevronRightIcon className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+              </button>
+            )}
+          </div>
+          <div className="space-y-2">
+            {monEspaceContrats.slice(0, 3).map((c) => {
+              const st = CONTRAT_STATUT[c.statut] ?? { label: c.statut, cls: 'bg-gray-100 text-gray-600' }
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => router.push(`/mon-espace/${c.id}`)}
+                  className="w-full flex items-center gap-3 bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-4 hover:shadow-md transition text-left"
+                >
+                  <FolderIcon className="w-6 h-6 text-gray-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-800 truncate">{c.appNom || c.clientNom}</p>
+                    {c.appNom && <p className="text-xs text-gray-500 truncate">{c.clientNom}</p>}
+                  </div>
+                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${st.cls}`}>{st.label}</span>
+                  <ChevronRightIcon className="w-4 h-4 text-gray-400 shrink-0" />
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Statistiques */}
       <div className="grid grid-cols-2 gap-4">

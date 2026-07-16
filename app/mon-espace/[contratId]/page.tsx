@@ -47,6 +47,19 @@ export default function MonEspaceContratPage({ params }: { params: Promise<{ con
     load()  // rafraîchit en arrière-plan (ne bloque pas la fermeture du modal)
   }, [currentUser, contratId, load])
 
+  const onSignDoc = useCallback(async (docId: string, signatureDataUrl: string) => {
+    if (!currentUser) throw new Error('Connexion requise.')
+    const idToken = await currentUser.getIdToken()
+    const res = await fetch(`/api/mon-espace/${contratId}/sign-doc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken, docId, signatureDataUrl }),
+    })
+    const d = await res.json()
+    if (!res.ok) throw new Error(d.error || 'Erreur')
+    load()
+  }, [currentUser, contratId, load])
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -82,5 +95,5 @@ export default function MonEspaceContratPage({ params }: { params: Promise<{ con
     </a>
   )
 
-  return <PortailContrat data={data} onSign={onSign} headerRight={headerRight} />
+  return <PortailContrat data={data} onSign={onSign} onSignDoc={onSignDoc} headerRight={headerRight} />
 }

@@ -487,18 +487,44 @@ export default function ContratPage() {
     setTimeout(() => URL.revokeObjectURL(url), 5000)
   }
 
+  // Génère le PDF, le stocke sur le contrat, et pose l'instantané de rendu (renderSnapshot)
+  // pour que l'espace client puisse régénérer le document À L'IDENTIQUE en y ajoutant la
+  // signature du client. `download` = téléchargement immédiat (génération manuelle) ou non (régénération silencieuse).
+  const buildAndStorePdf = async (d: PilotageDocument, download: boolean) => {
+    if (!currentUser) return
+    const { blob, filename } = await generatePilotageDocPdf(d, { company, projet: formProjet, legal: formLegal, charte: formCharte, options: splitPerimetre(formPerimetre).options, version: contrat?.version })
+    const url = await uploadBlob(blob, `users/${currentUser.uid}/pilotage_pdf/${d.contratId}/${d.id}.pdf`)
+    await updateDocument(d.id, {
+      pdfUrl: url, pdfNom: filename, pdfGeneeLe: Timestamp.now(),
+      pdfReflectsSignature: true,
+      renderSnapshot: { legal: formLegal as unknown as Record<string, unknown>, projetContexte: formProjet?.contexte ?? '' },
+    })
+    if (download) triggerDownload(blob, filename)
+  }
+
   // Génère (ou régénère) le PDF, le stocke sur le contrat et le télécharge.
   const genererPdf = async (d: PilotageDocument) => {
     if (!currentUser) return
     setPdfBusy(d.id)
-    try {
-      const { blob, filename } = await generatePilotageDocPdf(d, { company, projet: formProjet, legal: formLegal, charte: formCharte, options: splitPerimetre(formPerimetre).options, version: contrat?.version })
-      const url = await uploadBlob(blob, `users/${currentUser.uid}/pilotage_pdf/${d.contratId}/${d.id}.pdf`)
-      await updateDocument(d.id, { pdfUrl: url, pdfNom: filename, pdfGeneeLe: Timestamp.now() })
-      triggerDownload(blob, filename)
-    } catch (e) { console.error('[pilotage pdf]', e) }
+    try { await buildAndStorePdf(d, true) }
+    catch (e) { console.error('[pilotage pdf]', e) }
     setPdfBusy(null)
   }
+
+  // Régénère silencieusement la copie stockée d'un document que le CLIENT vient de signer
+  // depuis son espace : le PDF signé du client est produit dans SON navigateur ; ici on met à
+  // jour la copie de référence (avec les 2 signatures) à ta prochaine ouverture du contrat.
+  const regenDone = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!currentUser || !contrat || hydratedFor.current !== contrat.id) return
+    for (const d of documents) {
+      if (d.clientSigne && d.pdfReflectsSignature === false && !regenDone.current.has(d.id)) {
+        regenDone.current.add(d.id)
+        buildAndStorePdf(d, false).catch((e) => console.error('[pilotage regen]', e))
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, contrat, documents])
 
   // Ouvre le PDF déjà stocké, sans en régénérer un.
   const ouvrirPdf = (d: PilotageDocument) => { if (d.pdfUrl) window.open(d.pdfUrl, '_blank', 'noopener,noreferrer') }

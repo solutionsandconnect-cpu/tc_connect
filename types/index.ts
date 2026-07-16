@@ -462,13 +462,21 @@ export interface PilotageDocument {
   version: string
   statut: PilotageDocumentStatut
   contenu?: Record<string, unknown>   // données structurées (remplies aux phases suivantes)
-  signe?: boolean
+  signe?: boolean                     // signé côté PRESTATAIRE (case « roleA » du PDF)
   signeLe?: Timestamp | null
   signatairePar?: string | null
-  signatureUrl?: string | null        // image de la signature (Storage)
+  signatureUrl?: string | null        // image de la signature prestataire (Storage) — repli sur Company.signatureUrl si absente
+  // Signature du CLIENT posée depuis l'espace client (case « roleB » du PDF)
+  clientSigne?: boolean
+  clientSigneLe?: Timestamp | null
+  clientSignatairePar?: string | null
+  clientSignatureUrl?: string | null   // image de la signature client (data URL) — stockée telle quelle, sans Storage
+  // Instantané des données exactes rendues au dernier PDF admin : l'espace client régénère à l'identique
+  renderSnapshot?: { legal?: Record<string, unknown>; projetContexte?: string } | null
   pdfUrl?: string | null               // PDF généré stocké (Storage) — ouvert tel quel, régénérable
   pdfNom?: string                      // nom de fichier du PDF stocké
   pdfGeneeLe?: Timestamp | null        // date de génération du PDF stocké
+  pdfReflectsSignature?: boolean       // le PDF stocké reflète l'état de signature courant (sinon = à régénérer admin-side)
   createdAt: Timestamp
   updatedAt?: Timestamp
 }

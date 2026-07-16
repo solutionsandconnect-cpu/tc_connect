@@ -12,6 +12,10 @@ type Snap = FirebaseFirestore.DocumentSnapshot
 // Borne de sécurité : une signature canvas PNG fait quelques dizaines de Ko.
 const MAX_SIGNATURE_BYTES = 700 * 1024
 
+// Types de documents légaux que le CLIENT peut signer depuis son espace.
+// (CGV exclues : elles figurent sur les devis/factures, pas en document séparé.)
+export const SIGNABLE_DOC_TYPES = ['prestation', 'dpa_rgpd', 'licence'] as const
+
 // Signe un devis appartenant à un contrat donné (accès par lien OU par compte).
 // Stocke la signature en data URL (compatible invoiceHtml/invoicePdf), passe le devis
 // en « accepté », et notifie l'admin (push). Renvoie { status, body } prêt pour la réponse HTTP.
@@ -55,6 +59,62 @@ export async function signDevisForContrat(
           title: 'Devis signé en ligne',
           body: `${who} a signé le devis ${number}.`.trim(),
           url: `/facturation/${devisId}`,
+        }),
+      })
+    } catch { /* la signature a réussi même si la notif échoue */ }
+  })
+
+  return { status: 200, body: { ok: true, signed: true } }
+}
+
+// Signe un document légal (contrat de prestation, DPA/RGPD, licence) côté CLIENT depuis
+// l'espace. La signature du prestataire est posée par défaut (Company.signatureUrl) ; on ne
+// stocke ici que la signature du client (data URL, case « roleB » du PDF). La copie stockée
+// (pdfUrl) est marquée à régénérer côté admin ; le PDF signé immédiat est produit dans le navigateur du client.
+export async function signDocForContrat(
+  db: Db, cdoc: Snap, docId: string, signatureDataUrl: string, origin: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (!docId || !signatureDataUrl || !signatureDataUrl.startsWith('data:image/')) {
+    return { status: 400, body: { error: 'Signature manquante ou invalide.' } }
+  }
+  if (signatureDataUrl.length > MAX_SIGNATURE_BYTES) {
+    return { status: 413, body: { error: 'Signature trop volumineuse.' } }
+  }
+
+  const docRef = db.collection('pilotage_documents').doc(docId)
+  const dsnap = await docRef.get()
+  if (!dsnap.exists) return { status: 404, body: { error: 'Document introuvable.' } }
+  const doc = dsnap.data()!
+
+  if (doc.contratId !== cdoc.id) {
+    return { status: 403, body: { error: 'Ce document ne correspond pas à ce contrat.' } }
+  }
+  if (!SIGNABLE_DOC_TYPES.includes(doc.type)) {
+    return { status: 403, body: { error: "Ce document n'est pas signable." } }
+  }
+  if (doc.clientSigne) return { status: 200, body: { ok: true, alreadySigned: true } }
+
+  const c = cdoc.data()!
+  const signedAt = new Date()
+  await docRef.update({
+    clientSigne: true, clientSigneLe: signedAt, clientSignatairePar: c.clientNom || null,
+    clientSignatureUrl: signatureDataUrl, statut: 'signe',
+    pdfReflectsSignature: false, // la copie stockée sera régénérée à la prochaine ouverture admin
+    updatedAt: signedAt,
+  })
+
+  const who = c.clientNom || 'Un client'
+  const titre = doc.titre || 'un document'
+  after(async () => {
+    try {
+      await fetch(`${origin}/api/push/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toAdmins: true, persist: true, type: 'PILOTAGE_DOC_SIGNE',
+          title: 'Document signé en ligne',
+          body: `${who} a signé « ${titre} ».`,
+          url: `/pilotage/contrat/${cdoc.id}`,
         }),
       })
     } catch { /* la signature a réussi même si la notif échoue */ }
@@ -139,18 +199,39 @@ export async function buildPortalPayload(db: Db, cdoc: Snap) {
       const r = d.data()
       const o: Record<string, unknown> = { id: d.id, pdfGeneeLe: serialize(r.pdfGeneeLe) ?? null }
       for (const f of DOC_FIELDS) if (r[f] !== undefined) o[f] = r[f]
+      o.clientSigne = !!r.clientSigne
+      if (r.clientSigneLe) o.clientSigneLe = serialize(r.clientSigneLe)
+      // Signable par le client = contrat légal AVEC un instantané de rendu (posé à la génération admin).
+      const isSignable = (SIGNABLE_DOC_TYPES as readonly string[]).includes(r.type) && !!r.renderSnapshot
+      o.signable = isSignable
+      if (isSignable) {
+        o.renderSnapshot = serialize(r.renderSnapshot)   // { legal, projetContexte } → régénération à l'identique
+        o.clientNom = c.clientNom ?? ''
+        o.version = c.version ?? r.version ?? null        // version au niveau contrat (comme la génération admin)
+      }
       return o
     })
     .sort((a, b) => ((b.pdfGeneeLe as { seconds?: number })?.seconds ?? 0) - ((a.pdfGeneeLe as { seconds?: number })?.seconds ?? 0))
 
-  // Périmètre projet (client-facing) — SANS les `taches` (statut de facturation interne)
+  // Périmètre projet (client-facing). Les `taches` sont ASSAINIES : on retire le
+  // statut de facturation interne (facturation/tempsH/facturee) et on ne garde que
+  // description/date/fait/pour ('client' = le client, 'sc' = Enezo).
   const p = (c.projet ?? {}) as Raw
+  const taches = Array.isArray(p.taches)
+    ? (p.taches as Raw[]).map((t) => ({
+        description: t.description ?? '',
+        date: t.date ?? '',
+        fait: !!t.fait,
+        pour: t.pour === 'client' ? 'client' : 'sc',
+      }))
+    : []
   const projet = {
     contexte: p.contexte ?? '',
     fonctionnalites: p.fonctionnalites ?? [],
     livrables: p.livrables ?? [],
     horsPerimetre: p.horsPerimetre ?? [],
     planning: p.planning ?? [],
+    taches,
   }
 
   // Résumé du contrat (whitelist — AUCUNE donnée interne)

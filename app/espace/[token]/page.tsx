@@ -42,6 +42,17 @@ export default function EspaceClientPage({ params }: { params: Promise<{ token: 
     load()  // rafraîchit en arrière-plan (ne bloque pas la fermeture du modal)
   }, [token, load])
 
+  const onSignDoc = useCallback(async (docId: string, signatureDataUrl: string) => {
+    const res = await fetch(`/api/espace/${token}/sign-doc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docId, signatureDataUrl }),
+    })
+    const d = await res.json()
+    if (!res.ok) throw new Error(d.error || 'Erreur')
+    load()
+  }, [token, load])
+
   const handleClaim = async () => {
     if (!currentUser) return
     setClaiming(true)
@@ -122,5 +133,5 @@ export default function EspaceClientPage({ params }: { params: Promise<{ token: 
     }
   }
 
-  return <PortailContrat data={data} onSign={onSign} banner={banner} />
+  return <PortailContrat data={data} onSign={onSign} onSignDoc={onSignDoc} banner={banner} />
 }

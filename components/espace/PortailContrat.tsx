@@ -1,13 +1,16 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import type { Facture, Company } from '@/types'
+import { Timestamp } from 'firebase/firestore'
+import type { Facture, Company, PilotageDocument, ProjetContent } from '@/types'
+import type { LegalFields } from '@/lib/pilotageLegalTemplates'
 import { buildInvoiceHtml } from '@/lib/invoiceHtml'
 import { downloadInvoicePDF } from '@/lib/invoicePdf'
+import { generatePilotageDocPdf } from '@/lib/pilotageDocPdf'
 import SignaturePad from '@/components/ui/SignaturePad'
 import {
   CheckCircleIcon, ArrowDownTrayIcon, PencilSquareIcon, DocumentTextIcon,
-  DocumentDuplicateIcon, MapIcon, BanknotesIcon,
+  DocumentDuplicateIcon, MapIcon, BanknotesIcon, ClipboardDocumentCheckIcon,
 } from '@heroicons/react/24/outline'
 
 export interface ContratSummary {
@@ -24,9 +27,11 @@ export interface ProjetView {
   livrables: string[]
   horsPerimetre: string[]
   planning: { etape: string; description: string; date: string; dureeJours?: number; responsable: string }[]
+  taches: { description: string; date: string; fait: boolean; pour: 'client' | 'sc' }[]
 }
 export interface DocView {
   id: string
+  type?: string
   titre?: string
   version?: string
   statut?: string
@@ -34,6 +39,12 @@ export interface DocView {
   pdfNom?: string
   signe?: boolean
   pdfGeneeLe: { seconds: number } | null
+  // Signature client depuis l'espace (contrats légaux)
+  signable?: boolean
+  clientSigne?: boolean
+  clientSigneLe?: { seconds: number } | null
+  clientNom?: string
+  renderSnapshot?: { legal?: Record<string, unknown>; projetContexte?: string } | null
 }
 export interface PortalData {
   contrat: ContratSummary
@@ -45,7 +56,7 @@ export interface PortalData {
   primaryDevisId: string | null
 }
 
-type TabKey = 'devis' | 'projet' | 'documents' | 'factures'
+type TabKey = 'devis' | 'projet' | 'taches' | 'documents' | 'factures'
 
 const STATUT_DEVIS: Record<string, { label: string; cls: string }> = {
   draft: { label: 'Brouillon', cls: 'bg-gray-100 text-gray-600' },
@@ -80,15 +91,19 @@ interface Props {
   data: PortalData
   // Signe un devis : doit lever une erreur en cas d'échec, et rafraîchir les données côté parent en cas de succès.
   onSign: (devisId: string, signatureDataUrl: string) => Promise<void>
+  // Signe un document légal (enregistre la signature côté serveur). Le PDF signé est généré ici, dans le navigateur.
+  onSignDoc?: (docId: string, signatureDataUrl: string) => Promise<void>
   banner?: React.ReactNode
   headerRight?: React.ReactNode
 }
 
-export default function PortailContrat({ data, onSign, banner, headerRight }: Props) {
+export default function PortailContrat({ data, onSign, onSignDoc, banner, headerRight }: Props) {
   const [tab, setTab] = useState<TabKey | null>(null)
   const [selectedDevisId, setSelectedDevisId] = useState<string | null>(data.primaryDevisId ?? data.devis[0]?.id ?? null)
   const [signModal, setSignModal] = useState(false)
   const [signing, setSigning] = useState(false)
+  const [signDocTarget, setSignDocTarget] = useState<DocView | null>(null)
+  const [signingDoc, setSigningDoc] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [toast, setToast] = useState('')
 
@@ -105,12 +120,13 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
     const pj = data.projet
     const projetTab = (pj.contexte || pj.fonctionnalites.length || pj.planning.length || pj.livrables.length)
       ? [{ key: 'projet' as TabKey, label: 'Suivi du projet', Icon: MapIcon }] : []
+    const tachesTab = pj.taches.length ? [{ key: 'taches' as TabKey, label: 'Tâches', Icon: ClipboardDocumentCheckIcon }] : []
     const docTab = data.documents.length ? [{ key: 'documents' as TabKey, label: 'Documents', Icon: DocumentDuplicateIcon }] : []
     const facTab = data.factures.length ? [{ key: 'factures' as TabKey, label: 'Factures', Icon: BanknotesIcon }] : []
     // Devis signé → Suivi du projet d'abord ; sinon Devis d'abord.
     return primarySigned
-      ? [...projetTab, ...devisTab, ...docTab, ...facTab]
-      : [...devisTab, ...projetTab, ...docTab, ...facTab]
+      ? [...projetTab, ...tachesTab, ...devisTab, ...docTab, ...facTab]
+      : [...devisTab, ...projetTab, ...tachesTab, ...docTab, ...facTab]
   }, [data, primarySigned])
 
   useEffect(() => { if (tab === null) setTab(tabs[0]?.key ?? null) }, [tab, tabs])
@@ -154,6 +170,46 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
     }
   }
 
+  // Signature d'un document légal par le client : PDF signé généré ici (navigateur), signature enregistrée côté serveur.
+  const handleSignDoc = async (signatureDataUrl: string) => {
+    const d = signDocTarget
+    if (!d || !onSignDoc) return
+    setSigningDoc(true)
+    try {
+      // 1) Génère le PDF signé dans le navigateur, à partir de l'instantané de rendu figé côté admin
+      //    (signature prestataire par défaut via la société + signature du client) → identique à ta version.
+      const snap = d.renderSnapshot ?? {}
+      const docu = {
+        id: d.id,
+        contratId: data.contrat.id,
+        type: d.type,
+        titre: d.titre ?? '',
+        version: d.version ?? '',
+        statut: 'signe',
+        clientNom: d.clientNom || data.contrat.clientNom,
+        clientSignatureUrl: signatureDataUrl,
+        clientSigneLe: Timestamp.now(),
+        clientSignatairePar: d.clientNom || data.contrat.clientNom,
+      } as unknown as PilotageDocument
+      const { blob, filename } = await generatePilotageDocPdf(docu, {
+        company: (data.company ?? null) as Company | null,
+        legal: (snap.legal ?? {}) as unknown as LegalFields,
+        projet: { contexte: snap.projetContexte ?? '' } as unknown as ProjetContent,
+        version: d.version ?? null,
+      })
+      // 2) Enregistre la signature côté serveur (source de vérité + notif admin).
+      await onSignDoc(d.id, signatureDataUrl)
+      // 3) Téléchargement immédiat du document signé pour le client.
+      downloadBlob(blob, filename)
+      setSignDocTarget(null)
+      setToast('Document signé. Téléchargement en cours…')
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'Erreur lors de la signature du document.')
+    } finally {
+      setSigningDoc(false)
+    }
+  }
+
   const companyName = data.company?.nom || 'Enezo'
 
   return (
@@ -166,6 +222,17 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
           busy={signing}
           onConfirm={handleSign}
           onCancel={() => !signing && setSignModal(false)}
+        />
+      )}
+
+      {signDocTarget && (
+        <SignaturePad
+          title={`Signer « ${signDocTarget.titre || 'le document'} »`}
+          subtitle="Dessinez votre signature ci-dessous pour accepter et signer ce document."
+          consentLabel={`Lu et approuvé : je reconnais avoir pris connaissance de « ${signDocTarget.titre || 'ce document'} » et j'en accepte les termes.`}
+          busy={signingDoc}
+          onConfirm={handleSignDoc}
+          onCancel={() => !signingDoc && setSignDocTarget(null)}
         />
       )}
 
@@ -345,21 +412,65 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
           </div>
         )}
 
+        {/* ── Tâches ── */}
+        {tab === 'taches' && (
+          data.projet.taches.length === 0 ? <Empty>Aucune tâche pour le moment.</Empty> : (
+            <Card title={`Tâches du projet — ${data.projet.taches.filter((t) => t.fait).length}/${data.projet.taches.length} faites`}>
+              <ul className="space-y-2.5">
+                {data.projet.taches.map((t, i) => (
+                  <li key={i} className="flex items-start gap-3">
+                    {t.fait
+                      ? <CheckCircleIcon className="w-5 h-5 text-green-500 shrink-0 mt-0.5" />
+                      : <span className="w-4 h-4 rounded-full border-2 border-gray-300 shrink-0 mt-1" />}
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm ${t.fait ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{t.description}</p>
+                      {t.date && <p className="text-xs text-gray-400 mt-0.5">{fmtDateStr(t.date)}</p>}
+                    </div>
+                    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${t.pour === 'client' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
+                      {t.pour === 'client' ? 'À vous' : companyName}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )
+        )}
+
         {/* ── Documents ── */}
         {tab === 'documents' && (
           data.documents.length === 0 ? <Empty>Aucun document n'est disponible pour le moment.</Empty> : (
             <div className="space-y-2">
-              {data.documents.map((doc) => (
-                <a key={doc.id} href={doc.pdfUrl} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-3 bg-white rounded-xl border border-gray-100 hover:border-blue-300 hover:bg-blue-50/40 px-4 py-3 transition">
-                  <DocumentDuplicateIcon className="w-5 h-5 text-gray-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 truncate">{doc.titre || 'Document'}</p>
-                    <p className="text-xs text-gray-500">{doc.version ? `Version ${doc.version}` : ''}{doc.signe ? ' · Signé' : ''}</p>
+              {data.documents.map((doc) => {
+                const canSignDoc = !!onSignDoc && doc.signable && !doc.clientSigne
+                const when = doc.clientSigneLe ? ` le ${new Date(doc.clientSigneLe.seconds * 1000).toLocaleDateString('fr-FR')}` : ''
+                return (
+                  <div key={doc.id} className="flex items-center gap-3 bg-white rounded-xl border border-gray-100 px-4 py-3">
+                    <DocumentDuplicateIcon className="w-5 h-5 text-gray-400 shrink-0" />
+                    <a href={doc.pdfUrl} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0 group">
+                      <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-blue-700">{doc.titre || 'Document'}</p>
+                      <p className="text-xs text-gray-500">
+                        {doc.version ? `Version ${doc.version}` : ''}
+                        {canSignDoc ? <span className="text-amber-600 font-medium">{doc.version ? ' · ' : ''}À signer</span> : null}
+                      </p>
+                    </a>
+                    {doc.clientSigne ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full shrink-0" title={`Signé${when}`}>
+                        <CheckCircleIcon className="w-4 h-4" /> Signé
+                      </span>
+                    ) : canSignDoc ? (
+                      <button onClick={() => setSignDocTarget(doc)}
+                        className="inline-flex items-center gap-1.5 text-sm font-semibold text-white px-3 py-1.5 rounded-xl transition hover:opacity-90 shrink-0"
+                        style={{ backgroundColor: primary }}>
+                        <PencilSquareIcon className="w-4 h-4" /> Signer
+                      </button>
+                    ) : (
+                      <a href={doc.pdfUrl} target="_blank" rel="noopener noreferrer" title="Télécharger" className="p-2 text-gray-400 hover:text-blue-600 transition shrink-0">
+                        <ArrowDownTrayIcon className="w-4 h-4" />
+                      </a>
+                    )}
                   </div>
-                  <ArrowDownTrayIcon className="w-4 h-4 text-gray-400 shrink-0" />
-                </a>
-              ))}
+                )
+              })}
             </div>
           )
         )}
@@ -402,6 +513,14 @@ export default function PortailContrat({ data, onSign, banner, headerRight }: Pr
       )}
     </div>
   )
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
