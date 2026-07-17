@@ -51,6 +51,7 @@ type AboForm = {
   dateDebut: string; dateFin: string; etat: AbonnementEtat
   objectifs: Objectif[]; resumeSuivi: string; indications: string
   notesInternes: AboNoteItem[]; arretSuivi: string
+  sansRappelRenouvellement: boolean
 }
 
 const EMPTY: AboForm = {
@@ -58,6 +59,7 @@ const EMPTY: AboForm = {
   dateDebut: '', dateFin: '', etat: 'Actif',
   objectifs: [], resumeSuivi: '', indications: '',
   notesInternes: [], arretSuivi: '',
+  sansRappelRenouvellement: false,
 }
 
 // ── Sous-composant notes ──────────────────────────────────────────────────────
@@ -136,6 +138,7 @@ export function AbonnementModal({ isOpen, onClose, onSaved, clientId, userId, ed
         indications: editing.indications ?? '',
         notesInternes: Array.isArray((editing as any).notesInternes) ? (editing as any).notesInternes : [],
         arretSuivi: (editing as any).arretSuivi ?? '',
+        sansRappelRenouvellement: !!(editing as any).sansRappelRenouvellement,
       })
     } else {
       const co = defaultCompanyId ?? companies.find((c) => c.nom.toLowerCase().includes('teddy'))?.id ?? companies[0]?.id ?? ''
@@ -166,6 +169,7 @@ export function AbonnementModal({ isOpen, onClose, onSaved, clientId, userId, ed
         indications: form.indications || undefined,
         notesInternes: form.notesInternes.length ? form.notesInternes : undefined,
         arretSuivi: form.arretSuivi || undefined,
+        sansRappelRenouvellement: form.sansRappelRenouvellement, // booléen explicite : décocher doit écrire false (sinon cleanForFirestore strippe undefined et l'ancien true reste)
       }
       if (editing) {
         await updateAbonnement(editing.id, base)
@@ -251,6 +255,18 @@ export function AbonnementModal({ isOpen, onClose, onSaved, clientId, userId, ed
               </select>
             </Field>
           </div>
+          <label className="flex items-start gap-2.5 mt-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-400"
+              checked={form.sansRappelRenouvellement}
+              onChange={(e) => setForm((p) => ({ ...p, sansRappelRenouvellement: e.target.checked }))}
+            />
+            <span className="text-sm text-gray-600">
+              Ne pas me notifier du renouvellement de cet abonnement
+              <span className="block text-xs text-gray-400">Coupe les notifications push (échéance et séances terminées). L'abonnement reste visible dans le bandeau « À renouveler ».</span>
+            </span>
+          </label>
         </Section>
 
         <Section title="Suivi">

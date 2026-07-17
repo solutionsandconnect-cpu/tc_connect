@@ -827,6 +827,7 @@ export interface Abonnement {
   notes?: string             // kept for backward compat
   notesInternes?: Array<{ texte: string; type_note: string }>
   arretSuivi?: string   // raison de non reconduction (écrit aussi dans database_users_details.arret_suivi)
+  sansRappelRenouvellement?: boolean  // true = ne pas envoyer de push de renouvellement pour cet abo (reste visible dans le bandeau/filtre « À renouveler »)
   createdAt: Timestamp
   updatedAt?: Timestamp
 }

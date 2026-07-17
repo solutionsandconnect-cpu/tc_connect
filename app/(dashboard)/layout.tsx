@@ -51,7 +51,7 @@ export default function DashboardLayout({
         const now = Date.now()
         const expiring = abosSnap.docs
           .map(d => d.data() as any)
-          .filter(a => a.etat === 'Actif' && a.dateFin && a.dateFin.toMillis() <= in30 && activeClientIds.has(a.clientId))
+          .filter(a => a.etat === 'Actif' && a.dateFin && a.dateFin.toMillis() <= in30 && activeClientIds.has(a.clientId) && !a.sansRappelRenouvellement)
         if (expiring.length === 0) return
         const overdue = expiring.filter(a => a.dateFin.toMillis() < now)
         const soon = expiring.filter(a => a.dateFin.toMillis() >= now)

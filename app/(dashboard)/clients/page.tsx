@@ -1550,6 +1550,7 @@ export default function ClientsPage() {
     });
 
     for (const abo of sessionDone) {
+      if ((abo as any).sansRappelRenouvellement) continue; // push coupé pour cet abo (reste dans le bandeau)
       if (sessionsDoneNotifRef.current.has(abo.id)) continue;
       sessionsDoneNotifRef.current.add(abo.id);
       const storageKey = `tc_sessions_done_${abo.id}`;
