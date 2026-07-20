@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
-import { FolderIcon, ArrowRightIcon } from '@heroicons/react/24/outline'
+import { FolderIcon, ArrowRightIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 import BrandGuard from '@/components/BrandGuard'
 
 interface ContratItem {
@@ -71,9 +71,20 @@ function MonEspacePageInner() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-100">
-        <div className="px-4 sm:px-6 lg:px-8 py-4">
-          <h1 className="text-base font-bold text-gray-900">Mon espace</h1>
-          <p className="text-xs text-gray-500">Vos projets, devis et factures</p>
+        <div className="px-4 sm:px-6 lg:px-8 py-4 flex items-center gap-3">
+          {/* Cette page est hors du dashboard : sans ce retour, l'utilisateur n'a aucun
+              moyen de revenir dans l'app (pas de navbar ici). */}
+          <a
+            href="/accueil"
+            title="Retour à l'application"
+            className="p-2 -ml-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition shrink-0"
+          >
+            <ArrowLeftIcon className="w-5 h-5" />
+          </a>
+          <div className="min-w-0">
+            <h1 className="text-base font-bold text-gray-900">Mon espace</h1>
+            <p className="text-xs text-gray-500">Vos projets, devis et factures</p>
+          </div>
         </div>
       </div>
 

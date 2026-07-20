@@ -83,8 +83,18 @@ export default function MonEspaceContratPage({ params }: { params: Promise<{ con
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4 text-center">
         <FolderIcon className="w-12 h-12 text-gray-300 mb-3" />
         <p className="text-lg font-bold text-gray-800 mb-1">Projet indisponible</p>
-        <p className="text-sm text-gray-500 mb-5">{error || 'Introuvable.'}</p>
-        <a href="/mon-espace" className="text-sm font-semibold text-blue-600 hover:text-blue-800">← Mon espace</a>
+        <p className="text-sm text-gray-500 mb-5 max-w-sm">{error || 'Introuvable.'}</p>
+        <div className="flex flex-col sm:flex-row items-center gap-2">
+          <a href="/mon-espace"
+            className="inline-flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition">
+            <ArrowLeftIcon className="w-4 h-4" />
+            Mes projets
+          </a>
+          <a href="/accueil"
+            className="inline-flex items-center justify-center border border-gray-300 text-gray-600 text-sm font-medium px-5 py-2.5 rounded-xl hover:bg-gray-50 transition">
+            Retour à l&apos;application
+          </a>
+        </div>
       </div>
     )
   }

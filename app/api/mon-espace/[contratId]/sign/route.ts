@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getAdminAuth, getAdminDb } from '@/lib/firebaseAdmin'
+import { resolveClientId } from '@/lib/monEspace'
 import { signDevisForContrat } from '@/lib/espacePortal'
 
 // Signature d'un devis via accès par COMPTE.
@@ -20,8 +21,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ contrat
     return NextResponse.json({ error: 'Session invalide.' }, { status: 401 })
   }
 
-  const userSnap = await db.collection('users').doc(uid).get()
-  const clientId = userSnap.exists ? (userSnap.data()!.linkedClientId as string | undefined) : undefined
+  const clientId = await resolveClientId(uid)
   if (!clientId) return NextResponse.json({ error: 'Aucun espace rattaché à ce compte.' }, { status: 403 })
 
   const cdoc = await db.collection('pilotage_contrats').doc(contratId).get()
