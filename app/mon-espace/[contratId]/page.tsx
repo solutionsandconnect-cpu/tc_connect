@@ -100,8 +100,13 @@ export default function MonEspaceContratPage({ params }: { params: Promise<{ con
   }
 
   const headerRight = (
-    <a href="/mon-espace" title="Retour" className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800 shrink-0">
-      <ArrowLeftIcon className="w-4 h-4" /> Mes projets
+    <a
+      href="/mon-espace"
+      title="Revenir à la liste de vos projets"
+      className="inline-flex items-center gap-1.5 shrink-0 border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 hover:border-gray-300 text-sm font-medium px-3 py-2 rounded-xl transition"
+    >
+      <ArrowLeftIcon className="w-4 h-4" />
+      <span className="hidden sm:inline">Mes projets</span>
     </a>
   )
 
