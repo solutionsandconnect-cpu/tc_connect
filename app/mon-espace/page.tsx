@@ -7,7 +7,10 @@ import BrandGuard from '@/components/BrandGuard'
 
 interface ContratItem {
   id: string
-  appNom: string | null
+  titre: string
+  /** Repères de différenciation (n° de devis · date) — deux contrats d'un même client
+   *  porteraient sinon le même libellé. */
+  sousTitre: string
   clientNom: string
   statut: string
 }
@@ -107,8 +110,8 @@ function MonEspacePageInner() {
                 className="flex items-center gap-3 bg-white rounded-2xl border border-gray-100 hover:border-blue-300 hover:bg-blue-50/40 shadow-sm px-4 py-4 transition">
                 <FolderIcon className="w-6 h-6 text-gray-400 shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-800 truncate">{c.appNom || c.clientNom}</p>
-                  {c.appNom && <p className="text-xs text-gray-500 truncate">{c.clientNom}</p>}
+                  <p className="text-sm font-semibold text-gray-800 truncate">{c.titre}</p>
+                  {c.sousTitre && <p className="text-xs text-gray-500 truncate">{c.sousTitre}</p>}
                 </div>
                 <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${st.cls}`}>{st.label}</span>
                 <ArrowRightIcon className="w-4 h-4 text-gray-400 shrink-0" />

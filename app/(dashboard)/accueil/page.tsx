@@ -55,7 +55,7 @@ export default function AccueilPage() {
   const [rdvAujourdhui, setRdvAujourdhui] = useState<any[]>([])
   const [activitesAujourdhui, setActivitesAujourdhui] = useState<any[]>([])
   const [prochainsRdv, setProchainsRdv] = useState<any[]>([])
-  const [monEspaceContrats, setMonEspaceContrats] = useState<{ id: string; appNom: string | null; clientNom: string; statut: string }[]>([])
+  const [monEspaceContrats, setMonEspaceContrats] = useState<{ id: string; titre: string; sousTitre: string; clientNom: string; statut: string }[]>([])
 
   const { apps: storeApps } = useStoreApps()
   const { voyages: ccLists } = useTrips()
@@ -542,8 +542,8 @@ export default function AccueilPage() {
                 >
                   <FolderIcon className="w-6 h-6 text-gray-400 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 truncate">{c.appNom || c.clientNom}</p>
-                    {c.appNom && <p className="text-xs text-gray-500 truncate">{c.clientNom}</p>}
+                    <p className="text-sm font-semibold text-gray-800 truncate">{c.titre}</p>
+                    {c.sousTitre && <p className="text-xs text-gray-500 truncate">{c.sousTitre}</p>}
                   </div>
                   <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${st.cls}`}>{st.label}</span>
                   <ChevronRightIcon className="w-4 h-4 text-gray-400 shrink-0" />
