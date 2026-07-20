@@ -17,7 +17,23 @@ export async function GET(req: Request) {
   }
 
   const userSnap = await db.collection('users').doc(uid).get()
-  const clientId = userSnap.exists ? (userSnap.data()!.linkedClientId as string | undefined) : undefined
+  const user = userSnap.exists ? userSnap.data()! : {}
+  let clientId = user.linkedClientId as string | undefined
+
+  // En prod, le lien compte↔client est le plus souvent posé UNIQUEMENT côté client
+  // (`Client.linkedUserId`, ex. fiches importées) et jamais côté user — se fier au seul
+  // `User.linkedClientId` renvoyait donc une liste vide, et l'espace client restait
+  // inaccessible. On retombe sur le lien inverse, puis sur l'email (même règle de
+  // rattachement qu'à l'inscription).
+  if (!clientId) {
+    const byUser = await db.collection('clients').where('linkedUserId', '==', uid).limit(1).get()
+    if (!byUser.empty) clientId = byUser.docs[0].id
+  }
+  if (!clientId && user.email) {
+    const byEmail = await db.collection('clients').where('email', '==', user.email).limit(1).get()
+    if (!byEmail.empty) clientId = byEmail.docs[0].id
+  }
+
   if (!clientId) return NextResponse.json({ contrats: [] })
 
   const snap = await db.collection('pilotage_contrats').where('clientId', '==', clientId).get()
