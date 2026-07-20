@@ -76,6 +76,7 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
   const [platform, setPlatform] = useState<"ios" | "android" | "desktop">("desktop");
   /** App ouverte depuis un raccourci déjà installé (mode plein écran). */
   const [standalone, setStandalone] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -119,15 +120,36 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
           </p>
 
           {standalone ? (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-gray-700 space-y-1.5">
-              <p className="font-semibold text-amber-800">Impossible depuis l&apos;app installée</p>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-gray-700 space-y-2.5">
+              <p className="font-semibold text-amber-800">À faire depuis le navigateur</p>
               <p>
-                Vous utilisez déjà un raccourci en plein écran :{" "}
-                {platform === "ios" ? "iOS n'y affiche aucun menu Partager" : "le menu du navigateur n'y est pas accessible"}.
+                {platform === "ios"
+                  ? "Vous êtes dans l'app installée, où iOS n'affiche aucun menu Partager : le raccourci ne peut être créé que depuis Safari."
+                  : "Vous êtes dans l'app installée, où le menu du navigateur n'est pas accessible : le raccourci ne peut être créé que depuis le navigateur."}
               </p>
-              <p>
-                Ouvrez cette même page dans <strong>{platform === "ios" ? "Safari" : "votre navigateur"}</strong>{" "}
-                (via l&apos;adresse du site), puis relancez cette manipulation depuis l&apos;app.
+              <div className="flex flex-col gap-2 pt-0.5">
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(window.location.href);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2500);
+                    } catch { /* presse-papiers refusé */ }
+                  }}
+                  className="w-full bg-white border border-amber-300 text-amber-900 py-2 rounded-lg text-xs font-medium hover:bg-amber-100 transition"
+                >
+                  {copied ? "Lien copié — collez-le dans Safari" : "Copier le lien de cette app"}
+                </button>
+                <button
+                  onClick={() => window.open(window.location.href, "_blank", "noopener")}
+                  className="w-full bg-white border border-amber-300 text-amber-900 py-2 rounded-lg text-xs font-medium hover:bg-amber-100 transition"
+                >
+                  Ouvrir dans le navigateur
+                </button>
+              </div>
+              <p className="text-amber-700">
+                Puis, dans {platform === "ios" ? "Safari" : "le navigateur"} : Partager →{" "}
+                <strong>« Sur l&apos;écran d&apos;accueil »</strong>.
               </p>
             </div>
           ) : platform === "ios" && (
