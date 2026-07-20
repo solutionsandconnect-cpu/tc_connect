@@ -117,7 +117,7 @@ export default function BoutiqueAdminPage() {
   const [showAppModal, setShowAppModal] = useState(false);
   const [editApp, setEditApp] = useState<StoreApp | null>(null);
   const [appForm, setAppForm] = useState({
-    nom: "", nomCourt: "", shortDesc: "", description: "", icon: "🎯", iconUrl: "", couleur: "#6366f1",
+    nom: "", shortDesc: "", description: "", icon: "🎯", iconUrl: "", couleur: "#6366f1",
     prix: "", periodicite: "mensuel" as StoreApp["periodicite"], actif: true, ordre: "0", route: "", tags: "",
     visibleUserIds: [] as string[],
     hiddenUserIds: [] as string[],
@@ -167,7 +167,7 @@ export default function BoutiqueAdminPage() {
   // ── App CRUD ──────────────────────────────────────────────────────────────
   const openNewApp = () => {
     setEditApp(null);
-    setAppForm({ nom: "", nomCourt: "", shortDesc: "", description: "", icon: "🎯", iconUrl: "", couleur: "#6366f1", prix: "", periodicite: "mensuel", actif: true, ordre: String(apps.length), route: "", tags: "", visibleUserIds: [], hiddenUserIds: [] });
+    setAppForm({ nom: "", shortDesc: "", description: "", icon: "🎯", iconUrl: "", couleur: "#6366f1", prix: "", periodicite: "mensuel", actif: true, ordre: String(apps.length), route: "", tags: "", visibleUserIds: [], hiddenUserIds: [] });
     setAppChangelogs([]);
     setAppLimites([]);
     setShowChangelogForm(false);
@@ -177,7 +177,7 @@ export default function BoutiqueAdminPage() {
   const openEditApp = (app: StoreApp) => {
     setEditApp(app);
     setAppForm({
-      nom: app.nom, nomCourt: app.nomCourt ?? "", shortDesc: app.shortDesc, description: app.description,
+      nom: app.nom, shortDesc: app.shortDesc, description: app.description,
       icon: app.icon, iconUrl: app.iconUrl ?? "", couleur: app.couleur, prix: String(app.prix),
       periodicite: app.periodicite, actif: app.actif, ordre: String(app.ordre),
       route: app.route ?? "", tags: (app.tags ?? []).join(", "),
@@ -219,9 +219,6 @@ export default function BoutiqueAdminPage() {
     try {
       const rawData = {
         nom: appForm.nom.trim(),
-        // Chaîne brute (et pas `|| undefined`) : ce payload filtre les `undefined`,
-        // donc envoyer undefined empêcherait de VIDER un nom court déjà enregistré.
-        nomCourt: appForm.nomCourt.trim(),
         shortDesc: appForm.shortDesc.trim(),
         description: appForm.description.trim(),
         icon: appForm.icon,
@@ -800,16 +797,6 @@ export default function BoutiqueAdminPage() {
                     <option value="unique">Paiement unique</option>
                   </select>
                 </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Nom sur l&apos;écran d&apos;accueil du téléphone</label>
-                <input type="text" placeholder="Ex : Enezo - Belote" value={appForm.nomCourt}
-                  onChange={(e) => setAppForm((f) => ({ ...f, nomCourt: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition" />
-                <p className="text-xs text-gray-400 mt-1">
-                  Raccourci affiché : <strong>{appForm.nomCourt.trim() || appForm.nom.trim() || "Nom de l'app"}</strong>
-                  {" "}· repris tel quel. Vide = nom de l&apos;app. iOS tronque au-delà de ~12 caractères.
-                </p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

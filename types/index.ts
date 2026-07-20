@@ -970,7 +970,6 @@ export interface UrssafPeriode {
 export interface StoreApp {
   id: string
   nom: string
-  nomCourt?: string        // nom du raccourci sur l'écran d'accueil du téléphone, repris tel quel (repli : nom)
   shortDesc: string        // accroche courte pour la carte
   description: string      // texte long
   icon: string             // emoji (fallback si pas de logo image)
