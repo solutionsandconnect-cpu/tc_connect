@@ -32,13 +32,15 @@ export function useBebe(uid: string | undefined) {
   const updateBebe = (id: string, data: Partial<Omit<Bebe, 'id'>>) =>
     updateDoc(doc(db, 'babies', id), data)
 
-  /** Supprime le bébé ET tous ses événements (sous-collection) en cascade */
+  /** Supprime le bébé ET ses sous-collections (événements + contacts d'annonce) en cascade */
   const deleteBabeWithEvents = async (id: string) => {
-    const snap = await getDocs(collection(db, 'babies', id, 'events'))
-    if (snap.docs.length > 0) {
-      const batch = writeBatch(db)
-      snap.docs.forEach(d => batch.delete(d.ref))
-      await batch.commit()
+    for (const sub of ['events', 'contacts']) {
+      const snap = await getDocs(collection(db, 'babies', id, sub))
+      if (snap.docs.length > 0) {
+        const batch = writeBatch(db)
+        snap.docs.forEach(d => batch.delete(d.ref))
+        await batch.commit()
+      }
     }
     await deleteDoc(doc(db, 'babies', id))
   }

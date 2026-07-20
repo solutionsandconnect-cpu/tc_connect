@@ -6,11 +6,12 @@ import { useBebe } from '@/hooks/useBebe'
 import { useBebeEvents } from '@/hooks/useBebeEvents'
 import { StoreGate } from '@/components/ui/StoreGate'
 import Modal from '@/components/ui/Modal'
-import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play, Gift } from 'lucide-react'
+import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play, Gift, Users } from 'lucide-react'
 import { Milk, Pill, Baby } from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
 import { uploadImage } from '@/lib/uploadImage'
 import { ArrivalSection } from '@/components/bebe/ArrivalSection'
+import { ShareBabyModal } from '@/components/bebe/ShareBabyModal'
 import type { BebeEvent, BebeEventType } from '@/types'
 
 // ─── Icône couche (SVG custom rempli — aucun équivalent dans lucide) ──────────
@@ -231,6 +232,22 @@ export default function BebePage() {
 
   const selectedBaby = babies.find(b => b.id === selectedBabyId) ?? null
   const { events, addEvent, updateEvent, deleteEvent } = useBebeEvents(selectedBabyId)
+
+  // ── Partage co-parent ─────────────────────────────────────────────────────
+  const [showShareModal, setShowShareModal] = useState(false)
+
+  /** Créateur du bébé sélectionné (les bébés d'avant le partage n'ont pas toujours `createdBy`). */
+  const isBabyCreator = !selectedBaby?.createdBy || selectedBaby.createdBy === currentUser?.uid
+
+  /** Co-parent invité sur le bébé de quelqu'un d'autre → accès sans abonnement propre
+   *  (le partage est inclus dans l'abonnement du parent qui invite). */
+  const isSharedGuest = useMemo(
+    () => !!currentUser && babies.some(b => !!b.createdBy && b.createdBy !== currentUser.uid),
+    [babies, currentUser],
+  )
+  /** On laisse passer aussi pendant le chargement des bébés : sinon un co-parent sans
+   *  abonnement voit brièvement l'écran « Accès non activé » avant que la liste arrive. */
+  const gateBypass = isSharedGuest || loadingBabies
 
   const markAsPrimary = (id: string) => {
     try { localStorage.setItem(STORAGE_KEY, id) } catch {}
@@ -466,7 +483,7 @@ export default function BebePage() {
 
   if (loadingBabies) {
     return (
-      <StoreGate appRoute="/bebe">
+      <StoreGate appRoute="/bebe" bypass={gateBypass}>
         <div className="flex items-center justify-center py-20">
           <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
         </div>
@@ -477,7 +494,7 @@ export default function BebePage() {
   // ── Écran de création (premier bébé) ──────────────────────────────────────
   if (babies.length === 0) {
     return (
-      <StoreGate appRoute="/bebe">
+      <StoreGate appRoute="/bebe" bypass={gateBypass}>
         <div className="max-w-sm mx-auto pt-8 px-2">
           <div className="text-center mb-8">
             <div className="w-16 h-16 bg-sky-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -515,7 +532,7 @@ export default function BebePage() {
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
   return (
-    <StoreGate appRoute="/bebe">
+    <StoreGate appRoute="/bebe" bypass={gateBypass}>
       <div className="space-y-5">
 
         {/* En-tête */}
@@ -551,6 +568,13 @@ export default function BebePage() {
                 {babies.map(b => <option key={b.id} value={b.id}>{b.id === primaryId ? '★ ' : ''}{b.name}</option>)}
               </select>
             )}
+            <button onClick={() => setShowShareModal(true)} title="Partager avec l'autre parent"
+              className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition relative">
+              <Users size={16} />
+              {(selectedBaby?.members?.length ?? 0) > 1 && (
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-blue-500 rounded-full" />
+              )}
+            </button>
             <button onClick={openEditBaby} title="Modifier" className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition">
               <Pencil size={16} />
             </button>
@@ -558,10 +582,14 @@ export default function BebePage() {
               className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition">
               <Plus size={16} />
             </button>
-            <button onClick={() => setShowDeleteBabyConfirm(true)} title="Supprimer ce bébé"
-              className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition">
-              <Trash2 size={16} />
-            </button>
+            {/* Suppression réservée au parent principal : un co-parent invité passe par
+                « Quitter le partage » (sinon il effacerait les données de tout le monde). */}
+            {isBabyCreator && (
+              <button onClick={() => setShowDeleteBabyConfirm(true)} title="Supprimer ce bébé"
+                className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition">
+                <Trash2 size={16} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1061,6 +1089,16 @@ export default function BebePage() {
           </div>
         </div>
       </Modal>
+
+      {/* ── Partage avec l'autre parent ─────────────────────────────────────── */}
+      {selectedBaby && (
+        <ShareBabyModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          baby={selectedBaby}
+          onLeft={() => setSelectedBabyId(null)}
+        />
+      )}
 
     </StoreGate>
   )

@@ -970,6 +970,7 @@ export interface UrssafPeriode {
 export interface StoreApp {
   id: string
   nom: string
+  nomCourt?: string        // nom du raccourci sur l'écran d'accueil du téléphone, repris tel quel (repli : nom)
   shortDesc: string        // accroche courte pour la carte
   description: string      // texte long
   icon: string             // emoji (fallback si pas de logo image)
@@ -1122,6 +1123,29 @@ export interface BebeEvent {
   data: Record<string, any>
   timestamp: Timestamp
   createdBy: string
+}
+
+/** Document Firestore : bebe_invites/{token} — lien d'invitation d'un co-parent.
+ *  L'id du document EST le token (le secret = connaître l'id). */
+export interface BebeInvite {
+  id: string          // = token
+  babyId: string
+  babyName: string    // dénormalisé : affiché sur la page d'invitation (anonyme)
+  createdBy: string   // uid de l'inviteur
+  createdByName: string
+  createdAt: Timestamp
+  expiresAt: Timestamp
+  usedAt?: Timestamp  // posé au premier usage (lien à usage unique)
+  usedBy?: string
+}
+
+/** Membre d'un bébé, résolu côté serveur pour l'écran de partage. */
+export interface BebeMember {
+  uid: string
+  nom: string
+  prenom: string
+  email: string
+  isCreator: boolean
 }
 
 // ─── CheckConnect (listes / checklists) ────────────────────────────────────────

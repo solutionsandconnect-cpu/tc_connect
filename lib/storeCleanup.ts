@@ -29,7 +29,6 @@ interface CleanupSpec {
  * Ajouter une nouvelle app = une seule ligne ici (aucune autre modification nécessaire).
  */
 const CLEANUP_SPECS: Record<string, CleanupSpec> = {
-  '/bebe': { collectionName: 'babies', ownerField: 'createdBy', subcollections: ['events'] },
   '/trips': { collectionName: 'trips', ownerField: 'ownerId' },
   // '/monitoring': { collectionName: '???', ownerField: '???' }, // à compléter (collection inconnue)
 }
@@ -38,6 +37,7 @@ const CLEANUP_SPECS: Record<string, CleanupSpec> = {
 const CUSTOM_CLEANUP: Record<string, (userUid: string) => Promise<void>> = {
   '/belote': cleanupBelote,
   '/equipes': cleanupEquipes,
+  '/bebe': cleanupBebe,
 }
 
 // ─── Runner générique ───────────────────────────────────────────────────────────
@@ -49,6 +49,39 @@ async function runCleanupSpec(spec: CleanupSpec, userUid: string): Promise<void>
     // Supprimer d'abord les sous-collections en cascade
     for (const subName of spec.subcollections ?? []) {
       const subSnap = await getDocs(collection(db, spec.collectionName, d.id, subName))
+      if (subSnap.docs.length > 0) {
+        const batch = writeBatch(db)
+        subSnap.docs.forEach((s) => batch.delete(s.ref))
+        await batch.commit()
+      }
+    }
+    await deleteDoc(d.ref)
+  }
+}
+
+/**
+ * Nettoyage de l'app Bébé.
+ *
+ * Le bébé appartient à son PARENT PRINCIPAL (`createdBy`), qui en est l'administrateur :
+ * quand son abonnement est purgé, le bébé et tout son historique sont supprimés, y compris
+ * pour les co-parents invités (leur accès dépend de cet abonnement).
+ * Si l'utilisateur purgé n'était lui-même qu'un co-parent invité sur le bébé d'un autre,
+ * on retire seulement son accès — les données de l'autre parent ne sont pas touchées.
+ */
+async function cleanupBebe(userUid: string): Promise<void> {
+  const snap = await getDocs(query(collection(db, 'babies'), where('members', 'array-contains', userUid)))
+  for (const d of snap.docs) {
+    const data = d.data() as { members?: string[]; createdBy?: string }
+
+    // Bébé de quelqu'un d'autre → on retire juste cet accès
+    if (data.createdBy && data.createdBy !== userUid) {
+      await updateDoc(d.ref, { members: (data.members ?? []).filter((uid) => uid !== userUid) })
+      continue
+    }
+
+    // Son bébé → suppression complète (events ET contacts)
+    for (const subName of ['events', 'contacts']) {
+      const subSnap = await getDocs(collection(db, 'babies', d.id, subName))
       if (subSnap.docs.length > 0) {
         const batch = writeBatch(db)
         subSnap.docs.forEach((s) => batch.delete(s.ref))
