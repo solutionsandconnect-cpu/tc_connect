@@ -40,9 +40,13 @@ const toProperName = (s: string) =>
 
 export default function ProfilPage() {
   const { userProfile, currentUser, logout } = useAuth()
-  const { brand } = useBrand()
+  const { brand, domainBrand } = useBrand()
   // Nom de l'app affiché (prompt d'installation) selon la marque active.
   const nomApp = brand === 'enezo' ? 'Enezo' : 'TC Connect'
+  /** Univers Enezo (studio de dev) : pas de contact d'urgence, notion propre au coaching sportif.
+   *  On regarde AUSSI le domaine : un compte tout juste créé sur app.enezo.fr n'a pas encore
+   *  forcément `marques` renseigné (défaut coaching), or c'est là que le formulaire s'affiche. */
+  const isEnezo = brand === 'enezo' || domainBrand === 'enezo'
   const isAdmin = userProfile?.role_app === 'Admin'
   const droits = userProfile?.droits
   const router = useRouter()
@@ -607,7 +611,7 @@ export default function ProfilPage() {
           setShowEditModal(false)
         }}
         title="Modifier mes informations"
-        size="sm"
+        size="lg"
       >
         <form onSubmit={handleEditProfile} className="space-y-4">
           {errorMsg && (
@@ -722,6 +726,7 @@ export default function ProfilPage() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
           </div>
+          {!isEnezo && (
           <div className="border-t border-gray-100 pt-4">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Contact d'urgence</p>
             <div className="space-y-3">
@@ -754,6 +759,7 @@ export default function ProfilPage() {
               </div>
             </div>
           </div>
+          )}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={() => setShowEditModal(false)}
               className="flex-1 border border-gray-300 text-gray-600 py-2 rounded-lg text-sm hover:bg-gray-50 transition">

@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth'
 import { doc, setDoc, updateDoc, addDoc, onSnapshot, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore'
 import { auth, db } from '@/lib/firebase'
+import { hostToBrand } from '@/lib/brand'
 import type { User } from '@/types'
 
 interface AuthContextType {
@@ -124,6 +125,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         else if (c.marque) { userData.marques = [c.marque]; userData.marque = c.marque }
       }
     } catch {}
+
+    // Aucune marque héritée d'une fiche client → on retient celle du DOMAINE d'inscription.
+    // Sans ça, un compte créé sur app.enezo.fr retombe sur le défaut coaching : navbar
+    // « TC Connect », logo coaching, et périmètre de nav coaching au lieu d'Enezo.
+    if (!userData.marques && typeof window !== 'undefined') {
+      const domainBrand = hostToBrand(window.location.hostname)
+      if (domainBrand) { userData.marques = [domainBrand]; userData.marque = domainBrand }
+    }
 
     await setDoc(doc(db, 'users', user.uid), userData)
 

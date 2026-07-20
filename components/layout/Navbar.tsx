@@ -47,7 +47,7 @@ export const navSections = [
       { label: 'Parcours Sportif',  href: '/mes-parcours',   icon: FireIcon,                  iconActive: FireSolid,         adminOnly: false, nonAdminOnly: true, droit: 'parcoursSportif' as const, marques: ['coaching'] as Brand[] },
       { label: 'Notifications',     href: '/notifications',  icon: BellIcon,                  iconActive: BellSolid,         adminOnly: false, droit: 'notifications' as const },
       { label: 'Messagerie',        href: '/messagerie',     icon: ChatBubbleLeftRightIcon,   iconActive: ChatSolid,         adminOnly: false, droit: null },
-      { label: 'Documents',         href: '/documents',      icon: FolderOpenIcon,            iconActive: FolderSolid,       adminOnly: false, droit: null },
+      { label: 'Documents',         href: '/documents',      icon: FolderOpenIcon,            iconActive: FolderSolid,       adminOnly: false, droit: null, marques: ['coaching'] as Brand[] },
       { label: 'Boutique',          href: '/boutique',       icon: ShoppingBagIcon,           iconActive: ShoppingBagSolid,  adminOnly: false, droit: 'boutique' as const, marques: ['enezo'] as Brand[] },
       { label: 'Mon profil',        href: '/profil',         icon: UserIcon,                  iconActive: UserSolid,         adminOnly: false, droit: null },
     ],
