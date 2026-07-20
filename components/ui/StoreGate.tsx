@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import Modal from "@/components/ui/Modal";
+import { BookmarkIcon, DevicePhoneMobileIcon, ShareIcon } from "@heroicons/react/24/outline";
+import { BookmarkIcon as BookmarkSolidIcon } from "@heroicons/react/24/solid";
 import { useAuth } from "@/context/AuthContext";
 import { useStoreApps } from "@/hooks/useStoreApps";
 import { useStoreAccess } from "@/hooks/useStoreAccess";
@@ -47,7 +49,7 @@ export function PinAppButton({ appRoute, hiddenOnMobile = false }: { appRoute: s
         pinned ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
       }`}
     >
-      <span>📌</span>
+      {pinned ? <BookmarkSolidIcon className="w-4 h-4" /> : <BookmarkIcon className="w-4 h-4" />}
       <span className="hidden sm:inline">{pinned ? "Épinglée" : "Épingler"}</span>
     </button>
   );
@@ -102,7 +104,7 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
         title="Ajouter cette app à l'écran d'accueil du téléphone"
         className="fixed right-4 bottom-32 sm:bottom-20 z-40 flex items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 text-sm font-medium transition"
       >
-        <span>📱</span>
+        <DevicePhoneMobileIcon className="w-4 h-4" />
         <span className="hidden sm:inline">Écran d&apos;accueil</span>
       </button>
 
@@ -115,7 +117,10 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
 
           {platform === "ios" && (
             <ol className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-gray-700 space-y-1.5 list-decimal list-inside">
-              <li>Appuyez sur <strong>Partager</strong> (l&apos;icône ⬆ en bas de Safari).</li>
+              <li>
+                Appuyez sur <ShareIcon className="w-4 h-4 text-blue-600 inline-block align-text-bottom" />{" "}
+                <strong>Partager</strong> (en bas de Safari).
+              </li>
               <li>Faites défiler et choisissez <strong>« Sur l&apos;écran d&apos;accueil »</strong>.</li>
               <li>Validez avec <strong>Ajouter</strong>.</li>
             </ol>
@@ -175,7 +180,7 @@ export function PinButtonInline({ appRoute }: { appRoute: string }) {
       className={`w-full flex items-center justify-center gap-2 text-xs font-medium px-3 py-2 rounded-xl border transition mt-2 ${
         pinned ? 'bg-blue-50 text-blue-600 border-blue-200' : 'text-gray-500 border-gray-200 hover:bg-gray-50'
       }`}>
-      <span>📌</span>
+      {pinned ? <BookmarkSolidIcon className="w-4 h-4" /> : <BookmarkIcon className="w-4 h-4" />}
       {pinned ? 'Épinglée sur l\'accueil' : 'Épingler sur l\'accueil'}
     </button>
   )
