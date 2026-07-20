@@ -62,6 +62,18 @@ export default function AccueilPage() {
   const [showCCLists, setShowCCLists] = useState(false)
   const shortcutAppIds = userProfile?.accueilShortcuts ?? []
   const shortcutApps = storeApps.filter(app => shortcutAppIds.includes(app.id) && !!app.route)
+
+  /** Client de l'espace Enezo : pas de planning/RDV (routes gardées coaching) → on masque
+   *  les entrées qui le renverraient sur un écran « accès non autorisé ». */
+  const isEnezoClient = !isAdmin && brand === 'enezo'
+  /** Apps proposées en boutique — même filtrage de visibilité que la page /boutique. */
+  const boutiqueApps = storeApps.filter(app => {
+    if (!app.actif) return false
+    const uid = currentUser?.uid
+    if (uid && app.hiddenUserIds?.includes(uid)) return false
+    if (app.visibleUserIds && app.visibleUserIds.length > 0) return app.visibleUserIds.includes(uid ?? '')
+    return true
+  })
   const [allStoreSubs, setAllStoreSubs] = useState<any[]>([])
   const [pendingEcheances, setPendingEcheances] = useState<{ devis: any; echeance: any; index: number; daysLeft: number | null }[]>([])
   const [seanceAccessAlerts, setSeanceAccessAlerts] = useState<{ client: any; type: 'to_configure' | 'expiring_soon' | 'to_restore' }[]>([])
@@ -542,15 +554,50 @@ export default function AccueilPage() {
         </section>
       )}
 
+      {/* Boutique — espace client Enezo : accès direct aux apps depuis l'accueil */}
+      {isEnezoClient && boutiqueApps.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-700">Boutique</h2>
+            <button
+              onClick={() => router.push('/boutique')}
+              className="group flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+            >
+              Tout voir
+              <ChevronRightIcon className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+            </button>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {boutiqueApps.slice(0, 6).map(app => (
+              <button
+                key={app.id}
+                onClick={() => router.push('/boutique')}
+                className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex flex-col items-center gap-2 hover:shadow-md transition"
+              >
+                <div
+                  className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center text-xl"
+                  style={{ backgroundColor: app.couleur + '20' }}
+                >
+                  {app.iconUrl ? <img src={app.iconUrl} alt="" className="w-full h-full object-cover" /> : app.icon}
+                </div>
+                <span className="text-xs font-medium text-gray-700 text-center leading-tight">{app.nom}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Statistiques */}
       <div className="grid grid-cols-2 gap-4">
-        <StatCard
-          label="RDV aujourd'hui"
-          value={rdvAujourdhui.length}
-          icon={<CalendarIcon className="w-5 h-5" />}
-          color="blue"
-          onClick={() => router.push('/planning')}
-        />
+        {!isEnezoClient && (
+          <StatCard
+            label="RDV aujourd'hui"
+            value={rdvAujourdhui.length}
+            icon={<CalendarIcon className="w-5 h-5" />}
+            color="blue"
+            onClick={() => router.push('/planning')}
+          />
+        )}
         <StatCard
           label="Mes CheckConnect"
           value={ccLists.length}
@@ -771,13 +818,15 @@ export default function AccueilPage() {
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold text-gray-700">Aujourd'hui</h2>
-          <button
-            onClick={() => router.push('/planning')}
-            className="group flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
-          >
-            Voir tout
-            <ChevronRightIcon className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
-          </button>
+          {!isEnezoClient && (
+            <button
+              onClick={() => router.push('/planning')}
+              className="group flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+            >
+              Voir tout
+              <ChevronRightIcon className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+            </button>
+          )}
         </div>
 
         {rdvAujourdhui.length === 0 && activitesAujourdhui.length === 0 ? (
@@ -791,7 +840,7 @@ export default function AccueilPage() {
                 <CalendarIcon className="w-4 h-4" />
                 Ajouter un RDV
               </button>
-            ) : (
+            ) : !isEnezoClient ? (
               <button
                 onClick={() => router.push('/planning')}
                 className="inline-flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition"
@@ -799,7 +848,7 @@ export default function AccueilPage() {
                 <CalendarIcon className="w-4 h-4" />
                 Ajouter une activité
               </button>
-            )}
+            ) : null}
           </div>
         ) : (
           <div className="space-y-2">

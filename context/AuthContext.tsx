@@ -26,11 +26,21 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType)
 
-const WELCOME_MESSAGE = `Bienvenue sur l'app TC Connect 👋
+const WELCOME_MESSAGE_COACHING = `Bienvenue sur l'app TC Connect 👋
 
 Ravi de vous compter parmi nous ! Vous retrouverez ici votre planning, vos documents, la boutique et la messagerie.
 
 💡 Astuce : pour une vraie expérience d'application (et recevoir les notifications), installez TC Connect sur votre écran d'accueil en vous rendant sur votre Profil.
+
+Bonne découverte, et à très vite ! 🙌`
+
+// Espace Enezo : ni planning ni documents (masqués de cette navigation) — on ne cite que
+// ce à quoi le client a réellement accès.
+const WELCOME_MESSAGE_ENEZO = `Bienvenue sur votre espace Enezo 👋
+
+Ravi de vous compter parmi nous ! Vous retrouverez ici le suivi de vos projets et contrats, la boutique d'applications, et la messagerie pour échanger directement avec nous.
+
+💡 Astuce : pour une vraie expérience d'application (et recevoir les notifications), installez Enezo sur votre écran d'accueil en vous rendant sur votre Profil.
 
 Bonne découverte, et à très vite ! 🙌`
 
@@ -176,7 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         await addDoc(collection(db, 'messagerie', discRef.id, 'messages_messagerie'), {
           ref_user: doc(db, 'usersapp', adminIds[0]),
-          message_text: WELCOME_MESSAGE,
+          message_text: userData.marque === 'enezo' ? WELCOME_MESSAGE_ENEZO : WELCOME_MESSAGE_COACHING,
           date_create: serverTimestamp(),
           document_image_list: [],
           document_pdf_list: [],
