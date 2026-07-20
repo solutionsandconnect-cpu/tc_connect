@@ -43,7 +43,7 @@ export function PinAppButton({ appRoute, hiddenOnMobile = false }: { appRoute: s
     <button
       onClick={toggle}
       title={pinned ? "Retirer de l'accueil" : "Épingler sur l'accueil"}
-      className={`fixed right-4 bottom-20 sm:bottom-6 z-40 items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border text-sm font-medium transition ${
+      className={`fixed right-4 bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] sm:bottom-6 z-40 items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border text-sm font-medium transition ${
         hiddenOnMobile ? "hidden sm:flex" : "flex"
       } ${
         pinned ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
@@ -74,17 +74,20 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
   const [visible, setVisible] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [platform, setPlatform] = useState<"ios" | "android" | "desktop">("desktop");
+  /** App ouverte depuis un raccourci déjà installé (mode plein écran). */
+  const [standalone, setStandalone] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // Déjà ouvert depuis un raccourci / une app installée → inutile de proposer
-    const standalone = window.matchMedia?.("(display-mode: standalone)").matches
-      || (navigator as any).standalone === true;
-    if (standalone) return;
     try { if (localStorage.getItem(A2HS_KEY(appRoute)) === "1") return } catch {}
 
     const ua = navigator.userAgent;
     setPlatform(/iphone|ipad|ipod/i.test(ua) ? "ios" : /android/i.test(ua) ? "android" : "desktop");
+    // On reste VISIBLE en mode standalone : c'est justement là qu'on cherche le bouton,
+    // alors qu'iOS n'y propose aucun menu Partager → la modale explique qu'il faut
+    // repasser par le navigateur.
+    setStandalone(window.matchMedia?.("(display-mode: standalone)").matches
+      || (navigator as any).standalone === true);
     setVisible(true);
   }, [appRoute]);
 
@@ -102,7 +105,7 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
       <button
         onClick={() => setShowHelp(true)}
         title="Ajouter cette app à l'écran d'accueil du téléphone"
-        className="fixed right-4 bottom-32 sm:bottom-20 z-40 flex items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 text-sm font-medium transition"
+        className="fixed right-4 bottom-[calc(7.25rem+env(safe-area-inset-bottom)+0.75rem)] sm:bottom-20 z-40 flex items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 text-sm font-medium transition"
       >
         <DevicePhoneMobileIcon className="w-4 h-4" />
         <span className="hidden sm:inline">Écran d&apos;accueil</span>
@@ -115,7 +118,19 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
             écran, sous le nom <strong className="text-gray-700">{nomRaccourci}</strong>.
           </p>
 
-          {platform === "ios" && (
+          {standalone ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-gray-700 space-y-1.5">
+              <p className="font-semibold text-amber-800">Impossible depuis l&apos;app installée</p>
+              <p>
+                Vous utilisez déjà un raccourci en plein écran :{" "}
+                {platform === "ios" ? "iOS n'y affiche aucun menu Partager" : "le menu du navigateur n'y est pas accessible"}.
+              </p>
+              <p>
+                Ouvrez cette même page dans <strong>{platform === "ios" ? "Safari" : "votre navigateur"}</strong>{" "}
+                (via l&apos;adresse du site), puis relancez cette manipulation depuis l&apos;app.
+              </p>
+            </div>
+          ) : platform === "ios" && (
             <ol className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-gray-700 space-y-1.5 list-decimal list-inside">
               <li>
                 Appuyez sur <ShareIcon className="w-4 h-4 text-blue-600 inline-block align-text-bottom" />{" "}
@@ -126,7 +141,7 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
             </ol>
           )}
 
-          {platform === "android" && (
+          {!standalone && platform === "android" && (
             <ol className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-gray-700 space-y-1.5 list-decimal list-inside">
               <li>Ouvrez le menu <strong>⋮</strong> de Chrome (en haut à droite).</li>
               <li>Choisissez <strong>« Ajouter à l&apos;écran d&apos;accueil »</strong>.</li>
@@ -134,7 +149,7 @@ export function AddToHomeScreenButton({ appRoute }: { appRoute: string }) {
             </ol>
           )}
 
-          {platform === "desktop" && (
+          {!standalone && platform === "desktop" && (
             <p className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-gray-700">
               Depuis un ordinateur, utilisez l&apos;icône d&apos;installation dans la barre d&apos;adresse
               de Chrome ou Edge. Pour un raccourci vers cette app en particulier, ouvrez plutôt
