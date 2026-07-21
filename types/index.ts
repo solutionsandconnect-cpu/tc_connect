@@ -1281,6 +1281,7 @@ export type ProspectStatut =
   | 'relance'
   | 'repondu'
   | 'interesse'
+  | 'converti'
   | 'pas_interesse'
   | 'a_un_logiciel'
   | 'email_manquant'

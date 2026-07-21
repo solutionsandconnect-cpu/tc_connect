@@ -5,9 +5,10 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
   listenMetiers, listenProspects, listenOptouts, listenEvenements, listenLogiciels,
-  updateProspect, deleteProspect, ajouterOptout, promouvoirEnClient, journaliser,
-  modifierNote, supprimerNote, ajouterLogiciel, supprimerLogiciel,
+  updateProspect, deleteProspect, ajouterOptout, journaliser,
+  modifierNote, supprimerNote, ajouterLogiciel, supprimerLogiciel, detacherDuClient,
 } from "@/lib/mailingService";
+import PromotionModal from "@/components/mailing/PromotionModal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
 import {
   QUOTA_JOUR, peutContacter, isEmailGenerique, STATUT_LABEL, STATUT_STYLE,
@@ -292,16 +293,11 @@ export default function MailingPage() {
     notifier("Note ajoutée au journal.");
   };
 
-  const promouvoir = async (p: Prospect) => {
-    if (!currentUser?.uid) return;
-    const { clientId, existant } = await promouvoirEnClient(p, currentUser.uid);
-    notifier(
-      existant
-        ? "Rattaché à la fiche client existante — aucun doublon créé."
-        : "Fiche client créée, visible dans le pipeline CRM.",
-    );
-    router.push(`/clients?id=${clientId}`);
-  };
+  // La promotion passe par une confirmation : l'appariement automatique échoue
+  // dès que le client est enregistré sous une autre adresse que le prospect.
+  const [aPromouvoir, setAPromouvoir] = useState<Prospect | null>(null);
+  const [aDetacher, setADetacher] = useState<Prospect | null>(null);
+  const [statutDetache, setStatutDetache] = useState<ProspectStatut>("interesse");
 
   const supprimer = async () => {
     if (!aSupprimer) return;
@@ -588,9 +584,19 @@ export default function MailingPage() {
                       ))}
                     </select>
 
+                    {p.clientId && (
+                      <button
+                        onClick={() => setADetacher(p)}
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium border text-gray-600 hover:bg-gray-50 transition"
+                        title="Annuler le rattachement à la fiche client"
+                      >
+                        Détacher
+                      </button>
+                    )}
+
                     {(p.statut === "repondu" || p.statut === "interesse") && !p.clientId && (
                       <button
-                        onClick={() => promouvoir(p)}
+                        onClick={() => setAPromouvoir(p)}
                         className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700 transition"
                       >
                         Promouvoir en client
@@ -881,6 +887,60 @@ export default function MailingPage() {
           optouts={optouts}
           onClose={() => setAnnuaireOuvert(false)}
           onToast={notifier}
+        />
+      )}
+
+      <Modal
+        isOpen={!!aDetacher}
+        onClose={() => setADetacher(null)}
+        title="Détacher de la fiche client"
+        size="sm"
+      >
+        <p className="text-sm text-gray-600">
+          <strong>{aDetacher?.societe}</strong>
+          {" ne sera plus rattaché à une fiche client. La fiche client elle-même n'est pas touchée."}
+        </p>
+        <p className="text-xs text-gray-500 mt-2">
+          À utiliser si la fiche a été supprimée, ou si le rattachement était une erreur.
+          Le prospect redevient promouvable.
+        </p>
+        <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">
+          Statut à lui redonner
+        </label>
+        <select
+          value={statutDetache}
+          onChange={(e) => setStatutDetache(e.target.value as ProspectStatut)}
+          className="w-full border rounded-lg px-3 py-2 text-sm"
+        >
+          {(Object.keys(STATUT_LABEL) as ProspectStatut[]).map((s) => (
+            <option key={s} value={s}>{STATUT_LABEL[s]}</option>
+          ))}
+        </select>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={() => setADetacher(null)} className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition">
+            Annuler
+          </button>
+          <button
+            onClick={async () => {
+              if (!aDetacher) return;
+              await detacherDuClient(aDetacher, statutDetache);
+              setADetacher(null);
+              notifier("Prospect détaché — il peut être promu de nouveau.");
+            }}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition"
+          >
+            Détacher
+          </button>
+        </div>
+      </Modal>
+
+      {aPromouvoir && (
+        <PromotionModal
+          prospect={aPromouvoir}
+          userId={currentUser?.uid ?? ""}
+          onClose={() => setAPromouvoir(null)}
+          onToast={notifier}
+          onFait={(clientId) => { setAPromouvoir(null); router.push(`/clients?id=${clientId}`); }}
         />
       )}
 

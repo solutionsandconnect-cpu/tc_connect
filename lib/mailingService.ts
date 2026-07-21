@@ -3,7 +3,7 @@
 
 import { db } from '@/lib/firebase'
 import {
-  collection, doc, addDoc, setDoc, updateDoc, deleteDoc, getDocs,
+  collection, doc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, getDocs,
   onSnapshot, query, where, writeBatch, Timestamp,
 } from 'firebase/firestore'
 import { cleanForFirestore } from '@/lib/firebaseUtils'
@@ -360,52 +360,76 @@ export const enregistrerEnvoi = async (
  * C'est la frontière du modèle : `prospects` porte le contact froid,
  * `clients` porte la relation engagée. Pas de double magasin.
  */
+export interface SuggestionClient {
+  clientId: string
+  /** Ce qui a déclenché le rapprochement, à afficher pour que l'utilisateur juge. */
+  raison: string
+}
+
 /**
- * Cherche un client existant correspondant au prospect.
- * L'email prime (c'est l'identité la plus fiable), puis le SIRET, puis la
- * raison sociale. Sans ce contrôle, promouvoir un prospect déjà client créait
- * un doublon dans la base clients.
+ * Propose un client existant correspondant au prospect — sans rien décider.
+ * L'appariement automatique s'est révélé trop fragile : un email différent de
+ * celui de la fiche client suffit à le mettre en échec, et il créait alors un
+ * doublon en silence. C'est donc une SUGGESTION, confirmée par l'utilisateur.
  */
-async function clientExistant(prospect: Prospect, userId: string): Promise<string | null> {
-  const snap = await getDocs(query(collection(db, 'clients'), where('userId', '==', userId)))
+export const suggererClient = async (
+  prospect: Prospect, clients: Client[],
+): Promise<SuggestionClient | null> => {
   const email = normalizeEmail(prospect.email)
   const siret = (prospect.siret ?? '').replace(/\D/g, '')
   const soc = prospect.societe.trim().toLowerCase()
 
-  for (const d of snap.docs) {
-    const c = d.data() as Client
-    if (email && normalizeEmail(c.email ?? '') === email) return d.id
-    if (siret && (c.siret ?? '').replace(/\D/g, '') === siret) return d.id
+  for (const c of clients) {
+    if (email && normalizeEmail(c.email ?? '') === email) return { clientId: c.id, raison: 'même email' }
+    if (siret && (c.siret ?? '').replace(/\D/g, '') === siret) return { clientId: c.id, raison: 'même SIRET' }
   }
-  for (const d of snap.docs) {
-    const c = d.data() as Client
+  for (const c of clients) {
     const noms = [c.nomEntreprise, c.nom].map((n) => (n ?? '').trim().toLowerCase())
-    if (soc && noms.includes(soc)) return d.id
+    if (soc && noms.includes(soc)) return { clientId: c.id, raison: 'même raison sociale' }
   }
   return null
+}
+
+/**
+ * Annule le rattachement d'un prospect à une fiche client.
+ * Nécessaire notamment quand la fiche client a été supprimée entre-temps : le
+ * prospect gardait sinon une référence morte et ne pouvait plus être promu.
+ * `deleteField()` retire vraiment la clé — la mettre à `''` la laisserait
+ * présente et le bouton de promotion resterait masqué.
+ */
+export const detacherDuClient = async (
+  prospect: Prospect, nouveauStatut: ProspectStatut,
+): Promise<void> => {
+  await journaliser(prospect, {
+    type: 'note',
+    observations: 'Rattachement au client annulé — le prospect redevient promouvable.',
+  })
+  await updateDoc(doc(db, 'prospects', prospect.id), {
+    clientId: deleteField(),
+    statut: nouveauStatut,
+    updatedAt: Timestamp.now(),
+  })
+}
+
+/** Rattache le prospect à une fiche client CHOISIE, sans rien créer. */
+export const rattacherAClient = async (prospect: Prospect, clientId: string): Promise<void> => {
+  await journaliser(prospect, {
+    type: 'promotion',
+    statutAvant: prospect.statut,
+    statutApres: 'converti',
+    observations: 'Rattaché à une fiche client existante.',
+  })
+  await updateDoc(doc(db, 'prospects', prospect.id), {
+    statut: 'converti' as ProspectStatut,
+    clientId,
+    updatedAt: Timestamp.now(),
+  })
 }
 
 export const promouvoirEnClient = async (
   prospect: Prospect,
   userId: string,
-): Promise<{ clientId: string; existant: boolean }> => {
-  // Rattachement à la fiche existante plutôt que création d'un doublon.
-  const dejaLa = await clientExistant(prospect, userId)
-  if (dejaLa) {
-    await journaliser(prospect, {
-      type: 'promotion',
-      statutAvant: prospect.statut,
-      statutApres: 'repondu',
-      observations: 'Rattaché à une fiche client existante.',
-    })
-    await updateDoc(doc(db, 'prospects', prospect.id), {
-      statut: 'repondu' as ProspectStatut,
-      clientId: dejaLa,
-      updatedAt: Timestamp.now(),
-    })
-    return { clientId: dejaLa, existant: true }
-  }
-
+): Promise<{ clientId: string }> => {
   const ref = await addDoc(collection(db, 'clients'), {
     ...cleanForFirestore({
       userId,
@@ -430,13 +454,13 @@ export const promouvoirEnClient = async (
   await journaliser(prospect, {
     type: 'promotion',
     statutAvant: prospect.statut,
-    statutApres: 'repondu',
+    statutApres: 'converti',
     observations: 'Promu en client — suite dans le pipeline CRM.',
   })
   await updateDoc(doc(db, 'prospects', prospect.id), {
-    statut: 'repondu' as ProspectStatut,
+    statut: 'converti' as ProspectStatut,
     clientId: ref.id,
     updatedAt: Timestamp.now(),
   })
-  return { clientId: ref.id, existant: false }
+  return { clientId: ref.id }
 }

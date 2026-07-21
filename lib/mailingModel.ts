@@ -13,6 +13,7 @@ export const STATUT_LABEL: Record<ProspectStatut, string> = {
   relance: 'Relancé',
   repondu: 'A répondu',
   interesse: 'Intéressé',
+  converti: 'Devenu client',
   pas_interesse: 'Pas intéressé',
   a_un_logiciel: 'Déjà équipé',
   email_manquant: 'Email à trouver',
@@ -27,6 +28,7 @@ export const STATUT_AIDE: Record<ProspectStatut, string> = {
   relance: "Relancé au moins une fois, toujours sans réponse.",
   repondu: "A répondu, sans que ce soit un oui : « rappelez-moi en septembre », une question, un accusé de réception.",
   interesse: "Réponse positive. C'est le moment de le promouvoir en client : la suite se joue dans le CRM, plus dans le mailing.",
+  converti: "Rattaché à une fiche client : sa vie se poursuit dans le CRM. Terminus du parcours de prospection.",
   pas_interesse: "A répondu non. On ne le recontacte plus.",
   a_un_logiciel: "Déjà outillé. Pas une perte : c'est le profil qui a la douleur et le budget, à revoir quand son outil le freinera.",
   email_manquant: "Entreprise identifiée via l'INSEE, sans adresse email. À compléter sur la fiche avant tout envoi.",
@@ -40,6 +42,7 @@ export const STATUT_STYLE: Record<ProspectStatut, string> = {
   relance: 'bg-indigo-100 text-indigo-700',
   repondu: 'bg-teal-100 text-teal-700',
   interesse: 'bg-green-100 text-green-700',
+  converti: 'bg-emerald-600 text-white',
   pas_interesse: 'bg-amber-100 text-amber-700',
   a_un_logiciel: 'bg-purple-100 text-purple-700',
   email_manquant: 'bg-orange-100 text-orange-700',
@@ -191,6 +194,9 @@ export function peutContacter(
   }
   if (p.statut === 'interesse') {
     return { ok: false, raison: 'Contact intéressé — promeus-le en client, la suite est dans le CRM.' }
+  }
+  if (p.statut === 'converti') {
+    return { ok: false, raison: 'Devenu client — la relation se suit dans le CRM.' }
   }
   // Donnée officielle INSEE : écrire à une société radiée est une perte sèche.
   if (p.etatEntreprise === 'C') {
