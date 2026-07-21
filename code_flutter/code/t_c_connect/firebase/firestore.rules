@@ -427,6 +427,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Référentiel des logiciels concurrents rencontrés chez les prospects.
+    match /mailing_logiciels/{document} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
     // Journal du parcours des prospects (changements de statut, envois, notes).
     // Les NOTES sont des annotations personnelles : modifiables et supprimables.
     // Les FAITS (envoi, changement de statut, promotion) restent figés — c'est ce

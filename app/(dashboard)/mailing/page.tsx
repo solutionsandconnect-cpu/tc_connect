@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
-  listenMetiers, listenProspects, listenOptouts, listenEvenements,
+  listenMetiers, listenProspects, listenOptouts, listenEvenements, listenLogiciels,
   updateProspect, deleteProspect, ajouterOptout, promouvoirEnClient, journaliser,
-  modifierNote, supprimerNote,
+  modifierNote, supprimerNote, ajouterLogiciel, supprimerLogiciel,
 } from "@/lib/mailingService";
 import AutoTextarea from "@/components/ui/AutoTextarea";
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/lib/mailingModel";
 import Modal from "@/components/ui/Modal";
 import { libelleEffectif } from "@/lib/sirene";
+import { departementDuCp } from "@/lib/territoires";
 import ImportModal from "@/components/mailing/ImportModal";
 import ProspectModal from "@/components/mailing/ProspectModal";
 import StatutModal from "@/components/mailing/StatutModal";
@@ -23,7 +24,7 @@ import SuiviTab from "@/components/mailing/SuiviTab";
 import KitEditor from "@/components/mailing/KitEditor";
 import Composeur from "@/components/mailing/Composeur";
 import type {
-  MailingEvenement, MailingMetier, MailingOptout, Prospect, ProspectStatut,
+  MailingEvenement, MailingLogiciel, MailingMetier, MailingOptout, Prospect, ProspectStatut,
 } from "@/types";
 import {
   ArrowUpTrayIcon, PaperAirplaneIcon, RectangleStackIcon, UsersIcon, TrashIcon, PlusIcon,
@@ -40,6 +41,35 @@ const EVT_LABEL: Record<MailingEvenement["type"], string> = {
   note: "NOTE",
   promotion: "CLIENT",
 };
+
+function Chip({
+  actif, onClick, label, nombre, attenue,
+}: {
+  actif: boolean;
+  onClick: () => void;
+  label: string;
+  nombre?: number;
+  /** Catégorie vide : visible mais en retrait. */
+  attenue?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+        actif
+          ? "bg-blue-600 text-white"
+          : attenue
+            ? "border border-dashed text-gray-400 hover:bg-gray-50"
+            : "border text-gray-600 hover:bg-gray-50"
+      }`}
+    >
+      {label}
+      {typeof nombre === "number" && (
+        <span className={`ml-1.5 ${actif ? "text-blue-100" : "text-gray-400"}`}>{nombre}</span>
+      )}
+    </button>
+  );
+}
 
 const EVT_STYLE: Record<MailingEvenement["type"], string> = {
   envoi: "bg-blue-100 text-blue-700",
@@ -98,6 +128,7 @@ export default function MailingPage() {
   const [charge, setCharge] = useState(false);
   const [aEditer, setAEditer] = useState<Prospect | null>(null);
   const [evenements, setEvenements] = useState<MailingEvenement[]>([]);
+  const [logiciels, setLogiciels] = useState<MailingLogiciel[]>([]);
   const [statutEnCours, setStatutEnCours] = useState<
     { prospect: Prospect; cible?: ProspectStatut } | null
   >(null);
@@ -107,6 +138,8 @@ export default function MailingPage() {
   const [filtreStatut, setFiltreStatut] = useState<ProspectStatut | "tous">("tous");
   const [filtreMetier, setFiltreMetier] = useState<string>("tous");
   const [recherche, setRecherche] = useState("");
+  const [filtreRegion, setFiltreRegion] = useState<string>("tous");
+  const [filtreDept, setFiltreDept] = useState<string>("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -120,7 +153,8 @@ export default function MailingPage() {
     const u2 = listenMetiers(currentUser.uid, setMetiers);
     const u3 = listenOptouts((set, docs) => { setOptouts(set); setOptoutDocs(docs); });
     const u4 = listenEvenements(currentUser.uid, setEvenements);
-    return () => { u1(); u2(); u3(); u4(); };
+    const u5 = listenLogiciels(currentUser.uid, setLogiciels);
+    return () => { u1(); u2(); u3(); u4(); u5(); };
   }, [currentUser?.uid]);
 
   const notifier = (msg: string) => {
@@ -189,15 +223,36 @@ export default function MailingPage() {
     }
   }, [charge, currentUser?.uid, compteursVifs]);
 
+  /** Territoires réellement présents dans la liste, avec leur volume. */
+  const territoires = useMemo(() => {
+    const regions = new Map<string, number>();
+    const depts = new Map<string, { nom: string; region: string; n: number }>();
+    for (const p of prospects) {
+      const d = departementDuCp(p.codePostal);
+      if (!d) continue;
+      regions.set(d.region, (regions.get(d.region) ?? 0) + 1);
+      const e = depts.get(d.code) ?? { nom: d.nom, region: d.region, n: 0 };
+      e.n++;
+      depts.set(d.code, e);
+    }
+    return {
+      regions: [...regions.entries()].sort((a, b) => b[1] - a[1]),
+      depts: [...depts.entries()].sort((a, b) => b[1].n - a[1].n),
+    };
+  }, [prospects]);
+
   const listeFiltree = useMemo(() => {
     const q = recherche.trim().toLowerCase();
     return prospects.filter((p) => {
       if (filtreStatut !== "tous" && p.statut !== filtreStatut) return false;
       if (filtreMetier !== "tous" && (p.metierId ?? "") !== filtreMetier) return false;
+      const d = departementDuCp(p.codePostal);
+      if (filtreRegion !== "tous" && d?.region !== filtreRegion) return false;
+      if (filtreDept !== "tous" && d?.code !== filtreDept) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [prospects, filtreStatut, filtreMetier, recherche]);
+  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, recherche]);
 
   const appliquerStatut = async (
     p: Prospect, statut: ProspectStatut, observations: string, logiciel: string,
@@ -239,8 +294,12 @@ export default function MailingPage() {
 
   const promouvoir = async (p: Prospect) => {
     if (!currentUser?.uid) return;
-    const { clientId } = await promouvoirEnClient(p, currentUser.uid);
-    notifier("Prospect promu en client — visible dans le pipeline CRM.");
+    const { clientId, existant } = await promouvoirEnClient(p, currentUser.uid);
+    notifier(
+      existant
+        ? "Rattaché à la fiche client existante — aucun doublon créé."
+        : "Fiche client créée, visible dans le pipeline CRM.",
+    );
     router.push(`/clients?id=${clientId}`);
   };
 
@@ -369,27 +428,94 @@ export default function MailingPage() {
               placeholder="Rechercher une société, un email, une ville…"
               className="flex-1 min-w-48 border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
             />
-            <select
-              value={filtreStatut}
-              onChange={(e) => setFiltreStatut(e.target.value as ProspectStatut | "tous")}
-              className="border rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="tous">Tous les statuts</option>
-              {(Object.keys(STATUT_LABEL) as ProspectStatut[]).map((s) => (
-                <option key={s} value={s}>{STATUT_LABEL[s]}</option>
-              ))}
-            </select>
-            <select
-              value={filtreMetier}
-              onChange={(e) => setFiltreMetier(e.target.value)}
-              className="border rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="tous">Tous les métiers</option>
-              {metiers.map((m) => (
-                <option key={m.id} value={m.id}>{m.metier}</option>
-              ))}
-            </select>
           </div>
+
+          {/* Filtres en pastilles : les compteurs montrent d'un coup d'œil où en
+              est la liste, ce qu'un menu fermé ne peut pas faire. */}
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            <Chip
+              actif={filtreStatut === "tous"}
+              onClick={() => setFiltreStatut("tous")}
+              label="Tous"
+              nombre={prospects.length}
+            />
+            {/* Tous les statuts sont listés, même vides : en masquer ceux à zéro
+                laissait croire à un oubli plutôt qu'à une absence de données. */}
+            {(Object.keys(STATUT_LABEL) as ProspectStatut[]).map((s) => {
+              const n = prospects.filter((p) => p.statut === s).length;
+              return (
+                <Chip
+                  key={s}
+                  actif={filtreStatut === s}
+                  onClick={() => setFiltreStatut(s)}
+                  label={STATUT_LABEL[s]}
+                  nombre={n}
+                  attenue={n === 0}
+                />
+              );
+            })}
+          </div>
+
+          {/* Territoires : régions d'abord, puis départements de la région
+              retenue — sinon la liste devient illisible dès 20 départements. */}
+          {territoires.regions.length > 1 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              <Chip
+                actif={filtreRegion === "tous"}
+                onClick={() => { setFiltreRegion("tous"); setFiltreDept("tous"); }}
+                label="Toutes régions"
+              />
+              {territoires.regions.map(([r, n]) => (
+                <Chip
+                  key={r}
+                  actif={filtreRegion === r}
+                  onClick={() => { setFiltreRegion(r); setFiltreDept("tous"); }}
+                  label={r}
+                  nombre={n}
+                />
+              ))}
+            </div>
+          )}
+
+          {territoires.depts.length > 1 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              <Chip
+                actif={filtreDept === "tous"}
+                onClick={() => setFiltreDept("tous")}
+                label="Tous départements"
+              />
+              {territoires.depts
+                .filter(([, d]) => filtreRegion === "tous" || d.region === filtreRegion)
+                .map(([code, d]) => (
+                  <Chip
+                    key={code}
+                    actif={filtreDept === code}
+                    onClick={() => setFiltreDept(code)}
+                    label={`${code} ${d.nom}`}
+                    nombre={d.n}
+                  />
+                ))}
+            </div>
+          )}
+
+          {metiers.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              <Chip
+                actif={filtreMetier === "tous"}
+                onClick={() => setFiltreMetier("tous")}
+                label="Tous les métiers"
+              />
+              {metiers.map((m) => (
+                <Chip
+                  key={m.id}
+                  actif={filtreMetier === m.id}
+                  onClick={() => setFiltreMetier(m.id)}
+                  label={m.metier}
+                  nombre={prospects.filter((p) => p.metierId === m.id).length}
+                />
+              ))}
+            </div>
+          )}
 
           {listeFiltree.length === 0 ? (
             <div className="border rounded-xl px-4 py-10 text-center text-sm text-gray-500 bg-white">
@@ -462,7 +588,7 @@ export default function MailingPage() {
                       ))}
                     </select>
 
-                    {p.statut === "repondu" && !p.clientId && (
+                    {(p.statut === "repondu" || p.statut === "interesse") && !p.clientId && (
                       <button
                         onClick={() => promouvoir(p)}
                         className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700 transition"
@@ -733,6 +859,9 @@ export default function MailingPage() {
           prospect={statutEnCours.prospect}
           statutCible={statutEnCours.cible}
           labels={STATUT_LABEL}
+          logiciels={logiciels}
+          onAjouterLogiciel={(nom) => ajouterLogiciel(currentUser?.uid ?? "", nom)}
+          onSupprimerLogiciel={supprimerLogiciel}
           onClose={() => setStatutEnCours(null)}
           onValider={async (obs, logiciel) => {
             if (statutEnCours.cible) {

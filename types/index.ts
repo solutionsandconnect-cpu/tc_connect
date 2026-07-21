@@ -1280,6 +1280,7 @@ export type ProspectStatut =
   | 'envoye'
   | 'relance'
   | 'repondu'
+  | 'interesse'
   | 'pas_interesse'
   | 'a_un_logiciel'
   | 'email_manquant'
@@ -1384,5 +1385,24 @@ export interface MailingEvenement {
   observations?: string
   /** Jours écoulés depuis le dernier envoi — donne le délai de réponse. */
   delaiDepuisEnvoi?: number
+  createdAt: Timestamp
+}
+
+/**
+ * Document Firestore : mailing_logiciels/{id}
+ * Référentiel des logiciels rencontrés chez les prospects. Une liste fermée
+ * plutôt qu'une saisie libre : « Batappli », « batappli » et « BatAppli »
+ * compteraient sinon comme trois outils distincts et fausseraient les stats.
+ * Prévu pour accueillir coût et fonctionnalités, afin de se positionner face
+ * à chaque concurrent.
+ */
+export interface MailingLogiciel {
+  id: string
+  userId: string
+  nom: string
+  /** Ordre de grandeur du coût annoncé par les prospects (texte libre). */
+  cout?: string
+  /** Ce que couvre l'outil, tel que rapporté. */
+  fonctionnalites?: string
   createdAt: Timestamp
 }

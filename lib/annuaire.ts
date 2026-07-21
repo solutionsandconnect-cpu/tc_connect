@@ -105,6 +105,66 @@ export function departementDepuisCp(cp?: string): string | undefined {
   return d
 }
 
+/**
+ * Métiers de l'annuaire, avec l'identifiant de taxonomie attendu par sa page de
+ * recherche. Relevés directement dans le formulaire du site.
+ */
+export const CATEGORIES: { id: number; label: string }[] = [
+  { id: 4, label: 'Maçon' },
+  { id: 5, label: 'Électricien' },
+  { id: 13, label: 'Carreleur' },
+  { id: 14, label: 'Plâtrier peintre' },
+  { id: 15, label: 'Plaquiste' },
+  { id: 16, label: 'Plombier' },
+  { id: 17, label: 'Terrassier' },
+  { id: 18, label: 'Façadier' },
+  { id: 19, label: "Maitre d'œuvre" },
+  { id: 20, label: 'Chauffagiste / Climatisation' },
+  { id: 21, label: 'Démolisseur' },
+  { id: 22, label: 'Couvreur charpentier' },
+  { id: 24, label: 'Cuisiniste' },
+  { id: 25, label: 'Constructeur' },
+  { id: 26, label: 'Architecte' },
+  { id: 27, label: 'Menuisier' },
+  { id: 28, label: 'Courtier en travaux' },
+  { id: 45, label: 'Photovoltaïque' },
+  { id: 47, label: 'Étanchéité toiture' },
+  { id: 48, label: 'Paysagiste' },
+  { id: 51, label: 'Soliste' },
+]
+
+export interface CriteresRecherche {
+  categorieId: number
+  /** Coordonnées du centre de recherche — indispensables : sans elles, le site renvoie zéro. */
+  lat?: number
+  lng?: number
+  /** Rayon en kilomètres. */
+  distance?: number
+}
+
+/**
+ * URL de la page de recherche du site.
+ * Bien supérieure aux pages de catégorie : elle rend **150 fiches par requête**
+ * (contre 10) et filtre géographiquement côté serveur. Attention, le filtre
+ * `address` seul ne suffit pas — sans `lat`/`lng`, la recherche ne renvoie rien.
+ */
+export function urlRecherche(c: CriteresRecherche): string {
+  const u = new URL(`${ANNUAIRE_BASE}/page-de-recherche/`)
+  u.searchParams.set('post[0]', 'artisan')
+  u.searchParams.set('tax[local_business_category][0]', String(c.categorieId))
+  if (typeof c.lat === 'number' && typeof c.lng === 'number') {
+    u.searchParams.set('address[0]', 'France')
+    u.searchParams.set('lat', String(c.lat))
+    u.searchParams.set('lng', String(c.lng))
+    u.searchParams.set('distance', String(c.distance ?? 50))
+  }
+  u.searchParams.set('units', 'metric')
+  u.searchParams.set('per_page', '150')
+  u.searchParams.set('form', '1')
+  u.searchParams.set('action', 'fs')
+  return u.toString()
+}
+
 /** URL d'une page de catégorie (`page` commence à 1). */
 export function urlCategorie(metier: string, page = 1): string {
   const slug = metier.trim().toLowerCase()

@@ -5,8 +5,10 @@ import { getAuth } from "firebase/auth";
 import Modal from "@/components/ui/Modal";
 import { createProspectsBatch, type NouveauProspect } from "@/lib/mailingService";
 import { isEmailGenerique, isEmailValide, normalizeEmail } from "@/lib/mailingModel";
-import { departementDepuisCp, type FicheArtisan } from "@/lib/annuaire";
-import { libelleEffectif, rechercherParCriteres, type InfoEntreprise } from "@/lib/sirene";
+import { CATEGORIES, departementDepuisCp, type FicheArtisan } from "@/lib/annuaire";
+import {
+  METIERS_NAF, libelleEffectif, rechercherParCriteres, type InfoEntreprise,
+} from "@/lib/sirene";
 import ListeCodesNaf from "@/components/mailing/ListeCodesNaf";
 import type { MailingMetier, Prospect } from "@/types";
 
@@ -59,6 +61,59 @@ function ChoixKit({
   );
 }
 
+/** Barre de recherche + filtres, partagée par les deux sources de résultats. */
+function BarreFiltres<T extends string>({
+  recherche, onRecherche, filtre, onFiltre, affiches, total, onToutCocher, onVider, filtres,
+}: {
+  recherche: string;
+  onRecherche: (v: string) => void;
+  filtre: T;
+  onFiltre: (v: T) => void;
+  affiches: number;
+  total: number;
+  onToutCocher: () => void;
+  onVider: () => void;
+  filtres: { k: T; l: string }[];
+}) {
+  return (
+    <div className="space-y-2 mb-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-medium">
+          {affiches} affiché{affiches > 1 ? "s" : ""}
+          <span className="text-gray-400 font-normal"> sur {total} trouvés</span>
+        </span>
+        <div className="flex items-center gap-2">
+          <button onClick={onToutCocher} className="text-xs text-blue-700 hover:underline">
+            Tout cocher
+          </button>
+          <button onClick={onVider} className="text-xs text-gray-500 hover:underline">
+            Vider
+          </button>
+        </div>
+      </div>
+      <div className="flex gap-2 flex-wrap">
+        <input
+          value={recherche}
+          onChange={(e) => onRecherche(e.target.value)}
+          placeholder="Rechercher une société, une commune…"
+          className="flex-1 min-w-40 border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-400 transition"
+        />
+        {filtres.map((f) => (
+          <button
+            key={f.k}
+            onClick={() => onFiltre(f.k)}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+              filtre === f.k ? "bg-blue-600 text-white" : "border hover:bg-gray-50 text-gray-600"
+            }`}
+          >
+            {f.l}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 type Etat = "reglages" | "liste" | "fiches" | "fini";
 
 /** Le client orchestre : chaque appel serveur reste court (limite d'exécution). */
@@ -74,18 +129,28 @@ export default function AnnuaireModal({
   onClose: () => void;
   onToast: (m: string) => void;
 }) {
-  const [metierSlug, setMetierSlug] = useState("plombier");
-  const [departement, setDepartement] = useState("44");
+  const [categorieId, setCategorieId] = useState(16); // Plombier
+  const [lieu, setLieu] = useState("");
+  const [lieuResolu, setLieuResolu] = useState("");
+  const [rayon, setRayon] = useState(50);
+  const [departement, setDepartement] = useState("");
   const [metierId, setMetierId] = useState("");
-  const [maxPages, setMaxPages] = useState(10);
+  const [maxPages] = useState(10);
 
   const [source, setSource] = useState<"insee" | "annuaire">("insee");
   // Vide par défaut : un code en dur donnait l'illusion qu'un kit était déjà
   // appliqué, alors qu'il ne venait de nulle part.
   const [naf, setNaf] = useState("");
-  const [effectifMin, setEffectifMin] = useState(3);
+  // Aucun filtre par défaut : le code NAF étant déclaratif, beaucoup de petites
+  // structures sont mal classées — filtrer d'emblée sur l'effectif en écarterait
+  // encore davantage sans que ce soit visible.
+  const [effectifMin, setEffectifMin] = useState(0);
   const [entreprises, setEntreprises] = useState<InfoEntreprise[]>([]);
   const [totalInsee, setTotalInsee] = useState(0);
+
+  // Filtres appliqués aux RÉSULTATS, avant import.
+  const [rechRes, setRechRes] = useState("");
+  const [filtreRes, setFiltreRes] = useState<"tous" | "importables" | "effectif">("importables");
 
   const [etat, setEtat] = useState<Etat>("reglages");
   const [progres, setProgres] = useState({ fait: 0, total: 0, libelle: "" });
@@ -135,24 +200,54 @@ export default function AnnuaireModal({
     }
   };
 
-  const dejaConnu = (e: InfoEntreprise) =>
-    existants.some((p) => p.siren === e.siren || p.societe.trim().toLowerCase() === e.nom.trim().toLowerCase());
+  /**
+   * Statut d'une entreprise INSEE vis-à-vis de la base existante.
+   * L'INSEE ne fournit pas d'email : la comparaison se fait donc sur le SIREN,
+   * puis sur la raison sociale. Et une société dont un contact s'est opposé ne
+   * doit jamais revenir par cette porte.
+   */
+  const etatConnu = (e: InfoEntreprise): "nouveau" | "deja" | "oppose" => {
+    const nom = e.nom.trim().toLowerCase();
+    const memes = existants.filter(
+      (p) => (e.siren && p.siren === e.siren) || (nom && p.societe.trim().toLowerCase() === nom),
+    );
+    if (!memes.length) return "nouveau";
+    if (memes.some((p) => p.statut === "oppose" || optouts.has(p.emailNormalise || normalizeEmail(p.email))))
+      return "oppose";
+    return "deja";
+  };
+
+  const dejaConnu = (e: InfoEntreprise) => etatConnu(e) !== "nouveau";
 
   const lancer = async () => {
     setErreur(null);
     abort.current = false;
     setEtat("liste");
     try {
-      // 1. Parcours des pages de la catégorie jusqu'à épuisement.
-      const urls: string[] = [];
-      for (let page = 1; page <= maxPages && !abort.current; page++) {
-        setProgres({ fait: page, total: maxPages, libelle: `page ${page}` });
-        const { fiches: trouvees } = await appel({ action: "liste", metier: metierSlug, page });
-        const nouvelles = (trouvees as string[]).filter((u) => !urls.includes(u));
-        // Deux pages identiques = fin de la pagination, inutile d'insister.
-        if (!nouvelles.length) break;
-        urls.push(...nouvelles);
+      // Géocodage de la commune saisie : la recherche du site ne filtre RIEN
+      // sans coordonnées — le seul nom de lieu renvoie zéro résultat.
+      let lat: number | undefined, lng: number | undefined;
+      if (lieu.trim()) {
+        setProgres({ fait: 0, total: 1, libelle: "localisation…" });
+        const g = await fetch(
+          `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(lieu.trim())}&limit=1`,
+        ).then((r) => (r.ok ? r.json() : null));
+        const f = g?.features?.[0];
+        if (!f) {
+          setErreur(`Commune « ${lieu.trim()} » introuvable. Essaie un nom de ville ou un code postal.`);
+          setEtat("reglages");
+          return;
+        }
+        [lng, lat] = f.geometry.coordinates;
+        setLieuResolu(f.properties.label);
       }
+
+      // Une seule requête suffit : la page de recherche rend 150 fiches d'un coup.
+      setProgres({ fait: 1, total: 1, libelle: "recherche…" });
+      const { fiches: trouvees } = await appel({
+        action: "recherche", categorieId, lat, lng, distance: rayon,
+      });
+      const urls: string[] = trouvees as string[];
 
       // 2. Détail de chaque fiche, par petits lots.
       setEtat("fiches");
@@ -223,10 +318,36 @@ export default function AnnuaireModal({
     onClose();
   };
 
+  /** Résultats INSEE après recherche libre et filtre. */
+  const entreprisesVues = useMemo(() => {
+    const q = rechRes.trim().toLowerCase();
+    return entreprises.filter((e) => {
+      if (q && !`${e.nom} ${e.ville ?? ""} ${e.codePostal ?? ""} ${e.siren}`.toLowerCase().includes(q))
+        return false;
+      if (filtreRes === "importables" && etatConnu(e) !== "nouveau") return false;
+      if (filtreRes === "effectif" && !e.effectifCode) return false;
+      return true;
+    });
+    // `etatConnu` est recréé à chaque rendu ; ses vraies entrées sont `existants`
+    // et `optouts`, qui figurent bien ci-dessous.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entreprises, rechRes, filtreRes, existants, optouts]);
+
+  /** Fiches de l'annuaire après recherche libre. */
+  const fichesVues = useMemo(() => {
+    const q = rechRes.trim().toLowerCase();
+    if (!q) return classees.ok;
+    return classees.ok.filter((f) =>
+      `${f.societe} ${f.email ?? ""} ${f.commune ?? ""} ${f.codePostal ?? ""}`.toLowerCase().includes(q),
+    );
+  }, [classees.ok, rechRes]);
+
   const importerInsee = async () => {
     const kit = metiers.find((m) => m.id === metierId);
     const items: NouveauProspect[] = entreprises
-      .filter((e) => choisis.has(e.siren))
+      // Second filet : même si une case était cochée d'une manière ou d'une
+      // autre, rien de déjà connu ni d'opposé ne franchit l'import.
+      .filter((e) => choisis.has(e.siren) && etatConnu(e) === "nouveau")
       .map((e) => ({
         userId,
         societe: e.nom,
@@ -284,14 +405,33 @@ export default function AnnuaireModal({
             <>
               <div className="grid sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-3">
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Codes NAF</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                    Métier <span className="text-gray-400">(remplit les codes pour toi)</span>
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {METIERS_NAF.map((m) => (
+                      <button
+                        key={m.naf}
+                        onClick={() => setNaf(m.naf)}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                          naf === m.naf ? "bg-blue-600 text-white" : "border text-gray-700 hover:bg-gray-50"
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Codes NAF <span className="text-gray-400">(ajustables)</span>
+                  </label>
                   {/* Même composant que l'éditeur de kits : les codes s'ajoutent un
                       par un et s'affichent en pastilles, jamais en liste à virgules. */}
                   <ListeCodesNaf valeur={naf} onChange={setNaf} />
                   <p className="text-[11px] text-gray-500 mt-2">
-                    Repris du kit métier si tu en choisis un. Plusieurs codes élargissent la
-                    recherche : la plomberie donne 196 entreprises dans le Morbihan avec 43.22A
-                    et 43.22B, contre 87 avec le seul 43.22B.
+                    Choisis un métier ci-dessus, ou saisis les codes à la main. Sélectionner un kit
+                    plus bas reprend les siens. Plusieurs codes élargissent la recherche : la
+                    plomberie donne 196 entreprises dans le Morbihan avec 43.22A et 43.22B, contre
+                    87 avec le seul 43.22B.
                   </p>
                 </div>
                 <div>
@@ -300,17 +440,20 @@ export default function AnnuaireModal({
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-xs font-medium text-gray-600 mb-1">Effectif minimum</label>
+                  {/* Crans alignés sur les bornes de tranches INSEE : un seuil
+                      intermédiaire (5, 15…) serait arrondi et donnerait le même
+                      résultat que le cran du dessous. */}
                   <select
                     value={effectifMin}
                     onChange={(e) => setEffectifMin(Number(e.target.value))}
                     className={inputCls}
                   >
                     <option value={0}>Aucun filtre</option>
-                    <option value={1}>1 salarié et +</option>
                     <option value={3}>3 salariés et +</option>
-                    <option value={6}>6 salariés et +</option>
                     <option value={10}>10 salariés et +</option>
                     <option value={20}>20 salariés et +</option>
+                    <option value={50}>50 salariés et +</option>
+                    <option value={100}>100 salariés et +</option>
                   </select>
                 </div>
               </div>
@@ -324,18 +467,39 @@ export default function AnnuaireModal({
                   montrerNaf
                   onChange={(id) => {
                     setMetierId(id);
-                    // Synchronisation systématique : ne rien faire quand le kit
-                    // choisi n'a pas de codes laissait ceux du kit précédent,
-                    // et « Aucun » ne nettoyait pas non plus.
-                    setNaf(metiers.find((m) => m.id === id)?.codesNaf?.trim() ?? "");
+                    // Le kit ne remplace les codes que s'il en a. Sinon on garde
+                    // la saisie en cours — l'effacer détruirait le métier choisi
+                    // en pastille — et un avertissement signale que la recherche
+                    // ne portera PAS sur le métier du kit.
+                    const n = metiers.find((m) => m.id === id)?.codesNaf?.trim();
+                    if (n) setNaf(n);
                   }}
                 />
               </div>
-              <div className="rounded-lg bg-amber-50 text-amber-800 text-xs px-3 py-2">
-                L&apos;INSEE ne publie <strong>aucune adresse email</strong>. Ces prospects arriveront
-                au statut « Email à trouver » et ne pourront pas être envoyés tant que tu n&apos;auras
-                pas complété leur fiche. Le filtre par effectif sert aussi à rester sous le plafond de
-                pagination de l&apos;API.
+              {/* Le kit sélectionné n'a pas de codes : la recherche se fera sur
+                  ceux affichés, qui ne correspondent pas forcément à son métier. */}
+              {/* Espaces explicites via `{" "}` : le JSX les avale au passage à la
+                  ligne autour d'une expression, d'où des « Paysagisten'a ». */}
+              {metierId && !metiers.find((m) => m.id === metierId)?.codesNaf?.trim() && (
+                <div className="rounded-lg bg-amber-50 text-amber-800 text-xs px-3 py-2">
+                  {`Le kit « ${metiers.find((m) => m.id === metierId)?.metier ?? ""} » n'a aucun code NAF.`}
+                  {" "}
+                  {naf.trim()
+                    ? `La recherche portera sur les codes ci-dessus (${naf}), pas sur son métier.`
+                    : "Choisis un métier ci-dessus ou saisis des codes, sinon la recherche ne donnera rien."}
+                  {" "}
+                  {"Vérifie qu'ils correspondent, ou renseigne les codes du kit."}
+                </div>
+              )}
+
+              <div className="rounded-lg bg-amber-50 text-amber-800 text-xs px-3 py-2 leading-relaxed">
+                {"L'INSEE ne publie "}
+                <strong>aucune adresse email</strong>
+                {". Ces prospects arriveront au statut « Email à trouver » et ne pourront pas être "}
+                {"envoyés tant que tu n'auras pas complété leur fiche. Seules les sociétés "}
+                <strong>encore en activité</strong>
+                {" sont remontées, et le filtre par effectif aide à rester sous le plafond de "}
+                {"pagination de l'API."}
               </div>
               {erreur && <div className="rounded-lg bg-red-50 text-red-700 text-sm px-3 py-2">{erreur}</div>}
               <div className="flex justify-end gap-2 pt-1">
@@ -353,41 +517,60 @@ export default function AnnuaireModal({
             </>
           ) : (
           <>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Métier</label>
+            <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setCategorieId(c.id)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                    categorieId === c.id ? "bg-blue-600 text-white" : "border text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Métier (annuaire)</label>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Autour de</label>
               <input
-                value={metierSlug}
-                onChange={(e) => setMetierSlug(e.target.value)}
-                placeholder="plombier"
+                value={lieu}
+                onChange={(e) => { setLieu(e.target.value); setLieuResolu(""); }}
+                placeholder="Pénestin, Nantes, 44000…"
                 className={inputCls}
               />
               <p className="text-[11px] text-gray-500 mt-1">
-                Tel qu&apos;il apparaît dans l&apos;URL : plombier, carreleur, macon…
+                Une commune ou un code postal. Un nom de département ne fonctionne pas.
+                Laisse vide pour chercher dans toute la France.
               </p>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Département</label>
-              <input
-                value={departement}
-                onChange={(e) => setDepartement(e.target.value)}
-                placeholder="44"
-                className={inputCls}
-              />
-              <p className="text-[11px] text-gray-500 mt-1">Vide = tous.</p>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Rayon</label>
+              <select value={rayon} onChange={(e) => setRayon(Number(e.target.value))} className={inputCls}>
+                {[20, 30, 50, 80, 120, 250].map((r) => (
+                  <option key={r} value={r}>{r} km</option>
+                ))}
+              </select>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Pages à parcourir</label>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                value={maxPages}
-                onChange={(e) => setMaxPages(Number(e.target.value) || 1)}
-                className={inputCls}
-              />
-              <p className="text-[11px] text-gray-500 mt-1">10 fiches par page.</p>
-            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Filtrer sur un département <span className="text-gray-400">(facultatif)</span>
+            </label>
+            <input
+              value={departement}
+              onChange={(e) => setDepartement(e.target.value)}
+              placeholder="56"
+              className={inputCls}
+            />
+            <p className="text-[11px] text-gray-500 mt-1">
+              Affiné après extraction, sur le code postal de chaque fiche.
+            </p>
           </div>
 
           <div>
@@ -408,7 +591,7 @@ export default function AnnuaireModal({
             </button>
             <button
               onClick={lancer}
-              disabled={!metierSlug.trim()}
+              disabled={!categorieId}
               className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-40"
             >
               Lancer l&apos;extraction
@@ -422,8 +605,13 @@ export default function AnnuaireModal({
       {(etat === "liste" || etat === "fiches") && (
         <>
           <div className="text-sm text-gray-600 mb-2">
-            {etat === "liste" ? "Recensement des fiches" : "Lecture des fiches"} — {progres.libelle}
+            {etat === "liste" ? "Recherche" : "Lecture des fiches"} — {progres.libelle}
           </div>
+          {lieuResolu && (
+            <div className="text-[11px] text-gray-500 mb-2">
+              Centre retenu : <strong>{lieuResolu}</strong> · rayon {rayon} km
+            </div>
+          )}
           <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
             <div
               className="h-full bg-blue-600 transition-all"
@@ -452,16 +640,45 @@ export default function AnnuaireModal({
               <span className="text-gray-400"> sur {totalInsee} annoncées — augmente les pages ou affine l&apos;effectif</span>
             )}
           </div>
+          <BarreFiltres
+            recherche={rechRes}
+            onRecherche={setRechRes}
+            filtre={filtreRes}
+            onFiltre={setFiltreRes}
+            affiches={entreprisesVues.length}
+            total={entreprises.length}
+            onToutCocher={() =>
+              setChoisis(new Set(entreprisesVues.filter((e) => etatConnu(e) === "nouveau").map((e) => e.siren)))
+            }
+            onVider={() => setChoisis(new Set())}
+            filtres={[
+              { k: "importables", l: "Importables" },
+              { k: "effectif", l: "Effectif connu" },
+              { k: "tous", l: "Tous" },
+            ]}
+          />
+
           <div className="border rounded-xl overflow-hidden max-h-72 overflow-y-auto divide-y">
-            {entreprises.map((e) => {
-              const connu = dejaConnu(e);
+            {entreprisesVues.length === 0 && (
+              <div className="px-4 py-8 text-center text-sm text-gray-500">
+                Aucun résultat avec ces filtres.
+              </div>
+            )}
+            {entreprisesVues.map((e) => {
+              const etat = etatConnu(e);
+              // Déjà en base ou opposée : la case est verrouillée, pas seulement
+              // décochée — sinon un clic distrait recréerait un doublon.
+              const bloque = etat !== "nouveau";
               return (
                 <label
                   key={e.siren}
-                  className={`flex items-start gap-2 px-3 py-2 cursor-pointer ${connu ? "opacity-50" : "hover:bg-gray-50"}`}
+                  className={`flex items-start gap-2 px-3 py-2 ${
+                    bloque ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:bg-gray-50"
+                  }`}
                 >
                   <input
                     type="checkbox"
+                    disabled={bloque}
                     checked={choisis.has(e.siren)}
                     onChange={() => {
                       const n = new Set(choisis);
@@ -479,8 +696,11 @@ export default function AnnuaireModal({
                       {e.etat === "C" && (
                         <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-red-100 text-red-700">cessée</span>
                       )}
-                      {connu && (
-                        <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-gray-100 text-gray-500">déjà connu</span>
+                      {etat === "deja" && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-gray-100 text-gray-500">déjà dans ta liste</span>
+                      )}
+                      {etat === "oppose" && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-red-100 text-red-700">opposition enregistrée</span>
                       )}
                     </div>
                     <div className="text-[11px] text-gray-500 truncate">
@@ -533,13 +753,29 @@ export default function AnnuaireModal({
             </div>
           )}
 
-          {classees.ok.length === 0 ? (
+          {classees.ok.length > 0 && (
+            <BarreFiltres
+              recherche={rechRes}
+              onRecherche={setRechRes}
+              filtre={"tous" as const}
+              onFiltre={() => {}}
+              affiches={fichesVues.length}
+              total={classees.ok.length}
+              onToutCocher={() => setChoisis(new Set(fichesVues.map((f) => f.url)))}
+              onVider={() => setChoisis(new Set())}
+              filtres={[]}
+            />
+          )}
+
+          {fichesVues.length === 0 ? (
             <div className="border rounded-xl px-4 py-8 text-center text-sm text-gray-500">
-              Aucune fiche exploitable. Élargis le nombre de pages ou retire le département.
+              {classees.ok.length === 0
+                ? "Aucune fiche exploitable. Élargis le rayon ou retire le département."
+                : "Aucun résultat pour cette recherche."}
             </div>
           ) : (
             <div className="border rounded-xl overflow-hidden max-h-72 overflow-y-auto divide-y">
-              {classees.ok.map((f) => (
+              {fichesVues.map((f) => (
                 <label key={f.url} className="flex items-start gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
                   <input
                     type="checkbox"

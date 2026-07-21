@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { departementDuCp } from "@/lib/territoires";
 import {
   DELAI_RELANCE_JOURS, MAX_RELANCES, STATUT_LABEL, STATUT_STYLE, peutContacter,
 } from "@/lib/mailingModel";
@@ -28,6 +29,8 @@ export default function SuiviTab({
   evenements: MailingEvenement[];
   optouts: Set<string>;
 }) {
+  const [niveau, setNiveau] = useState<"region" | "departement">("region");
+
   /** Par métier : ce que la photo des statuts courants ne peut pas montrer seule. */
   const parMetier = useMemo(() => {
     const lignes = metiers.map((m) => {
@@ -71,6 +74,27 @@ export default function SuiviTab({
         .sort((a, b) => (a.dernierEnvoiAt?.toMillis() ?? 0) - (b.dernierEnvoiAt?.toMillis() ?? 0)),
     [prospects, optouts],
   );
+
+  /** Répartition géographique, au niveau choisi. */
+  const parTerritoire = useMemo(() => {
+    const par = new Map<string, { total: number; envoyes: number; repondus: number }>();
+    for (const p of prospects) {
+      const d = departementDuCp(p.codePostal);
+      if (!d) continue;
+      const cle = niveau === "region" ? d.region : `${d.code} ${d.nom}`;
+      const e = par.get(cle) ?? { total: 0, envoyes: 0, repondus: 0 };
+      e.total++;
+      if ((p.nbEnvois ?? 0) > 0) e.envoyes++;
+      if (p.statut === "repondu" || p.statut === "interesse") e.repondus++;
+      par.set(cle, e);
+    }
+    return [...par.entries()]
+      .map(([cle, v]) => ({
+        cle, ...v,
+        taux: v.envoyes ? Math.round((v.repondus / v.envoyes) * 100) : 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [prospects, niveau]);
 
   /** Regroupement par logiciel déjà en place, insensible à la casse. */
   const logiciels = useMemo(() => {
@@ -187,6 +211,51 @@ export default function SuiviTab({
           </div>
         )}
       </div>
+
+      {parTerritoire.length > 0 && (
+        <div className="border rounded-xl bg-white overflow-hidden">
+          <div className="px-4 py-3 border-b flex items-baseline justify-between">
+            <span className="text-sm font-medium">Par territoire</span>
+            <button
+              onClick={() => setNiveau(niveau === "region" ? "departement" : "region")}
+              className="text-xs text-blue-700 hover:underline"
+            >
+              {niveau === "region" ? "Voir par département" : "Voir par région"}
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-gray-500 border-b">
+                  <th className="text-left font-medium px-4 py-2">
+                    {niveau === "region" ? "Région" : "Département"}
+                  </th>
+                  <th className="text-right font-medium px-3 py-2">Prospects</th>
+                  <th className="text-right font-medium px-3 py-2">Contactés</th>
+                  <th className="text-right font-medium px-3 py-2">Réponses</th>
+                  <th className="text-right font-medium px-4 py-2">Taux</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {parTerritoire.map((l) => (
+                  <tr key={l.cle}>
+                    <td className="px-4 py-2 font-medium">{l.cle}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{l.total}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{l.envoyes}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{l.repondus}</td>
+                    <td className="px-4 py-2 text-right font-semibold">
+                      {l.envoyes ? `${l.taux} %` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-2.5 border-t text-[11px] text-gray-500">
+            Territoire déduit du code postal. Les prospects sans code postal ne sont pas comptés.
+          </div>
+        </div>
+      )}
 
       {logiciels.length > 0 && (
         <div className="border rounded-xl bg-white overflow-hidden">

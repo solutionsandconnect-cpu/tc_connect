@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getAdminAuth, getAdminDb } from '@/lib/firebaseAdmin'
 import {
-  ANNUAIRE_BASE, extraireFiche, extraireLiensFiches, urlCategorie, type FicheArtisan,
+  ANNUAIRE_BASE, CATEGORIES, extraireFiche, extraireLiensFiches, urlCategorie, urlRecherche,
+  type FicheArtisan,
 } from '@/lib/annuaire'
 
 // Extraction de l'annuaire des artisans, côté serveur.
@@ -48,11 +49,38 @@ export async function POST(req: Request) {
   const refus = await exigerAdmin(req)
   if (refus) return NextResponse.json({ error: refus }, { status: 403 })
 
-  let corps: { action?: string; metier?: string; page?: number; urls?: string[] }
+  let corps: {
+    action?: string; metier?: string; page?: number; urls?: string[]
+    categorieId?: number; lat?: number; lng?: number; distance?: number
+  }
   try {
     corps = await req.json()
   } catch {
     return NextResponse.json({ error: 'Corps de requête invalide.' }, { status: 400 })
+  }
+
+  /* --- Recherche géolocalisée : 150 fiches en une requête --- */
+  if (corps.action === 'recherche') {
+    const categorieId = Number(corps.categorieId)
+    if (!CATEGORIES.some((c) => c.id === categorieId)) {
+      return NextResponse.json({ error: 'Métier inconnu.' }, { status: 400 })
+    }
+    try {
+      const html = await recuperer(
+        urlRecherche({
+          categorieId,
+          lat: typeof corps.lat === 'number' ? corps.lat : undefined,
+          lng: typeof corps.lng === 'number' ? corps.lng : undefined,
+          distance: typeof corps.distance === 'number' ? corps.distance : undefined,
+        }),
+      )
+      return NextResponse.json({ fiches: extraireLiensFiches(html) })
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : 'Échec de la récupération.' },
+        { status: 502 },
+      )
+    }
   }
 
   /* --- Liste des fiches d'une page de catégorie --- */

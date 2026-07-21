@@ -10,7 +10,8 @@ import { cleanForFirestore } from '@/lib/firebaseUtils'
 import { emailDomain, makeToken, normalizeEmail, safeId } from '@/lib/mailingModel'
 import type { InfoEntreprise } from '@/lib/sirene'
 import type {
-  Client, MailingEnvoi, MailingEvenement, MailingMetier, MailingOptout, Prospect, ProspectStatut,
+  Client, MailingEnvoi, MailingEvenement, MailingLogiciel, MailingMetier, MailingOptout,
+  Prospect, ProspectStatut,
 } from '@/types'
 
 const prospectsCol = () => collection(db, 'prospects')
@@ -152,6 +153,34 @@ export const updateProspect = async (id: string, data: Partial<Prospect>): Promi
 
 export const deleteProspect = async (id: string): Promise<void> => {
   await deleteDoc(doc(db, 'prospects', id))
+}
+
+/* ------------------------------------------------------------------ */
+/* Référentiel des logiciels concurrents                               */
+/* ------------------------------------------------------------------ */
+
+export const listenLogiciels = (userId: string, cb: (l: MailingLogiciel[]) => void) => {
+  const q = query(collection(db, 'mailing_logiciels'), where('userId', '==', userId))
+  return onSnapshot(q, (snap) => {
+    const data = snap.docs.map((d) => ({ id: d.id, ...d.data() } as MailingLogiciel))
+    data.sort((a, b) => (a.nom ?? '').localeCompare(b.nom ?? ''))
+    cb(data)
+  })
+}
+
+export const ajouterLogiciel = async (userId: string, nom: string): Promise<void> => {
+  await addDoc(collection(db, 'mailing_logiciels'), {
+    userId, nom: nom.trim(), createdAt: Timestamp.now(),
+  })
+}
+
+/**
+ * Retire un logiciel du référentiel.
+ * Les prospects qui le mentionnent gardent leur valeur : on ne réécrit pas
+ * l'historique parce qu'on nettoie une liste de choix.
+ */
+export const supprimerLogiciel = async (id: string): Promise<void> => {
+  await deleteDoc(doc(db, 'mailing_logiciels', id))
 }
 
 /* ------------------------------------------------------------------ */
@@ -331,10 +360,52 @@ export const enregistrerEnvoi = async (
  * C'est la frontière du modèle : `prospects` porte le contact froid,
  * `clients` porte la relation engagée. Pas de double magasin.
  */
+/**
+ * Cherche un client existant correspondant au prospect.
+ * L'email prime (c'est l'identité la plus fiable), puis le SIRET, puis la
+ * raison sociale. Sans ce contrôle, promouvoir un prospect déjà client créait
+ * un doublon dans la base clients.
+ */
+async function clientExistant(prospect: Prospect, userId: string): Promise<string | null> {
+  const snap = await getDocs(query(collection(db, 'clients'), where('userId', '==', userId)))
+  const email = normalizeEmail(prospect.email)
+  const siret = (prospect.siret ?? '').replace(/\D/g, '')
+  const soc = prospect.societe.trim().toLowerCase()
+
+  for (const d of snap.docs) {
+    const c = d.data() as Client
+    if (email && normalizeEmail(c.email ?? '') === email) return d.id
+    if (siret && (c.siret ?? '').replace(/\D/g, '') === siret) return d.id
+  }
+  for (const d of snap.docs) {
+    const c = d.data() as Client
+    const noms = [c.nomEntreprise, c.nom].map((n) => (n ?? '').trim().toLowerCase())
+    if (soc && noms.includes(soc)) return d.id
+  }
+  return null
+}
+
 export const promouvoirEnClient = async (
   prospect: Prospect,
   userId: string,
-): Promise<{ clientId: string }> => {
+): Promise<{ clientId: string; existant: boolean }> => {
+  // Rattachement à la fiche existante plutôt que création d'un doublon.
+  const dejaLa = await clientExistant(prospect, userId)
+  if (dejaLa) {
+    await journaliser(prospect, {
+      type: 'promotion',
+      statutAvant: prospect.statut,
+      statutApres: 'repondu',
+      observations: 'Rattaché à une fiche client existante.',
+    })
+    await updateDoc(doc(db, 'prospects', prospect.id), {
+      statut: 'repondu' as ProspectStatut,
+      clientId: dejaLa,
+      updatedAt: Timestamp.now(),
+    })
+    return { clientId: dejaLa, existant: true }
+  }
+
   const ref = await addDoc(collection(db, 'clients'), {
     ...cleanForFirestore({
       userId,
@@ -367,5 +438,5 @@ export const promouvoirEnClient = async (
     clientId: ref.id,
     updatedAt: Timestamp.now(),
   })
-  return { clientId: ref.id }
+  return { clientId: ref.id, existant: false }
 }

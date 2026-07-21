@@ -237,11 +237,38 @@ export function codesEffectifAuMoins(seuil: number): string {
     .join(',')
 }
 
+/**
+ * Métiers du bâtiment avec leurs codes NAF, pour chercher sans avoir à les
+ * connaître. Chaque code a été vérifié contre l'API : aucun ne renvoie zéro.
+ * La plomberie en porte deux — un plombier-chauffagiste peut être immatriculé
+ * sous l'un ou l'autre, n'en prendre qu'un ferait perdre la moitié du métier.
+ */
+export const METIERS_NAF: { label: string; naf: string }[] = [
+  { label: 'Plomberie / Chauffage', naf: '43.22A,43.22B' },
+  { label: 'Électricité', naf: '43.21A' },
+  { label: 'Plâtrerie / Plaquiste', naf: '43.31Z' },
+  { label: 'Peinture / Vitrerie', naf: '43.34Z' },
+  { label: 'Carrelage / Sols', naf: '43.33Z' },
+  { label: 'Menuiserie bois-PVC', naf: '43.32A' },
+  { label: 'Menuiserie métal / Serrurerie', naf: '43.32B' },
+  { label: 'Charpente', naf: '43.91A' },
+  { label: 'Couverture', naf: '43.91B' },
+  { label: 'Maçonnerie / Gros œuvre', naf: '43.99C' },
+  { label: 'Terrassement', naf: '43.12A' },
+  { label: 'Démolition', naf: '43.11Z' },
+  { label: 'Isolation', naf: '43.29A' },
+  { label: 'Étanchéité', naf: '43.99A' },
+  { label: 'Paysagiste', naf: '81.30Z' },
+  { label: 'Architecte', naf: '71.11Z' },
+]
+
 export interface RechercheCriteres {
   naf: string
   departement?: string
   /** Seuil de salariés. 0 = pas de filtre. */
   effectifMin?: number
+  /** Écarte les sociétés radiées. Défaut : true. */
+  actifSeulement?: boolean
   page?: number
 }
 
@@ -274,6 +301,10 @@ export async function rechercherParCriteres(
   if (c.effectifMin && c.effectifMin > 0) {
     u.searchParams.set('tranche_effectif_salarie', codesEffectifAuMoins(c.effectifMin))
   }
+  // Filtré à la source plutôt qu'après coup : écarter les radiées côté serveur
+  // réduit aussi le volume paginé (1 717 → 1 026 sur la plomberie du Morbihan),
+  // donc on atteint moins vite le plafond de l'API.
+  if (c.actifSeulement !== false) u.searchParams.set('etat_administratif', 'A')
 
   const res = await fetch(u, { signal })
   if (!res.ok) throw new Error(`API entreprises : HTTP ${res.status}`)
