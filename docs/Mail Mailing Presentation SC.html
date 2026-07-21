@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      margin: 0;
+      padding: 5px;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      color: #333333;
+      background-color: #ffffff;
+    }
+    .container {
+      margin: auto;
+    }
+
+    .section {
+      margin-bottom: 10px;
+    }
+
+    a {
+      color: #000000;
+      text-decoration: none;
+    }
+    
+
+
+    
+  </style>
+</head>
+<body>
+  <div class="container">
+
+
+    <!-- Message principal -->
+    <div class="section">
+      Bonjour,</div>
+      
+<div class="section">
+      Je me permets de vous contacter afin de vous proposer mes services dans un but de simplifier vos tâches quotidiennes et votre productivité au sein de votre société grâce à un outil qui centralisent vos données.
+    </div>
+    
+    <img src="&lt;&lt;[URL Script d'ouverture de mail]&gt;&gt;" width="1" height="1" style="display:none;">
+    
+
+    
+          <div class="section">
+      Je sais que gérer une entreprise de &lt;&lt;ANY(
+  SELECT(
+    Slide ParametreMailing[Corps de métier];
+    [IDParametresMailing] = [IDParametresMailingRef])
+)&gt;&gt; implique de jongler &lt;&lt;ANY(
+  SELECT(
+    Slide ParametreMailing[Problématiques du métier (mots clés en phrase)];
+    [IDParametresMailing] = [IDParametresMailingRef])
+)&gt;&gt; et je sais que chaque heure compte. Voici quelques problèmes fréquents et la manière dont je peux vous aider à les résoudre ou les optimiser. 
+<br>
+🚨 <span style="font-weight:bold;">Attention, cette liste est exhaustive ! Vous retrouverez en pièce jointe une brochure plus détaillée avec d'autres exemples, mais tout est possible, je m'adapte à VOS besoins.</span>
+    </div>
+
+<br>
+ <!-- Thème 1 -->
+ <div style ="margin-top: 15px;">  
+    <div class="section">
+     <span style="font-weight: 800; color:#377587;">&lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Thème de la section];
+    AND(
+    [Comptage spé par partie]=1;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;
+  </span>
+    </div>
+    
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span style="color:#377587;">💢 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (5)];
+    AND(
+    [Comptage spé par partie]=1;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span>👉 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (6)];
+    AND(
+    [Comptage spé par partie]=1;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+</div>
+
+<br>
+<!-- Thème 2 -->
+ <div style ="margin-top: 15px;">  
+    <div class="section">
+     <span style="font-weight: 800; color:#377587;">&lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Thème de la section];
+    AND(
+    [Comptage spé par partie]=2;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;
+  </span>
+    </div>
+    
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span style="color:#377587;">💢 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (5)];
+    AND(
+    [Comptage spé par partie]=2;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span>👉 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (6)];
+    AND(
+    [Comptage spé par partie]=2;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+</div>
+<br>
+<!-- Thème 3 -->
+ <div style ="margin-top: 15px;">  
+    <div class="section">
+     <span style="font-weight: 800; color:#377587;">&lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Thème de la section];
+    AND(
+    [Comptage spé par partie]=3;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;
+  </span>
+    </div>
+    
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span style="color:#377587;">💢 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (5)];
+    AND(
+    [Comptage spé par partie]=3;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span>👉 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (6)];
+    AND(
+    [Comptage spé par partie]=3;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+</div>
+<br>
+<!-- Thème 4 -->
+ <div style ="margin-top: 15px;">  
+    <div class="section">
+     <span style="font-weight: 800; color:#377587;">&lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Thème de la section];
+    AND(
+    [Comptage spé par partie]=4;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;
+  </span>
+    </div>
+    
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span style="color:#377587;">💢 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (5)];
+    AND(
+    [Comptage spé par partie]=4;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span>👉 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (6)];
+    AND(
+    [Comptage spé par partie]=4;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+</div>
+<br>
+<!-- Thème 5 -->
+ <div style ="margin-top: 15px;">  
+    <div class="section">
+     <span style="font-weight: 800; color:#377587;">&lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Thème de la section];
+    AND(
+    [Comptage spé par partie]=5;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;
+  </span>
+    </div>
+    
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span style="color:#377587;">💢 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (5)];
+    AND(
+    [Comptage spé par partie]=5;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span>👉 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (6)];
+    AND(
+    [Comptage spé par partie]=5;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+</div>
+<br>
+<!-- Thème 6 -->
+ <div style ="margin-top: 15px;">  
+    <div class="section">
+     <span style="font-weight: 800; color:#377587;">&lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Thème de la section];
+    AND(
+    [Comptage spé par partie]=6;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;
+  </span>
+    </div>
+    
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span style="color:#377587;">💢 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (5)];
+    AND(
+    [Comptage spé par partie]=6;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span>👉 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (6)];
+    AND(
+    [Comptage spé par partie]=6;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+</div>
+<br>
+<!-- Thème 7 -->
+ <div style ="margin-top: 15px;">  
+    <div class="section">
+     <span style="font-weight: 800; color:#377587;">&lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Thème de la section];
+    AND(
+    [Comptage spé par partie]=7;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;
+  </span>
+    </div>
+    
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span style="color:#377587;">💢 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (5)];
+    AND(
+    [Comptage spé par partie]=7;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+    
+    <div class="section" style="display:flex; align-items:flex-start; gap:6px;">
+      <span>👉 &lt;&lt;
+  ANY(SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (6)];
+    AND(
+    [Comptage spé par partie]=7;
+    [IDParametresMailingRef] = [_THISROW].[IDParametresMailingRef];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher";
+    ISNOTBLANK([Détails de cette partie (5)]))
+  ))&gt;&gt;</span>
+    </div>
+</div>
+
+<br>
+
+<div class="section">
+      <strong>En résumé</strong> : Mes outils vous font gagner du temps et donc de l’argent ! Je créer des outils sur mesure, <strong style="color:#377587;">développés seulement pour votre entreprise selon votre façon de travailler (pas de logiciel rigide : un outil qui évolue avec vous !).</strong></div>
+
+
+
+      <div class="section">
+      Pour plus d'informations et de détails, n'hésitez pas à regarder la brochure en pièce jointe.
+    </div>
+    <div class="section">
+      Je serais ravie d’en discuter avec vous de vive voix, je reste disponible pour toutes informations complémentaires !
+    </div>
+
+    <p>Cordialement,</p>
+
+<table cellpadding="0" cellspacing="0" border="0" style="vertical-align: middle; font-size: medium; font-family: Arial; min-width: 375px; width: 100%;">
+  <tbody>
+    <!-- Logo -->
+    <tr>
+      <td style="text-align: center;">
+        <img src="https://drive.google.com/thumbnail?id=1o_AiTLSFIXoEsmr7YKdJT7oGxPcv_I_l" width="130" style="max-width: 130px; display: inline-block;" alt="Logo">
+      </td>
+    </tr>
+
+    <tr><td height="10"></td></tr>
+
+    <!-- Nom et slogan -->
+    <tr>
+      <td style="text-align: center;">
+        <h2 style="margin: 0; font-size: 16px; color: #000001; font-weight: 400;">Teddy</h2>
+        <h2 style="margin: 0; font-size: 18px; color: #000001; font-weight: 600;">Solutions &amp; Connect</h2>
+        <h2 style="margin: 0; font-size: 16px; color: #000001; font-weight: 400;">📍 Pénestin (56)</h2>
+        
+      </td>
+    </tr>
+
+    <!-- Ligne de séparation -->
+    <tr>
+      <td style="padding: 30px 0;">
+        <hr style="border: 0; border-bottom: 1px solid #000001; margin: 0;">
+      </td>
+    </tr>
+
+    <!-- Contact & réseaux -->
+    <tr>
+      <td>
+        <table width="100%" cellpadding="0" cellspacing="0" style="font-family: Arial;">
+          <tbody>
+            <tr>
+              <!-- Contact -->
+              <td>
+                <table cellpadding="0" cellspacing="0" style="font-family: Arial;">
+                  <tr style="height: 25px;">
+                    <td width="30"><img src="https://drive.google.com/thumbnail?id=11QxuNd6t3ZnPyEpaF-AYRICvAdAa6KmY" alt="telephone" width="20"></td>
+                    <td><a href="tel:+33679408254" style="text-decoration: none; color: #000001; font-size: 14px;">+33 6 79 40 82 54</a></td>
+                  </tr>
+                  <tr style="height: 25px;">
+                    <td width="30"><img src="https://drive.google.com/thumbnail?id=1k-67I-BTJChKh2qw7a-RW2p4ro9ebXZa" alt="email" width="20"></td>
+                    <td><a href="mailto:solutionsandconnect@gmail.com" style="text-decoration: none; color: #000001; font-size: 14px;">solutionsandconnect@gmail.com</a></td>
+                  </tr>
+                  
+                </table>
+              </td>
+
+              <!-- Réseaux sociaux -->
+              <td style="text-align: right;">
+                <a href="https://www.facebook.com/share/14SVaPgDpL/?mibextid=wwXIfr" style="display: inline-block; margin-right: 5px;"><img src="https://drive.google.com/thumbnail?id=1keeN2l14ufTvY5hHUQOGJwSADT-9KWhg" width="24" style="border-radius: 50%;"></a>
+                <a href="https://www.instagram.com/solutionsandconnect/" style="display: inline-block; margin-right: 5px;"><img src="https://drive.google.com/thumbnail?id=14oeulhQPW-JDld8qJSorg5m6IcM7EX5z" width="24" style="border-radius: 50%;"></a>
+                <a href="https://wa.me/33679408254" style="display: inline-block;"><img src="https://drive.google.com/thumbnail?id=1yJQUZRvuNFRBZhvTlo341nF5R6SmSpLy" width="24" style="border-radius: 50%;"></a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Ligne de séparation finale -->
+    <tr>
+      <td style="padding: 30px 0;">
+        <hr style="border: 0; border-bottom: 1px solid #000001; margin: 0;">
+      </td>
+    </tr>
+
+    <!-- Mentions légales -->
+    <tr>
+      <td style="text-align: center; font-size: 12px; max-width: 300px; margin: auto; padding-top: 1rem;">
+        <p style="margin: 0;">&copy; 2025 Solutions &amp; Connect</p>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+
+  </div>
+</body>
+</html>

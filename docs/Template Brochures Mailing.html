@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      color: #000;
+    }
+    .tablelogo {
+      min-width: 100%;
+      table-layout: fixed;
+      width: 33.33%;
+      border: 1px solid transparent;
+      text-align: center;
+      vertical-align: middle;
+    }
+    
+    .logo {
+      margin: 0 auto 20px auto;
+      width: 200px;
+      height: auto;
+      }
+      
+    
+    .titre {
+     text-align: center;
+     font-weight: bold;
+     font-size: 25px;
+     margin-top: 10px;
+     text-transform: uppercase;
+    }
+    
+    .soustitre {
+	 font-style: italic;
+     font-size: 18px;
+     text-align: center;
+    }
+    
+    .soustexte{
+     font-size: 14px;
+     text-align: center;
+     color: #cc0000;
+     text-transform: uppercase;
+     margin-top: 10px;
+     font-weight: bold;
+    }
+
+  
+    .infosbrochure {
+      margin-top: 10px;
+      text-align: center;
+      font-size: 12px;
+    }  
+    
+
+    
+    label {
+      display: block;
+      margin: 5px 0;
+      font-size: 13px;
+    }
+
+    
+    
+    .tablecontact {
+      margin-top: 12px;
+      min-width: 100%;
+      border: 2px solid #000;
+      text-align: center;
+      vertical-align: middle;
+    }
+    
+    .tableproblematiques {
+     min-width: 100%;
+     table-layout: fixed;
+     vertical-align: middle;
+     border: 0.5px solid black;
+     border-collapse: collapse;
+     word-wrap: break-word;
+     page-break-inside: avoid;
+     margin-top : 10px;
+     width: 50%;
+     border: 1px solid black;
+    }
+    
+    .tableproblematiques th {
+      text-align: center;
+      font-weight: bold;
+      background-color: #d8d8d8; /* gris */
+      color: black;
+      font-size: 12px;
+      padding: 3px;
+    }
+    
+    .detailproblematiques {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+      min-width: 100%;
+      table-layout: fixed;
+      width: 33.33%;
+      border: 1px solid #00455d;
+      padding: 10px;
+      text-align: center;
+      vertical-align: middle;
+      word-wrap: break-word;
+      font-size: 12px;
+    }
+    
+    table.detailproblematiques tbody tr:nth-child(even) {
+    background-color: #f2f2f2; /* Couleur gris clair pour une ligne sur deux */
+    }  
+    
+    div.ligne-ech:nth-child(even) {
+  background-color: #f2f2f2;
+  border-radius: 4px;
+    }
+   div.ligne-ech {
+  padding: 4px 6px;
+     }
+
+    .tableproblematiquessolutions {
+     max-width: 100%;
+     table-layout: fixed;
+     vertical-align: middle;
+     border: 0.5px solid black;
+     border-collapse: collapse;
+     word-wrap: break-word;
+     page-break-inside: avoid;
+     margin-top : 5px;
+     border: 1px solid black;
+    }
+    
+    .tableproblematiquessolutions th {
+      text-align: center;
+      font-weight: bold;
+      background-color: #d8d8d8; /* gris */
+      color: black;
+      font-size: 12px;
+      padding: 3px;
+    }
+    
+     .barbleu {
+      width: 50%;
+      height: 8px;
+      background-color: #00455d;
+      transform: translate(50%, 50%);
+    }
+    
+    .center-svg { 
+    	max-width: 100%; 
+        height: auto; 
+        display: block; 
+        margin: 0 auto; 
+        }
+        
+    .tableresume {
+     min-width: 100%;
+     table-layout: fixed;
+     vertical-align: middle;
+     border: 0.5px solid black;
+     border-collapse: collapse;
+     word-wrap: break-word;
+     page-break-inside: avoid;
+     margin-top : 30px;
+     width: 50%;
+     border: 1px solid black;
+    }
+    
+    .tableresume th {
+      text-align: center;
+      font-weight: bold;
+      background-color: #d8d8d8; /* gris */
+      color: black;
+      font-size: 12px;
+      padding: 3px;
+    }
+    
+    .detailresume {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+      min-width: 100%;
+      table-layout: fixed;
+      width: 33.33%;
+      border: 1px solid #00455d;
+      padding: 10px;
+      text-align: center;
+      vertical-align: middle;
+      word-wrap: break-word;
+      font-size: 12px;
+    }
+    
+    table.detailresume tbody tr:nth-child(even) {
+    background-color: #f2f2f2; /* Couleur gris clair pour une ligne sur deux */
+    }
+    
+    
+    .tabletarif {
+     min-width: 100%;
+     table-layout: fixed;
+     vertical-align: middle;
+     border: 0.5px solid black;
+     border-collapse: collapse;
+     word-wrap: break-word;
+     page-break-inside: avoid;
+     margin-top : 30px;
+     width: 50%;
+     border: 1px solid black;
+    }
+    
+    .tabletarif th {
+      text-align: center;
+      font-weight: bold;
+      background-color: #d8d8d8; /* gris */
+      color: black;
+      font-size: 12px;
+      padding: 3px;
+    }
+    
+    .detailtarif {
+      border-collapse: collapse;
+      margin-bottom: 20px;
+      min-width: 100%;
+      table-layout: fixed;
+      width: 33.33%;
+      border: 1px solid #00455d;
+      padding: 10px;
+      text-align: center;
+      vertical-align: middle;
+      word-wrap: break-word;
+      font-size: 12px;
+    }
+    
+    table.detailtarif tbody tr:nth-child(even) {
+    background-color: #f2f2f2; /* Couleur gris clair pour une ligne sur deux */
+    }
+    
+  </style>
+</head>
+<body>
+<table class="tablelogo">
+<th><div class="logo"><img src="https://drive.google.com/thumbnail?id=1o_AiTLSFIXoEsmr7YKdJT7oGxPcv_I_l" width="130" style="max-width: 100px; display: inline-block;" alt="Logo"><br>Solutions &amp; Connect</div></th>
+<th></th>
+<th></th>
+</table>
+
+
+  <div class="titre">Brochure de présentation<br> &lt;&lt;[Corps de métier]&gt;&gt;</div>
+  
+  <div class="infosbrochure"><label>Dans ce document, je vous présentes les problématiques ressorties suite à une enquête effectuée auprès de vos collaborateurs et les solutions que je peux y apporter. Ces réponses sont des exemples. L'objectif étant de répondre exactement à votre demande, n'hésitez pas à me faire part de vos problématiques réelles et personnelles afin d'échanger ensemble sur une solution optimale pour vous.</label></div>
+
+  <div class="infosbrochure">
+  <table class="tableproblematiques">
+	<th>
+    Les problématiques principales ressorties par vos collaborateurs sont les suivantes :
+    </th>
+    <tr>
+    </tr>
+<table class="detailproblematiques">
+<tbody>
+    <p>&lt;&lt;Start:
+  SELECT(
+    Slide DetailsParametresMailing[IDDetailsParametresMailing];
+    AND(
+    [Comptage catégorie]=1;
+    [IDParametresMailingRef] = [IDParametresMailing];
+    [Brochure ou mail]="Mail";
+    [Afficher ou Masquer]="Afficher")
+  )&gt;&gt;</p>
+
+ <tr>
+	<td>&lt;&lt;[Détails de cette partie (1)]&gt;&gt;</td>
+ </tr>
+<p>&lt;&lt;End&gt;&gt;</p>
+</tbody>
+</table>
+</table>
+  </div>
+  
+
+<div class="infosbrochure"><label><strong>⬇️ Vous vous retrouverez probablement dans au moins une de ces problématiques ⬇️</strong></label></div>
+
+<!-- Thème 1 -->
+<table style="border-collapse: collapse; table-layout: fixed; page-break-inside: avoid;">
+  <tr>
+    <th colspan="3" style="font-weight: bold;">&lt;&lt;ANY(
+  SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (1)];
+    AND(
+    [Comptage spé par partie]=1;
+    [IDParametresMailingRef] = [IDParametresMailing])
+  )
+)&gt;&gt;</th>
+  </tr>
+
+  <tr>
+    <!-- Colonne gauche -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Problématiques les plus courantes rencontrées :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=1,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (2)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (2)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+
+    <!-- Colonne centrale -->
+    <td style="vertical-align: middle; width: 10%; text-align: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24">
+        <path fill="#377587" d="M12.089 3.634A2 2 0 0 0 11 5.414l-.001 2.585L9 8a1 1 0 0 0-1 1v6l.007.117A1 1 0 0 0 9 16l1.999-.001l.001 2.587A2 2 0 0 0 14.414 20L21 13.414a2 2 0 0 0 0-2.828L14.414 4a2 2 0 0 0-2.18-.434zM3 8a1 1 0 0 1 .993.883L4 9v6a1 1 0 0 1-1.993.117L2 15V9a1 1 0 0 1 1-1m3 0a1 1 0 0 1 .993.883L7 9v6a1 1 0 0 1-1.993.117L5 15V9a1 1 0 0 1 1-1"/>
+      </svg>
+    </td>
+
+    <!-- Colonne droite -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Ce que nous pourrions proposer pour parer à ces problématiques :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=1,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (3)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (3)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+
+<!-- Thème 2 -->
+<table style="border-collapse: collapse; table-layout: fixed; page-break-inside: avoid;">
+  <tr>
+    <th colspan="3" style="font-weight: bold;">&lt;&lt;ANY(
+  SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (1)];
+    AND(
+    [Comptage spé par partie]=2;
+    [IDParametresMailingRef] = [IDParametresMailing])
+  )
+)&gt;&gt;</th>
+  </tr>
+
+  <tr>
+    <!-- Colonne gauche -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Problématiques les plus courantes rencontrées :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=2,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (2)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (2)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+
+    <!-- Colonne centrale -->
+    <td style="vertical-align: middle; width: 10%; text-align: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24">
+        <path fill="#377587" d="M12.089 3.634A2 2 0 0 0 11 5.414l-.001 2.585L9 8a1 1 0 0 0-1 1v6l.007.117A1 1 0 0 0 9 16l1.999-.001l.001 2.587A2 2 0 0 0 14.414 20L21 13.414a2 2 0 0 0 0-2.828L14.414 4a2 2 0 0 0-2.18-.434zM3 8a1 1 0 0 1 .993.883L4 9v6a1 1 0 0 1-1.993.117L2 15V9a1 1 0 0 1 1-1m3 0a1 1 0 0 1 .993.883L7 9v6a1 1 0 0 1-1.993.117L5 15V9a1 1 0 0 1 1-1"/>
+      </svg>
+    </td>
+
+    <!-- Colonne droite -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Ce que nous pourrions proposer pour parer à ces problématiques :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=2,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (3)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (3)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<!-- Thème 3 -->
+<table style="border-collapse: collapse; table-layout: fixed; page-break-inside: avoid;">
+  <tr>
+    <th colspan="3" style="font-weight: bold;">&lt;&lt;ANY(
+  SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (1)];
+    AND(
+    [Comptage spé par partie]=3;
+    [IDParametresMailingRef] = [IDParametresMailing])
+  )
+)&gt;&gt;</th>
+  </tr>
+
+  <tr>
+    <!-- Colonne gauche -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Problématiques les plus courantes rencontrées :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=3,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (2)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (2)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+
+    <!-- Colonne centrale -->
+    <td style="vertical-align: middle; width: 10%; text-align: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24">
+        <path fill="#377587" d="M12.089 3.634A2 2 0 0 0 11 5.414l-.001 2.585L9 8a1 1 0 0 0-1 1v6l.007.117A1 1 0 0 0 9 16l1.999-.001l.001 2.587A2 2 0 0 0 14.414 20L21 13.414a2 2 0 0 0 0-2.828L14.414 4a2 2 0 0 0-2.18-.434zM3 8a1 1 0 0 1 .993.883L4 9v6a1 1 0 0 1-1.993.117L2 15V9a1 1 0 0 1 1-1m3 0a1 1 0 0 1 .993.883L7 9v6a1 1 0 0 1-1.993.117L5 15V9a1 1 0 0 1 1-1"/>
+      </svg>
+    </td>
+
+    <!-- Colonne droite -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Ce que nous pourrions proposer pour parer à ces problématiques :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=3,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (3)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (3)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<!-- Thème 4 -->
+<table style="border-collapse: collapse; table-layout: fixed; page-break-inside: avoid;">
+  <tr>
+    <th colspan="3" style="font-weight: bold;">&lt;&lt;ANY(
+  SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (1)];
+    AND(
+    [Comptage spé par partie]=4;
+    [IDParametresMailingRef] = [IDParametresMailing])
+  )
+)&gt;&gt;</th>
+  </tr>
+
+  <tr>
+    <!-- Colonne gauche -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Problématiques les plus courantes rencontrées :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=4,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (2)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (2)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+
+    <!-- Colonne centrale -->
+    <td style="vertical-align: middle; width: 10%; text-align: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24">
+        <path fill="#377587" d="M12.089 3.634A2 2 0 0 0 11 5.414l-.001 2.585L9 8a1 1 0 0 0-1 1v6l.007.117A1 1 0 0 0 9 16l1.999-.001l.001 2.587A2 2 0 0 0 14.414 20L21 13.414a2 2 0 0 0 0-2.828L14.414 4a2 2 0 0 0-2.18-.434zM3 8a1 1 0 0 1 .993.883L4 9v6a1 1 0 0 1-1.993.117L2 15V9a1 1 0 0 1 1-1m3 0a1 1 0 0 1 .993.883L7 9v6a1 1 0 0 1-1.993.117L5 15V9a1 1 0 0 1 1-1"/>
+      </svg>
+    </td>
+
+    <!-- Colonne droite -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Ce que nous pourrions proposer pour parer à ces problématiques :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=4,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (3)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (3)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<!-- Thème 5 -->
+<table style="border-collapse: collapse; table-layout: fixed; page-break-inside: avoid;">
+  <tr>
+    <th colspan="3" style="font-weight: bold;">&lt;&lt;ANY(
+  SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (1)];
+    AND(
+    [Comptage spé par partie]=5;
+    [IDParametresMailingRef] = [IDParametresMailing])
+  )
+)&gt;&gt;</th>
+  </tr>
+
+  <tr>
+    <!-- Colonne gauche -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Problématiques les plus courantes rencontrées :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=5,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (2)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (2)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+
+    <!-- Colonne centrale -->
+    <td style="vertical-align: middle; width: 10%; text-align: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24">
+        <path fill="#377587" d="M12.089 3.634A2 2 0 0 0 11 5.414l-.001 2.585L9 8a1 1 0 0 0-1 1v6l.007.117A1 1 0 0 0 9 16l1.999-.001l.001 2.587A2 2 0 0 0 14.414 20L21 13.414a2 2 0 0 0 0-2.828L14.414 4a2 2 0 0 0-2.18-.434zM3 8a1 1 0 0 1 .993.883L4 9v6a1 1 0 0 1-1.993.117L2 15V9a1 1 0 0 1 1-1m3 0a1 1 0 0 1 .993.883L7 9v6a1 1 0 0 1-1.993.117L5 15V9a1 1 0 0 1 1-1"/>
+      </svg>
+    </td>
+
+    <!-- Colonne droite -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Ce que nous pourrions proposer pour parer à ces problématiques :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=5,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (3)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (3)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<!-- Thème 6 -->
+<table style="border-collapse: collapse; table-layout: fixed; page-break-inside: avoid;">
+  <tr>
+    <th colspan="3" style="font-weight: bold;">&lt;&lt;ANY(
+  SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (1)];
+    AND(
+    [Comptage spé par partie]=6;
+    [IDParametresMailingRef] = [IDParametresMailing])
+  )
+)&gt;&gt;</th>
+  </tr>
+
+  <tr>
+    <!-- Colonne gauche -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Problématiques les plus courantes rencontrées :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=6,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (2)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (2)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+
+    <!-- Colonne centrale -->
+    <td style="vertical-align: middle; width: 10%; text-align: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24">
+        <path fill="#377587" d="M12.089 3.634A2 2 0 0 0 11 5.414l-.001 2.585L9 8a1 1 0 0 0-1 1v6l.007.117A1 1 0 0 0 9 16l1.999-.001l.001 2.587A2 2 0 0 0 14.414 20L21 13.414a2 2 0 0 0 0-2.828L14.414 4a2 2 0 0 0-2.18-.434zM3 8a1 1 0 0 1 .993.883L4 9v6a1 1 0 0 1-1.993.117L2 15V9a1 1 0 0 1 1-1m3 0a1 1 0 0 1 .993.883L7 9v6a1 1 0 0 1-1.993.117L5 15V9a1 1 0 0 1 1-1"/>
+      </svg>
+    </td>
+
+    <!-- Colonne droite -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Ce que nous pourrions proposer pour parer à ces problématiques :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=6,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (3)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (3)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<!-- Thème 7 -->
+<table style="border-collapse: collapse; table-layout: fixed; page-break-inside: avoid;">
+  <tr>
+    <th colspan="3" style="font-weight: bold;">&lt;&lt;ANY(
+  SELECT(
+    Slide DetailsParametresMailing[Détails de cette partie (1)];
+    AND(
+    [Comptage spé par partie]=7;
+    [IDParametresMailingRef] = [IDParametresMailing])
+  )
+)&gt;&gt;</th>
+  </tr>
+
+  <tr>
+    <!-- Colonne gauche -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Problématiques les plus courantes rencontrées :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=7,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (2)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (2)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+
+    <!-- Colonne centrale -->
+    <td style="vertical-align: middle; width: 10%; text-align: center;">
+      <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24">
+        <path fill="#377587" d="M12.089 3.634A2 2 0 0 0 11 5.414l-.001 2.585L9 8a1 1 0 0 0-1 1v6l.007.117A1 1 0 0 0 9 16l1.999-.001l.001 2.587A2 2 0 0 0 14.414 20L21 13.414a2 2 0 0 0 0-2.828L14.414 4a2 2 0 0 0-2.18-.434zM3 8a1 1 0 0 1 .993.883L4 9v6a1 1 0 0 1-1.993.117L2 15V9a1 1 0 0 1 1-1m3 0a1 1 0 0 1 .993.883L7 9v6a1 1 0 0 1-1.993.117L5 15V9a1 1 0 0 1 1-1"/>
+      </svg>
+    </td>
+
+    <!-- Colonne droite -->
+    <td style="vertical-align: middle; width: 45%; padding: 10px;">
+      <table class="tableproblematiquessolutions" style="width:100%; border-collapse: collapse;">
+        <tr>
+          <th style="text-align: center; padding-bottom: 6px;">
+            Ce que nous pourrions proposer pour parer à ces problématiques :
+          </th>
+        </tr>
+        <tr>
+          <td style="border: none; padding: 5px; font-size: 12px;">
+            <p>&lt;&lt;Start:
+              SELECT(
+                Slide DetailsParametresMailing[IDDetailsParametresMailing],
+                AND(
+                  [Comptage spé par partie]=7,
+                  [IDParametresMailingRef] = [IDParametresMailing],
+                  [Brochure ou mail]="Brochure",
+                  [Afficher ou Masquer]="Afficher",
+                  ISNOTBLANK([Détails de cette partie (3)])
+                )
+              )
+            &gt;&gt;</p>
+            <div class="ligne-ech">&lt;&lt;[Détails de cette partie (3)]&gt;&gt;</div>
+            <p>&lt;&lt;End&gt;&gt;</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<br><br>
+
+<table class="tableresume">
+	<th colspan= "3" style="background-color: #377587; color: white;">
+    En Résumé
+    </th>
+    <tr>
+    </tr>
+	<th>
+    Objectif
+    </th>
+    <th>
+    Problème actuel
+    </th>
+    <th>
+    Solution apporté
+    </th>
+    <tr>
+    </tr>
+<table class="detailresume">
+<tbody>
+    <p>&lt;&lt;Start:
+  SELECT(
+    Slide DetailsBrochureParametresMailing[IDDetailsBrochuresParametresMailing];
+      AND(
+      [IDParametresMailingRef]=[IDParametresMailing];
+      [Pour quoi ?]="Résumé")
+)&gt;&gt;</p>
+
+ <tr>
+	<td>&lt;&lt;[Détails colonne 1]&gt;&gt;</td>
+	<td>&lt;&lt;[Détails colonne 2]&gt;&gt;</td>
+	<td>&lt;&lt;[Détails colonne 3]&gt;&gt;</td>
+ </tr>
+<p>&lt;&lt;End&gt;&gt;</p>
+</tbody>
+</table>
+</table>
+
+<br><br>
+<div class="infosbrochure"><label>A savoir que mon objectif sur l'aspect financier est de proposer des tarifs qui défient toute concurrence sur le marché des outils informatiques sur mesure ! Les tarifs sont très attractifs ce qui permet à quiconque de s'offrir un outil personnel optimal. Bien entendu, la tarification dépend de nombreux aspects et dépend notamment des fonctionnalités présentes dans l'outil final. Vous retrouverez ci-dessous mes coordonnées si vous souhaitez de plus amples informations.</label></div>
+
+
+
+
+<br>  
+  <div class="section" style="text-align: center;">
+    <table class="tablecontact">
+    <th>
+    <p style="text-decoration-line: underline;">Contact :</p>
+    <p>Mail de contact : <a href="mailto:solutionsandconnect@gmail.com" style="text-decoration: none; color: #000001;">solutionsandconnect@gmail.com</a></p>
+    <p>Téléphone : <a href="tel:+33679408254" style="text-decoration: none; color: #000001;">+336 79 40 82 54</a></p>
+    </th>
+    </table>
+  </div>
+<br>
+
+<div style="text-align: center;">
+    <a href="https://www.facebook.com/share/14SVaPgDpL/?mibextid=wwXIfr" style="display: inline-block; margin-right: 5px;"><img src="https://drive.google.com/thumbnail?id=1keeN2l14ufTvY5hHUQOGJwSADT-9KWhg" width="24" style="border-radius: 50%;"></a>
+    <a href="https://www.instagram.com/solutionsandconnect/" style="display: inline-block; margin-right: 5px;"><img src="https://drive.google.com/thumbnail?id=14oeulhQPW-JDld8qJSorg5m6IcM7EX5z" width="24" style="border-radius: 50%;"></a>
+    <a href="https://wa.me/33679408254" style="display: inline-block;"><img src="https://drive.google.com/thumbnail?id=1yJQUZRvuNFRBZhvTlo341nF5R6SmSpLy" width="24" style="border-radius: 50%;"></a>
+</div>
+  
+  
+<div style="text-align: center; font-size: 12px; max-width: 300px; margin: auto; padding-top: 1rem;">
+        <p style="margin: 0;">&copy; 2025 Solutions &amp; Connect</p>
+      </div>
+
+  
+</body>
+</html>

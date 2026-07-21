@@ -400,6 +400,40 @@ service cloud.firestore {
       allow read, create, update, delete: if isAdmin();
     }
 
+    // ── Mailing (prospection Enezo) ──
+    // Ces collections contiennent des données personnelles de TIERS qui n'ont
+    // pas de compte : elles sont strictement réservées à l'admin. La
+    // désinscription publique passe par l'Admin SDK côté serveur et n'est donc
+    // pas concernée par ces règles.
+    match /prospects/{document} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /mailing_metiers/{document} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    // Archive des envois : jamais modifiée ni supprimée depuis le client, c'est
+    // ce qui garantit qu'un message archivé reste le message réellement envoyé.
+    match /mailing_envois/{document} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // Registre d'opposition : jamais supprimable. Une opposition doit survivre
+    // à la suppression du prospect comme au ré-import d'une liste.
+    match /mailing_optout/{document} {
+      allow read, create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Journal du parcours des prospects (changements de statut, envois, notes).
+    // Écrit une fois puis figé : un journal réinscriptible ne prouve rien.
+    match /mailing_evenements/{document} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if request.auth.token.email.matches("firebase@flutterflow.io");
     }

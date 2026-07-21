@@ -16,7 +16,7 @@ import {
   BuildingOfficeIcon, UserGroupIcon, DocumentDuplicateIcon,
   ShieldCheckIcon, ChatBubbleLeftRightIcon, FolderOpenIcon,
   ShoppingBagIcon, FireIcon, PresentationChartLineIcon, FolderIcon,
-  RectangleStackIcon,
+  RectangleStackIcon, MegaphoneIcon,
 } from '@heroicons/react/24/outline'
 import {
   HomeIcon as HomeSolid, CalendarIcon as CalendarSolid,
@@ -35,6 +35,7 @@ import {
   FireIcon as FireSolid,
   PresentationChartLineIcon as PresentationChartLineSolid,
   RectangleStackIcon as RectangleStackSolid,
+  MegaphoneIcon as MegaphoneSolid,
 } from '@heroicons/react/24/solid'
 
 // Structure organisée par sections
@@ -59,6 +60,7 @@ export const navSections = [
       { label: 'Clients',       href: '/clients',       icon: UsersIcon,                 iconActive: UsersSolid,        adminOnly: true,  droit: null },
       { label: 'Facturation',   href: '/facturation',   icon: DocumentTextIcon,          iconActive: DocumentTextSolid, adminOnly: true,  droit: null },
       { label: 'Sociétés',      href: '/companies',     icon: BuildingOfficeIcon,        iconActive: BuildingSolid,     adminOnly: true,  droit: null },
+      { label: 'Mailing',       href: '/mailing',       icon: MegaphoneIcon,             iconActive: MegaphoneSolid,    adminOnly: true,  droit: null, marques: ['enezo'] as Brand[] },
     ],
   },
   {

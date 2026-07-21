@@ -1,0 +1,200 @@
+// Mailing — règles métier pures (aucune dépendance Firestore/React).
+// Partagé entre le client (import, composeur) et le serveur (désinscription).
+
+import type { MailingMetier, MailingSection, Prospect, ProspectStatut } from '@/types'
+
+/* ------------------------------------------------------------------ */
+/* Libellés partagés                                                   */
+/* ------------------------------------------------------------------ */
+
+export const STATUT_LABEL: Record<ProspectStatut, string> = {
+  a_contacter: 'À contacter',
+  envoye: 'Envoyé',
+  relance: 'Relancé',
+  repondu: 'A répondu',
+  pas_interesse: 'Pas intéressé',
+  oppose: 'Opposition',
+  bounce: 'Bounce',
+}
+
+export const STATUT_STYLE: Record<ProspectStatut, string> = {
+  a_contacter: 'bg-gray-100 text-gray-700',
+  envoye: 'bg-blue-100 text-blue-700',
+  relance: 'bg-indigo-100 text-indigo-700',
+  repondu: 'bg-green-100 text-green-700',
+  pas_interesse: 'bg-amber-100 text-amber-700',
+  oppose: 'bg-red-100 text-red-700',
+  bounce: 'bg-red-50 text-red-600',
+}
+
+/* ------------------------------------------------------------------ */
+/* Garde-fous anti-spam                                                */
+/* ------------------------------------------------------------------ */
+
+/** Plafond d'envois par jour. Le volume est la première cause de dérive en spam. */
+export const QUOTA_JOUR = 25
+
+/** Délai minimum avant de relancer un prospect resté silencieux. */
+export const DELAI_RELANCE_JOURS = 8
+
+/** Nombre de relances autorisées. Au-delà, le prospect est laissé tranquille. */
+export const MAX_RELANCES = 2
+
+/** Longueur minimale de la ligne de personnalisation exigée avant envoi. */
+export const MIN_PERSONNALISATION = 30
+
+/** Nombre de thèmes retenus dans le mail par défaut (la brochure porte le détail). */
+export const NB_THEMES_MAIL_DEFAUT = 3
+
+/** Préfixes d'adresses génériques : joignables, mais moins bien ciblés. */
+const PREFIXES_GENERIQUES = [
+  'contact', 'info', 'infos', 'accueil', 'secretariat', 'secretariat',
+  'admin', 'administration', 'commercial', 'devis', 'bonjour', 'hello',
+  'direction', 'compta', 'comptabilite', 'service', 'sav', 'no-reply', 'noreply',
+]
+
+/* ------------------------------------------------------------------ */
+/* Normalisation                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Forme canonique d'un email : sert de clé de dédup ET de contrôle d'opposition. */
+export function normalizeEmail(raw: string): string {
+  return (raw ?? '').trim().toLowerCase()
+}
+
+/**
+ * Identifiant de document Firestore dérivé d'un email.
+ * On garde l'email lisible (registre d'opposition consultable à l'œil) en
+ * neutralisant les caractères interdits dans un doc id.
+ */
+export function safeId(email: string): string {
+  const norm = normalizeEmail(email)
+  return norm.replace(/[^a-z0-9@._+-]/g, '_').slice(0, 400)
+}
+
+export function emailDomain(email: string): string {
+  const norm = normalizeEmail(email)
+  const at = norm.lastIndexOf('@')
+  return at === -1 ? '' : norm.slice(at + 1)
+}
+
+/** Validation de forme, volontairement stricte : une liste importée est sale. */
+export function isEmailValide(email: string): boolean {
+  const norm = normalizeEmail(email)
+  if (!norm || /\s/.test(norm)) return false
+  return /^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$/.test(norm)
+}
+
+/** Adresse de type contact@ / info@ : pas disqualifiante, mais à signaler. */
+export function isEmailGenerique(email: string): boolean {
+  const norm = normalizeEmail(email)
+  const local = norm.split('@')[0] ?? ''
+  return PREFIXES_GENERIQUES.includes(local)
+}
+
+/** Jeton de désinscription. */
+export function makeToken(): string {
+  const uuid =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+  return uuid.replace(/-/g, '')
+}
+
+/* ------------------------------------------------------------------ */
+/* Sélection des thèmes                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Thèmes retenus pour le MAIL.
+ * Le système AppSheet piochait via `ANY(...)`, qui renvoie un élément arbitraire
+ * de la liste — et son champ « Important ou non » n'était jamais utilisé dans le
+ * filtre. Ici l'ordre est déterministe : les sections importantes d'abord, puis
+ * `ordre` croissant.
+ */
+export function sectionsPourMail(metier: MailingMetier): MailingSection[] {
+  const n = metier.nbThemesMail ?? NB_THEMES_MAIL_DEFAUT
+  return [...(metier.sections ?? [])]
+    .filter((s) => s.afficher && s.problemeMail?.trim() && s.solutionMail?.trim())
+    .sort((a, b) => Number(b.important) - Number(a.important) || a.ordre - b.ordre)
+    .slice(0, Math.max(1, n))
+}
+
+/** Thèmes retenus pour la BROCHURE : tout ce qui est affiché, dans l'ordre. */
+export function sectionsPourBrochure(metier: MailingMetier): MailingSection[] {
+  return [...(metier.sections ?? [])]
+    .filter((s) => s.afficher && (s.problemesBrochure?.length || s.solutionsBrochure?.length))
+    .sort((a, b) => a.ordre - b.ordre)
+}
+
+/* ------------------------------------------------------------------ */
+/* Éligibilité d'un prospect                                           */
+/* ------------------------------------------------------------------ */
+
+export type Blocage =
+  | { ok: true }
+  | { ok: false; raison: string }
+
+/**
+ * Peut-on écrire à ce prospect maintenant ?
+ * `optouts` est l'ensemble des emails normalisés en opposition.
+ */
+export function peutContacter(
+  p: Prospect,
+  optouts: Set<string>,
+  maintenant: Date = new Date(),
+): Blocage {
+  if (optouts.has(p.emailNormalise)) {
+    return { ok: false, raison: "Ce contact s'est opposé à toute sollicitation." }
+  }
+  if (p.statut === 'oppose') {
+    return { ok: false, raison: "Ce contact s'est opposé à toute sollicitation." }
+  }
+  if (p.statut === 'bounce') {
+    return { ok: false, raison: 'Adresse en erreur permanente (bounce).' }
+  }
+  if (p.statut === 'pas_interesse') {
+    return { ok: false, raison: 'Ce contact a répondu ne pas être intéressé.' }
+  }
+  if (p.statut === 'repondu') {
+    return { ok: false, raison: 'Ce contact a déjà répondu — passe par le CRM.' }
+  }
+  // Donnée officielle INSEE : écrire à une société radiée est une perte sèche.
+  if (p.etatEntreprise === 'C') {
+    return { ok: false, raison: 'Société cessée selon les données INSEE.' }
+  }
+  if (!isEmailValide(p.email)) {
+    return { ok: false, raison: 'Adresse email invalide.' }
+  }
+  const relances = Math.max(0, (p.nbEnvois ?? 0) - 1)
+  if (relances >= MAX_RELANCES) {
+    return { ok: false, raison: `Déjà relancé ${MAX_RELANCES} fois sans réponse — on s'arrête là.` }
+  }
+  if (p.dernierEnvoiAt) {
+    const dernier = p.dernierEnvoiAt.toDate()
+    const jours = (maintenant.getTime() - dernier.getTime()) / 86_400_000
+    if (jours < DELAI_RELANCE_JOURS) {
+      const reste = Math.ceil(DELAI_RELANCE_JOURS - jours)
+      return { ok: false, raison: `Dernier envoi il y a moins de ${DELAI_RELANCE_JOURS} jours (encore ${reste} j).` }
+    }
+  }
+  return { ok: true }
+}
+
+/**
+ * Une seule sollicitation par société : écrire à trois personnes de la même
+ * boîte est le réflexe qui fait basculer une prospection en spam perçu.
+ */
+export function doublonSociete(p: Prospect, tous: Prospect[]): Prospect | null {
+  const dom = p.domaine || emailDomain(p.email)
+  const soc = (p.societe ?? '').trim().toLowerCase()
+  return (
+    tous.find(
+      (autre) =>
+        autre.id !== p.id &&
+        (autre.nbEnvois ?? 0) > 0 &&
+        ((dom && (autre.domaine || emailDomain(autre.email)) === dom) ||
+          (soc && (autre.societe ?? '').trim().toLowerCase() === soc)),
+    ) ?? null
+  )
+}

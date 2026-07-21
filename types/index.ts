@@ -410,6 +410,7 @@ export interface PilotageContrat {
   maquetteValideeLe?: string    // jalon « maquette validée » (AAAA-MM-JJ) → gèle le périmètre + rappel transitoire « À suivre »
   suivisPeriodiques?: SuiviPeriodique[]  // suivis récurrents (relevé quota, révision tarifaire…) → échéances « À suivre » (Phase 2)
   portalToken?: string | null   // jeton d'accès à l'espace client public (/espace/[token]) — généré à la demande, régénérable = révocation
+  /** (legacy) Note de fiche — les notes passent désormais par le journal. */
   notes?: string
   projet?: ProjetContent       // contenu projet partagé (rempli une fois, réutilisé par les documents)
   legal?: LegalFields          // infos des documents officiels (prestataire, client, RGPD, licence…)
@@ -1232,4 +1233,147 @@ export interface Trip {
   sections: TripSection[]
   createdAt: Timestamp
   updatedAt?: Timestamp
+}
+
+/* ------------------------------------------------------------------ */
+/* Mailing — prospection par corps de métier (Enezo)                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Une section (thème) d'un kit métier.
+ * Remplace les colonnes AppSheet « Détails de cette partie (1..6) » : ici une
+ * ligne ordonnée par `ordre`, sans plafond au nombre de thèmes.
+ */
+export interface MailingSection {
+  id: string
+  ordre: number
+  theme: string                  // titre du thème (mail + brochure)
+  problemeMail: string           // 💢 accroche mail
+  solutionMail: string           // 👉 accroche mail
+  problemesBrochure: string[]    // colonne gauche de la brochure
+  solutionsBrochure: string[]    // colonne droite de la brochure
+  afficher: boolean
+  important: boolean             // priorise la section dans la sélection du mail
+}
+
+/** Document Firestore : mailing_metiers/{id} — le « kit de campagne » d'un métier */
+export interface MailingMetier {
+  id: string
+  userId: string
+  metier: string                 // « Menuiserie », « Plomberie », …
+  problematiques: string         // phrase d'accroche insérée dans l'intro du mail
+  objet: string                  // objet du mail
+  sections: MailingSection[]
+  nbThemesMail?: number          // nb de thèmes gardés dans le mail (défaut 3)
+  actif?: boolean
+  createdAt: Timestamp
+  updatedAt?: Timestamp
+}
+
+export type ProspectStatut =
+  | 'a_contacter'
+  | 'envoye'
+  | 'relance'
+  | 'repondu'
+  | 'pas_interesse'
+  | 'oppose'
+  | 'bounce'
+
+/**
+ * Document Firestore : prospects/{id}
+ * Contact FROID, volontairement distinct de `Client` : on ne pollue pas la base
+ * client (linkedUserId, espace client, facturation) avec des listes importées.
+ * Un prospect est promu en `Client` quand il répond positivement.
+ */
+export interface Prospect {
+  id: string
+  userId: string
+  metierId?: string
+  metier?: string
+  societe: string
+  email: string
+  emailNormalise: string         // clé de dédup + de contrôle d'opposition
+  domaine?: string
+  telephone?: string
+  codePostal?: string
+  ville?: string
+  /** (legacy) Provenance de la donnée — champ retiré de la saisie, encore lu pour les prospects antérieurs. */
+  origine?: string
+  // Enrichissement SIRET (API publique « Recherche d'entreprises »)
+  siret?: string
+  siren?: string
+  /** Code INSEE de tranche d'effectif — jamais un nombre exact (cf. lib/sirene.ts). */
+  effectifCode?: string
+  effectifAnnee?: number
+  /** true si l'effectif provient de l'entreprise faute de donnée d'établissement. */
+  effectifDeLEntreprise?: boolean
+  activiteNaf?: string
+  /** 'A' = active, 'C' = cessée : une société cessée ne doit plus être contactée. */
+  etatEntreprise?: string
+  enrichiAt?: Timestamp
+  statut: ProspectStatut
+  optoutToken: string            // jeton du lien de désinscription
+  nbEnvois?: number
+  dernierEnvoiAt?: Timestamp | null
+  prochaineRelanceAt?: Timestamp | null
+  clientId?: string              // rempli à la promotion vers le CRM
+  notes?: string
+  createdAt: Timestamp
+  updatedAt?: Timestamp
+}
+
+/**
+ * Document Firestore : mailing_envois/{id}
+ * Snapshot FIGÉ du message réellement envoyé. Corrige le défaut du système
+ * AppSheet, où le corps était recalculé à la volée depuis le kit courant : les
+ * envois passés étaient donc réécrits à chaque modification du template.
+ */
+export interface MailingEnvoi {
+  id: string
+  userId: string
+  prospectId: string
+  societe: string
+  metier?: string
+  type: 'initial' | 'relance'
+  objet: string
+  corpsHtml: string              // figé, jamais recalculé
+  personnalisation: string
+  canal: 'brouillon' | 'auto'
+  envoyeAt: Timestamp
+}
+
+/**
+ * Document Firestore : mailing_optout/{safeId(email)}
+ * Registre d'opposition GLOBAL, hors de `prospects` : il survit à la suppression
+ * d'un prospect comme au ré-import d'une liste. Une opposition ne peut pas être
+ * annulée par un import.
+ */
+export interface MailingOptout {
+  id: string
+  email: string
+  origine: 'lien' | 'manuel' | 'bounce'
+  prospectId?: string
+  createdAt: Timestamp
+}
+
+/**
+ * Document Firestore : mailing_evenements/{id}
+ * Journal du parcours d'un prospect — ce que faisait `DetailsMailing` sur
+ * AppSheet. Sans lui, `Prospect.statut` est écrasé à chaque changement : on perd
+ * la date de la réponse, le délai depuis l'envoi et ce que le contact a dit.
+ * Écrit une fois, jamais modifié (un journal réinscriptible ne vaut rien).
+ */
+export interface MailingEvenement {
+  id: string
+  userId: string
+  prospectId: string
+  societe: string
+  metier?: string
+  type: 'statut' | 'envoi' | 'note' | 'promotion'
+  statutAvant?: ProspectStatut
+  statutApres?: ProspectStatut
+  observations?: string
+  /** Jours écoulés depuis le dernier envoi — donne le délai de réponse. */
+  delaiDepuisEnvoi?: number
+  createdAt: Timestamp
 }
