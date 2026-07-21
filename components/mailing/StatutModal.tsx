@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Modal from "@/components/ui/Modal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
+import { STATUT_AIDE } from "@/lib/mailingModel";
 import type { Prospect, ProspectStatut } from "@/types";
 
 const inputCls = "w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition";
@@ -19,16 +20,17 @@ export default function StatutModal({
   /** Absent = note libre sans changement de statut. */
   statutCible?: ProspectStatut;
   labels: Record<ProspectStatut, string>;
-  onValider: (observations: string) => Promise<void>;
+  onValider: (observations: string, logiciel: string) => Promise<void>;
   onClose: () => void;
 }) {
   const [observations, setObservations] = useState("");
+  const [logiciel, setLogiciel] = useState(prospect.logicielActuel ?? "");
   const [enCours, setEnCours] = useState(false);
 
   const valider = async () => {
     setEnCours(true);
     try {
-      await onValider(observations.trim());
+      await onValider(observations.trim(), logiciel.trim());
       onClose();
     } finally {
       setEnCours(false);
@@ -58,6 +60,28 @@ export default function StatutModal({
           </div>
         )}
       </div>
+
+      {statutCible && (
+        <p className="text-[11px] text-gray-500 mb-3 -mt-1">{STATUT_AIDE[statutCible]}</p>
+      )}
+
+      {statutCible === "a_un_logiciel" && (
+        <div className="mb-3">
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Quel logiciel ? <span className="text-gray-400">(très utile)</span>
+          </label>
+          <input
+            value={logiciel}
+            onChange={(e) => setLogiciel(e.target.value)}
+            placeholder="ex. Batappli, EBP, Excel partagé, un AppSheet maison…"
+            className={inputCls}
+          />
+          <p className="text-[11px] text-gray-500 mt-1">
+            Savoir ce qu&apos;ils utilisent te dit contre quoi tu te positionnes — et lesquels
+            valent la peine d&apos;être revus.
+          </p>
+        </div>
+      )}
 
       <label className="block text-xs font-medium text-gray-600 mb-1">
         Observations {statutCible && <span className="text-gray-400">(facultatif)</span>}

@@ -1265,6 +1265,11 @@ export interface MailingMetier {
   objet: string                  // objet du mail
   sections: MailingSection[]
   nbThemesMail?: number          // nb de thèmes gardés dans le mail (défaut 3)
+  /** Codes NAF du métier (ex. « 43.22A,43.22B ») — désambiguïsent la recherche SIRET. */
+  codesNaf?: string
+  /** Brochure PDF stockée (Storage) — évite de la régénérer à chaque consultation. */
+  brochureUrl?: string
+  brochureGenereeAt?: Timestamp
   actif?: boolean
   createdAt: Timestamp
   updatedAt?: Timestamp
@@ -1276,6 +1281,8 @@ export type ProspectStatut =
   | 'relance'
   | 'repondu'
   | 'pas_interesse'
+  | 'a_un_logiciel'
+  | 'email_manquant'
   | 'oppose'
   | 'bounce'
 
@@ -1300,6 +1307,8 @@ export interface Prospect {
   /** (legacy) Provenance de la donnée — champ retiré de la saisie, encore lu pour les prospects antérieurs. */
   origine?: string
   // Enrichissement SIRET (API publique « Recherche d'entreprises »)
+  /** Nom du logiciel déjà en place — renseigné avec le statut 'a_un_logiciel'. */
+  logicielActuel?: string
   siret?: string
   siren?: string
   /** Code INSEE de tranche d'effectif — jamais un nombre exact (cf. lib/sirene.ts). */

@@ -3,8 +3,12 @@
 import { useState } from "react";
 import { createMetier, deleteMetier, updateMetier } from "@/lib/mailingService";
 import { NB_THEMES_MAIL_DEFAUT, makeToken } from "@/lib/mailingModel";
+import { Timestamp } from "firebase/firestore";
 import Modal from "@/components/ui/Modal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
+import ListeCodesNaf from "@/components/mailing/ListeCodesNaf";
+import { uploadBlob } from "@/lib/uploadImage";
+import { generateBrochurePDFBlob } from "@/lib/brochurePdf";
 import type { MailingMetier, MailingSection } from "@/types";
 import {
   ChevronDownIcon, ChevronUpIcon, PlusIcon, TrashIcon,
@@ -271,12 +275,48 @@ function KitForm({
   }));
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
   const [enregistre, setEnregistre] = useState(false);
+  const [brochureEnCours, setBrochureEnCours] = useState(false);
+  const [apercu, setApercu] = useState(false);
+
+  /** Le brouillon diffère-t-il de ce qui est en base ? */
+  const modifie =
+    (brouillon.codesNaf ?? "") !== (metier.codesNaf ?? "") ||
+    (brouillon.objet ?? "") !== (metier.objet ?? "") ||
+    (brouillon.problematiques ?? "") !== (metier.problematiques ?? "") ||
+    (brouillon.nbThemesMail ?? NB_THEMES_MAIL_DEFAUT) !== (metier.nbThemesMail ?? NB_THEMES_MAIL_DEFAUT) ||
+    (brouillon.metier ?? "") !== (metier.metier ?? "") ||
+    JSON.stringify(brouillon.sections) !== JSON.stringify(metier.sections ?? []);
+
+  // Le kit a-t-il changé depuis la dernière génération ? Même logique que le PDF
+  // de devis, qui se marque périmé quand la signature arrive après coup.
+  const obsolete =
+    !!metier.brochureUrl &&
+    (metier.updatedAt?.toMillis() ?? 0) > (metier.brochureGenereeAt?.toMillis() ?? 0);
+
+  const genererBrochure = async () => {
+    setBrochureEnCours(true);
+    try {
+      const blob = await generateBrochurePDFBlob(metier, window.location.origin);
+      // Même chemin à chaque fois : Storage écrase, pas d'accumulation de versions.
+      const url = await uploadBlob(blob, `users/${metier.userId}/brochures/${metier.id}.pdf`);
+      await updateMetier(metier.id, {
+        brochureUrl: url,
+        brochureGenereeAt: Timestamp.now(),
+      });
+      onToast("Brochure générée et stockée.");
+    } catch {
+      onToast("La brochure n'a pas pu être générée.");
+    } finally {
+      setBrochureEnCours(false);
+    }
+  };
 
   const enregistrer = async () => {
     await updateMetier(brouillon.id, {
       metier: brouillon.metier,
       problematiques: brouillon.problematiques,
       objet: brouillon.objet,
+      codesNaf: brouillon.codesNaf ?? "",
       nbThemesMail: brouillon.nbThemesMail,
       // Les lignes laissées vides pendant la saisie sont écartées ici plutôt que
       // pendant la frappe, sinon on ne peut pas créer un item avant de l'écrire.
@@ -365,6 +405,22 @@ function KitForm({
           <p className="text-[11px] text-gray-500 mt-1">
             S&apos;insère dans la phrase : « gérer une entreprise de {brouillon.metier || "…"} implique
             de jongler <em>…</em> ».
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Codes NAF du métier
+          </label>
+          <ListeCodesNaf
+            valeur={brouillon.codesNaf ?? ""}
+            onChange={(v) => setBrouillon({ ...brouillon, codesNaf: v })}
+          />
+          <p className="text-[11px] text-gray-500 mt-2">
+            Un métier en couvre souvent plusieurs : la plomberie, par exemple, se répartit entre
+            43.22A (eau et gaz) et 43.22B (chauffage et climatisation). Ces codes servent à deux
+            choses — retrouver le SIRET d&apos;un prospect depuis son nom, et lister les entreprises
+            d&apos;un département dans l&apos;onglet Annuaire.
           </p>
         </div>
 
@@ -537,10 +593,81 @@ function KitForm({
         </div>
       </div>
 
-      <div className="flex justify-end gap-2">
+      <div className="border rounded-xl bg-white p-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-sm font-medium">Brochure PDF</div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              {!metier.brochureUrl
+                ? "Pas encore générée."
+                : obsolete
+                  ? "⚠️ Le kit a été modifié depuis : la brochure stockée est périmée."
+                  : `Générée le ${metier.brochureGenereeAt?.toDate().toLocaleDateString("fr-FR")}.`}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {metier.brochureUrl && (
+              <button
+                onClick={() => setApercu(true)}
+                className="px-3 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
+              >
+                Aperçu
+              </button>
+            )}
+            <button
+              onClick={genererBrochure}
+              disabled={brochureEnCours}
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition disabled:opacity-40 ${
+                obsolete || !metier.brochureUrl
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : "border hover:bg-gray-50"
+              }`}
+            >
+              {brochureEnCours ? "Génération…" : metier.brochureUrl ? "Régénérer" : "Générer"}
+            </button>
+          </div>
+        </div>
+        <p className="text-[11px] text-gray-500 mt-2">
+          Le PDF est stocké une fois : le composeur le réutilise au lieu de le recalculer à
+          chaque prospect. Régénérer écrase la version précédente.
+        </p>
+      </div>
+
+      {apercu && metier.brochureUrl && (
+        <Modal isOpen onClose={() => setApercu(false)} title={`Brochure — ${metier.metier}`} size="lg">
+          <iframe
+            src={metier.brochureUrl}
+            title="Brochure"
+            className="w-full h-[70vh] border rounded-lg bg-gray-50"
+          />
+          <div className="flex justify-end mt-3">
+            <a
+              href={metier.brochureUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
+            >
+              Ouvrir dans un onglet
+            </a>
+          </div>
+        </Modal>
+      )}
+
+      {/* Le brouillon ne part en base qu'à l'enregistrement : sans ce rappel,
+          on peut changer de kit et perdre sa saisie sans s'en apercevoir. */}
+      <div className="flex items-center justify-end gap-3 sticky bottom-0 bg-gradient-to-t from-white via-white py-3">
+        {modifie && (
+          <span className="text-xs text-amber-700 font-medium">
+            Modifications non enregistrées
+          </span>
+        )}
         <button
           onClick={enregistrer}
-          className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+          className={`px-5 py-2.5 rounded-lg text-sm font-medium transition ${
+            modifie
+              ? "bg-blue-600 text-white hover:bg-blue-700"
+              : "border text-gray-500 hover:bg-gray-50"
+          }`}
         >
           {enregistre ? "Enregistré ✓" : "Enregistrer le kit"}
         </button>

@@ -428,10 +428,17 @@ service cloud.firestore {
     }
 
     // Journal du parcours des prospects (changements de statut, envois, notes).
-    // Écrit une fois puis figé : un journal réinscriptible ne prouve rien.
+    // Les NOTES sont des annotations personnelles : modifiables et supprimables.
+    // Les FAITS (envoi, changement de statut, promotion) restent figés — c'est ce
+    // qui donne sa valeur au journal si une opposition est contestée.
+    // `resource.data` = document AVANT écriture, `request.resource.data` = APRÈS :
+    // les deux sont vérifiés pour qu'un fait ne puisse pas être requalifié en note.
     match /mailing_evenements/{document} {
       allow read, create: if isAdmin();
-      allow update, delete: if false;
+      allow update: if isAdmin()
+        && resource.data.type == 'note'
+        && request.resource.data.type == 'note';
+      allow delete: if isAdmin() && resource.data.type == 'note';
     }
 
     match /{document=**} {

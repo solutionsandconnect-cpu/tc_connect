@@ -228,8 +228,11 @@ export function analyserImport(
   colonnes: Record<ChampCible, number>,
   opts: {
     userId: string
+    /** Kit imposé à toutes les lignes (choix de la modale). */
     metierId?: string
     metierParDefaut?: string
+    /** Kits existants : la colonne « corps de métier » est rattachée par son nom. */
+    metiers?: { id: string; metier: string }[]
     existants: Prospect[]
     optouts: Set<string>
   },
@@ -264,6 +267,13 @@ export function analyserImport(
     if (s && (p.statut === 'oppose' || opts.optouts.has(e))) societesOpposees.add(s)
   }
 
+  // Rattachement du libellé métier du fichier au kit portant le même nom :
+  // sans lui, « Plomberie » restait un texte libre et le prospect arrivait sans
+  // kit, donc sans message possible dans le composeur.
+  const kitParNom = new Map(
+    (opts.metiers ?? []).map((m) => [normaliseEntete(m.metier), m.id]),
+  )
+
   const retenues: LigneAnalysee[] = []
   const rejetees: LigneAnalysee[] = []
   const parMotif = {
@@ -277,6 +287,11 @@ export function analyserImport(
     const norm = normalizeEmail(email)
     const soc = societe.trim().toLowerCase()
 
+    const metierTexte = cell(l, colonnes.metier)
+    // Le libellé du fichier prime sur le kit imposé : un fichier multi-métiers
+    // doit rattacher chaque ligne au bon kit.
+    const metierId = kitParNom.get(normaliseEntete(metierTexte)) || opts.metierId || undefined
+
     const brut: NouveauProspect = {
       userId: opts.userId,
       societe,
@@ -284,8 +299,8 @@ export function analyserImport(
       telephone: cell(l, colonnes.telephone) || undefined,
       codePostal: cell(l, colonnes.codePostal) || undefined,
       ville: cell(l, colonnes.ville) || undefined,
-      metier: cell(l, colonnes.metier) || opts.metierParDefaut || undefined,
-      metierId: opts.metierId,
+      metier: metierTexte || opts.metierParDefaut || undefined,
+      metierId,
       siret: normaliserSiret(cell(l, colonnes.siret)) || undefined,
       // Historique repris de l'export : un prospect déjà contacté ne doit pas
       // repartir « à contacter », sinon le composeur le proposerait comme neuf

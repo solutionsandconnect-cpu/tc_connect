@@ -13,8 +13,23 @@ export const STATUT_LABEL: Record<ProspectStatut, string> = {
   relance: 'Relancé',
   repondu: 'A répondu',
   pas_interesse: 'Pas intéressé',
+  a_un_logiciel: 'Déjà équipé',
+  email_manquant: 'Email à trouver',
   oppose: 'Opposition',
-  bounce: 'Bounce',
+  bounce: 'Adresse invalide',
+}
+
+/** Explication affichée en aide : ces états engagent des conséquences durables. */
+export const STATUT_AIDE: Record<ProspectStatut, string> = {
+  a_contacter: "Jamais sollicité.",
+  envoye: "Premier message parti, en attente de réponse.",
+  relance: "Relancé au moins une fois, toujours sans réponse.",
+  repondu: "A répondu — la suite se joue dans le CRM.",
+  pas_interesse: "A répondu non. On ne le recontacte plus.",
+  a_un_logiciel: "Déjà outillé. Pas une perte : c'est le profil qui a la douleur et le budget, à revoir quand son outil le freinera.",
+  email_manquant: "Entreprise identifiée via l'INSEE, sans adresse email. À compléter sur la fiche avant tout envoi.",
+  oppose: "A demandé à ne plus être contacté (droit d'opposition RGPD). Définitif : l'adresse rejoint le registre et ne peut plus jamais être réimportée.",
+  bounce: "Le message est revenu en erreur : adresse inexistante, boîte pleine ou domaine mort. Technique, pas un refus.",
 }
 
 export const STATUT_STYLE: Record<ProspectStatut, string> = {
@@ -23,6 +38,8 @@ export const STATUT_STYLE: Record<ProspectStatut, string> = {
   relance: 'bg-indigo-100 text-indigo-700',
   repondu: 'bg-green-100 text-green-700',
   pas_interesse: 'bg-amber-100 text-amber-700',
+  a_un_logiciel: 'bg-purple-100 text-purple-700',
+  email_manquant: 'bg-orange-100 text-orange-700',
   oppose: 'bg-red-100 text-red-700',
   bounce: 'bg-red-50 text-red-600',
 }
@@ -151,10 +168,20 @@ export function peutContacter(
     return { ok: false, raison: "Ce contact s'est opposé à toute sollicitation." }
   }
   if (p.statut === 'bounce') {
-    return { ok: false, raison: 'Adresse en erreur permanente (bounce).' }
+    return { ok: false, raison: 'Adresse invalide : le message est revenu en erreur.' }
   }
   if (p.statut === 'pas_interesse') {
     return { ok: false, raison: 'Ce contact a répondu ne pas être intéressé.' }
+  }
+  // Sortie du flux courant, mais pas un refus définitif : à revoir le jour où
+  // son outil actuel le freine.
+  if (p.statut === 'a_un_logiciel') {
+    return {
+      ok: false,
+      raison: p.logicielActuel
+        ? `Déjà équipé (${p.logicielActuel}).`
+        : 'Déjà équipé d\'un logiciel.',
+    }
   }
   if (p.statut === 'repondu') {
     return { ok: false, raison: 'Ce contact a déjà répondu — passe par le CRM.' }
@@ -162,6 +189,9 @@ export function peutContacter(
   // Donnée officielle INSEE : écrire à une société radiée est une perte sèche.
   if (p.etatEntreprise === 'C') {
     return { ok: false, raison: 'Société cessée selon les données INSEE.' }
+  }
+  if (!p.email?.trim() || p.statut === 'email_manquant') {
+    return { ok: false, raison: "Pas d'adresse email : complète la fiche avant d'envoyer." }
   }
   if (!isEmailValide(p.email)) {
     return { ok: false, raison: 'Adresse email invalide.' }

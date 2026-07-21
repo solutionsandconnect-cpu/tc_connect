@@ -50,10 +50,11 @@ export default function ImportModal({
       userId,
       metierId: metierId || undefined,
       metierParDefaut: metierChoisi?.metier,
+      metiers,
       existants,
       optouts,
     });
-  }, [lignes, colonnes, userId, metierId, metierChoisi?.metier, existants, optouts]);
+  }, [lignes, colonnes, userId, metierId, metierChoisi?.metier, metiers, existants, optouts]);
 
   const charger = async (file: File) => {
     setErreur(null);
@@ -133,13 +134,19 @@ export default function ImportModal({
           {lignes && colonnes && (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Kit métier appliqué</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Kit métier par défaut
+                </label>
                 <select value={metierId} onChange={(e) => setMetierId(e.target.value)} className={inputCls}>
-                  <option value="">— Aucun (à affecter plus tard) —</option>
+                  <option value="">— Aucun —</option>
                   {metiers.map((m) => (
                     <option key={m.id} value={m.id}>{m.metier}</option>
                   ))}
                 </select>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  La colonne « corps de métier » du fichier est rattachée automatiquement au kit
+                  portant le même nom. Ce choix ne sert qu&apos;aux lignes sans correspondance.
+                </p>
               </div>
 
               <div>

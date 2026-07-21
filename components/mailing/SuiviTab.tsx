@@ -72,6 +72,22 @@ export default function SuiviTab({
     [prospects, optouts],
   );
 
+  /** Regroupement par logiciel déjà en place, insensible à la casse. */
+  const logiciels = useMemo(() => {
+    const par = new Map<string, Prospect[]>();
+    for (const p of prospects) {
+      const nom = p.logicielActuel?.trim();
+      if (!nom) continue;
+      const cle = nom.toLowerCase();
+      const liste = par.get(cle) ?? [];
+      liste.push(p);
+      par.set(cle, liste);
+    }
+    return [...par.entries()]
+      .map(([, liste]) => [liste[0].logicielActuel!.trim(), liste] as [string, Prospect[]])
+      .sort((a, b) => b[1].length - a[1].length);
+  }, [prospects]);
+
   /** En attente : envoyés mais le délai de relance n'est pas encore écoulé. */
   const enAttente = prospects.filter(
     (p) => (p.statut === "envoye" || p.statut === "relance") && !peutContacter(p, optouts).ok,
@@ -171,6 +187,30 @@ export default function SuiviTab({
           </div>
         )}
       </div>
+
+      {logiciels.length > 0 && (
+        <div className="border rounded-xl bg-white overflow-hidden">
+          <div className="px-4 py-3 border-b flex items-baseline justify-between">
+            <span className="text-sm font-medium">Logiciels rencontrés</span>
+            <span className="text-xs text-gray-500">contre quoi tu te positionnes</span>
+          </div>
+          <div className="divide-y">
+            {logiciels.map(([nom, liste]) => (
+              <div key={nom} className="px-4 py-2.5 flex items-baseline gap-3">
+                <span className="text-sm font-medium min-w-[8rem]">{nom}</span>
+                <span className="text-xs text-gray-500 flex-1 truncate">
+                  {liste.map((p) => p.societe).join(" · ")}
+                </span>
+                <span className="text-sm font-semibold">{liste.length}</span>
+              </div>
+            ))}
+          </div>
+          <div className="px-4 py-2.5 border-t text-[11px] text-gray-500">
+            Ces entreprises ont la douleur et le budget : elles ont déjà payé pour un outil.
+            Elles redeviennent intéressantes le jour où le leur les freine.
+          </div>
+        </div>
+      )}
 
       <div className="border rounded-xl bg-white overflow-hidden">
         <div className="px-4 py-3 border-b text-sm font-medium">Journal récent</div>

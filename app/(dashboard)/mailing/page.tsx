@@ -1,19 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
   listenMetiers, listenProspects, listenOptouts, listenEvenements,
   updateProspect, deleteProspect, ajouterOptout, promouvoirEnClient, journaliser,
+  modifierNote, supprimerNote,
 } from "@/lib/mailingService";
+import AutoTextarea from "@/components/ui/AutoTextarea";
 import {
   QUOTA_JOUR, peutContacter, isEmailGenerique, STATUT_LABEL, STATUT_STYLE,
 } from "@/lib/mailingModel";
 import Modal from "@/components/ui/Modal";
+import { libelleEffectif } from "@/lib/sirene";
 import ImportModal from "@/components/mailing/ImportModal";
 import ProspectModal from "@/components/mailing/ProspectModal";
 import StatutModal from "@/components/mailing/StatutModal";
+import EnrichirModal from "@/components/mailing/EnrichirModal";
+import AnnuaireModal from "@/components/mailing/AnnuaireModal";
 import SuiviTab from "@/components/mailing/SuiviTab";
 import KitEditor from "@/components/mailing/KitEditor";
 import Composeur from "@/components/mailing/Composeur";
@@ -22,10 +27,51 @@ import type {
 } from "@/types";
 import {
   ArrowUpTrayIcon, PaperAirplaneIcon, RectangleStackIcon, UsersIcon, TrashIcon, PlusIcon,
-  PencilIcon, ClockIcon, ChartBarIcon, ChatBubbleLeftEllipsisIcon,
+  PencilIcon, ClockIcon, ChartBarIcon, ChatBubbleLeftEllipsisIcon, BuildingOffice2Icon,
+  MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
 
 type Onglet = "prospects" | "kits" | "composer" | "suivi";
+
+/** Repères visuels du journal : quatre natures d'événement, quatre couleurs. */
+const EVT_LABEL: Record<MailingEvenement["type"], string> = {
+  envoi: "ENVOI",
+  statut: "STATUT",
+  note: "NOTE",
+  promotion: "CLIENT",
+};
+
+const EVT_STYLE: Record<MailingEvenement["type"], string> = {
+  envoi: "bg-blue-100 text-blue-700",
+  statut: "bg-indigo-100 text-indigo-700",
+  note: "bg-amber-100 text-amber-800",
+  promotion: "bg-green-100 text-green-700",
+};
+
+/**
+ * Compteurs des onglets, mémorisés d'une visite à l'autre.
+ * Les listeners Firestore mettent un instant à répondre : sans ce cache, les
+ * badges apparaîtraient vides puis sauteraient à leur valeur. On affiche donc
+ * la dernière valeur connue jusqu'à l'arrivée des données réelles.
+ */
+type Compteurs = { prospects: number; kits: number; contactables: number; evenements: number };
+
+const cleCompteurs = (uid: string) => `mailing:compteurs:${uid}`;
+
+/**
+ * Renvoie la chaîne BRUTE du stockage, pas l'objet analysé.
+ * `useSyncExternalStore` compare les instantanés par identité : rendre un objet
+ * fraîchement analysé à chaque appel produit une nouvelle référence à chaque
+ * rendu, donc une boucle infinie. Une chaîne, elle, se compare par valeur.
+ */
+function lireCompteursBrut(uid: string): string | null {
+  if (!uid || typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(cleCompteurs(uid));
+  } catch {
+    return null;
+  }
+}
 
 function fmtDateHeure(ts?: { toDate: () => Date } | null): string {
   if (!ts) return "—";
@@ -46,12 +92,18 @@ export default function MailingPage() {
   const [optoutDocs, setOptoutDocs] = useState<MailingOptout[]>([]);
   const [importOuvert, setImportOuvert] = useState(false);
   const [ajoutOuvert, setAjoutOuvert] = useState(false);
+  const [enrichOuvert, setEnrichOuvert] = useState(false);
+  const [annuaireOuvert, setAnnuaireOuvert] = useState(false);
+  /** Les listeners ont-ils répondu ? Distingue « vide » de « pas encore chargé ». */
+  const [charge, setCharge] = useState(false);
   const [aEditer, setAEditer] = useState<Prospect | null>(null);
   const [evenements, setEvenements] = useState<MailingEvenement[]>([]);
   const [statutEnCours, setStatutEnCours] = useState<
     { prospect: Prospect; cible?: ProspectStatut } | null
   >(null);
   const [historique, setHistorique] = useState<string | null>(null);
+  const [noteEnEdition, setNoteEnEdition] = useState<{ id: string; texte: string } | null>(null);
+  const [noteASupprimer, setNoteASupprimer] = useState<string | null>(null);
   const [filtreStatut, setFiltreStatut] = useState<ProspectStatut | "tous">("tous");
   const [filtreMetier, setFiltreMetier] = useState<string>("tous");
   const [recherche, setRecherche] = useState("");
@@ -64,7 +116,7 @@ export default function MailingPage() {
 
   useEffect(() => {
     if (!currentUser?.uid) return;
-    const u1 = listenProspects(currentUser.uid, setProspects);
+    const u1 = listenProspects(currentUser.uid, (p) => { setProspects(p); setCharge(true); });
     const u2 = listenMetiers(currentUser.uid, setMetiers);
     const u3 = listenOptouts((set, docs) => { setOptouts(set); setOptoutDocs(docs); });
     const u4 = listenEvenements(currentUser.uid, setEvenements);
@@ -97,6 +149,46 @@ export default function MailingPage() {
     };
   }, [prospects]);
 
+  const compteursVifs = useMemo<Compteurs>(
+    () => ({
+      prospects: prospects.length,
+      kits: metiers.length,
+      contactables: prospects.filter((p) => peutContacter(p, optouts).ok).length,
+      evenements: evenements.length,
+    }),
+    [prospects, metiers, optouts, evenements],
+  );
+
+  // Instantané du navigateur : `useSyncExternalStore` fournit un rendu serveur
+  // distinct, ce qui évite l'écart d'hydratation sans setState dans un effet.
+  const cacheBrut = useSyncExternalStore(
+    () => () => {},
+    () => lireCompteursBrut(currentUser?.uid ?? ""),
+    () => null,
+  );
+
+  // L'analyse est faite ici, une seule fois par valeur stockée.
+  const cache = useMemo<Compteurs | null>(() => {
+    if (!cacheBrut) return null;
+    try {
+      return JSON.parse(cacheBrut) as Compteurs;
+    } catch {
+      return null;
+    }
+  }, [cacheBrut]);
+
+  const compteurs = charge ? compteursVifs : cache;
+
+  // Écriture du cache : mise à jour d'un système externe, le rôle même d'un effet.
+  useEffect(() => {
+    if (!charge || !currentUser?.uid) return;
+    try {
+      window.localStorage.setItem(cleCompteurs(currentUser.uid), JSON.stringify(compteursVifs));
+    } catch {
+      /* quota plein ou stockage désactivé : les badges restent simplement vifs */
+    }
+  }, [charge, currentUser?.uid, compteursVifs]);
+
   const listeFiltree = useMemo(() => {
     const q = recherche.trim().toLowerCase();
     return prospects.filter((p) => {
@@ -107,16 +199,26 @@ export default function MailingPage() {
     });
   }, [prospects, filtreStatut, filtreMetier, recherche]);
 
-  const appliquerStatut = async (p: Prospect, statut: ProspectStatut, observations: string) => {
+  const appliquerStatut = async (
+    p: Prospect, statut: ProspectStatut, observations: string, logiciel: string,
+  ) => {
+    // Le nom du logiciel part aussi dans le journal : le champ courant peut
+    // changer plus tard, l'événement garde ce qui était vrai ce jour-là.
+    const noteLogiciel =
+      statut === "a_un_logiciel" && logiciel ? `Logiciel en place : ${logiciel}` : "";
+    const obs = [noteLogiciel, observations].filter(Boolean).join(" — ");
     // Journalisé AVANT la mise à jour : `journaliser` lit `dernierEnvoiAt` sur le
     // prospect pour figer le délai de réponse, et l'ancien statut pour la transition.
     await journaliser(p, {
       type: "statut",
       statutAvant: p.statut,
       statutApres: statut,
-      observations: observations || undefined,
+      observations: obs || undefined,
     });
-    await updateProspect(p.id, { statut });
+    await updateProspect(p.id, {
+      statut,
+      ...(statut === "a_un_logiciel" ? { logicielActuel: logiciel } : {}),
+    });
     // Une opposition doit rejoindre le registre global, sinon elle ne survit pas
     // à la suppression du prospect ni à un ré-import de la liste.
     if (statut === "oppose") {
@@ -178,6 +280,20 @@ export default function MailingPage() {
             {`${envoyesAujourdhui}/${QUOTA_JOUR} aujourd'hui`}
           </div>
           <button
+            onClick={() => setAnnuaireOuvert(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
+            title="Extraire des artisans depuis l'annuaire public"
+          >
+            <MagnifyingGlassIcon className="w-4 h-4" /> Annuaire
+          </button>
+          <button
+            onClick={() => setEnrichOuvert(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
+            title="Compléter effectif, activité et état depuis l'annuaire public des entreprises"
+          >
+            <BuildingOffice2Icon className="w-4 h-4" /> Enrichir
+          </button>
+          <button
             onClick={() => setAjoutOuvert(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
           >
@@ -214,10 +330,11 @@ export default function MailingPage() {
       <div className="border-b mb-4">
         <div className="flex gap-1 overflow-x-auto overflow-y-hidden -mb-px">
         {([
-          { k: "prospects", l: "Prospects", icon: UsersIcon },
-          { k: "kits", l: "Kits métier", icon: RectangleStackIcon },
-          { k: "composer", l: "Composer", icon: PaperAirplaneIcon },
-          { k: "suivi", l: "Suivi", icon: ChartBarIcon },
+          { k: "prospects", l: "Prospects", icon: UsersIcon, n: compteurs?.prospects },
+          { k: "kits", l: "Kits métier", icon: RectangleStackIcon, n: compteurs?.kits },
+          { k: "composer", l: "Composer", icon: PaperAirplaneIcon, n: compteurs?.contactables },
+          // Pas de compteur sur Suivi : un nombre d'événements n'apprend rien.
+          { k: "suivi", l: "Suivi", icon: ChartBarIcon, n: undefined },
         ] as const).map((t) => (
           <button
             key={t.k}
@@ -229,6 +346,15 @@ export default function MailingPage() {
             }`}
           >
             <t.icon className="w-4 h-4" /> {t.l}
+            {typeof t.n === "number" && (
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                  onglet === t.k ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"
+                }`}
+              >
+                {t.n}
+              </span>
+            )}
           </button>
         ))}
         </div>
@@ -241,7 +367,7 @@ export default function MailingPage() {
               value={recherche}
               onChange={(e) => setRecherche(e.target.value)}
               placeholder="Rechercher une société, un email, une ville…"
-              className="flex-1 min-w-[12rem] border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
+              className="flex-1 min-w-48 border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
             />
             <select
               value={filtreStatut}
@@ -281,6 +407,29 @@ export default function MailingPage() {
                         <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUT_STYLE[p.statut]}`}>
                           {STATUT_LABEL[p.statut]}
                         </span>
+                        {p.effectifCode && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-700"
+                            title={`Tranche INSEE${p.effectifAnnee ? ` (${p.effectifAnnee})` : ""}${
+                              p.effectifDeLEntreprise ? " — au niveau de l'entreprise" : ""
+                            }`}
+                          >
+                            {libelleEffectif(p.effectifCode)}
+                          </span>
+                        )}
+                        {p.logicielActuel && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-purple-50 text-purple-700"
+                            title="Logiciel déjà en place"
+                          >
+                            {p.logicielActuel}
+                          </span>
+                        )}
+                        {p.etatEntreprise === "C" && (
+                          <span className="px-2 py-0.5 rounded-full text-[11px] bg-red-100 text-red-700">
+                            société cessée
+                          </span>
+                        )}
                         {isEmailGenerique(p.email) && (
                           <span
                             className="px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-500"
@@ -388,25 +537,60 @@ export default function MailingPage() {
                           evenements
                             .filter((e) => e.prospectId === p.id)
                             .map((e) => (
-                              <div key={e.id} className="text-[11px]">
-                                <span className="text-gray-400">
-                                  {e.createdAt?.toDate().toLocaleDateString("fr-FR", {
-                                    day: "2-digit", month: "2-digit", year: "2-digit",
-                                  })}
-                                </span>{" "}
-                                <span className="text-gray-700">
-                                  {e.type === "envoi" && "Message envoyé"}
-                                  {e.type === "note" && "Note"}
-                                  {e.type === "promotion" && "Promu en client"}
-                                  {e.type === "statut" && e.statutAvant && e.statutApres &&
-                                    `${STATUT_LABEL[e.statutAvant]} → ${STATUT_LABEL[e.statutApres]}`}
+                              <div key={e.id} className="flex items-start gap-2">
+                                <span
+                                  className={`mt-0.5 shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold ${EVT_STYLE[e.type]}`}
+                                >
+                                  {EVT_LABEL[e.type]}
                                 </span>
-                                {typeof e.delaiDepuisEnvoi === "number" && e.type !== "envoi" && (
-                                  <span className="text-gray-400"> · {e.delaiDepuisEnvoi} j après l&apos;envoi</span>
-                                )}
-                                {e.observations && (
-                                  <div className="text-gray-600 whitespace-pre-wrap">{e.observations}</div>
-                                )}
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-baseline gap-1.5 flex-wrap text-[11px]">
+                                    {e.type === "statut" && e.statutAvant && e.statutApres && (
+                                      <span className="flex items-center gap-1">
+                                        <span className={`px-1.5 py-0.5 rounded-full ${STATUT_STYLE[e.statutAvant]}`}>
+                                          {STATUT_LABEL[e.statutAvant]}
+                                        </span>
+                                        <span className="text-gray-300">→</span>
+                                        <span className={`px-1.5 py-0.5 rounded-full font-medium ${STATUT_STYLE[e.statutApres]}`}>
+                                          {STATUT_LABEL[e.statutApres]}
+                                        </span>
+                                      </span>
+                                    )}
+                                    <span className="text-gray-400">
+                                      {e.createdAt?.toDate().toLocaleDateString("fr-FR", {
+                                        day: "2-digit", month: "2-digit", year: "2-digit",
+                                      })}
+                                    </span>
+                                    {typeof e.delaiDepuisEnvoi === "number" && e.type !== "envoi" && (
+                                      <span className="text-gray-400">
+                                        {`· J+${e.delaiDepuisEnvoi} après l'envoi`}
+                                      </span>
+                                    )}
+                                    {/* Seules les notes sont modifiables : les faits
+                                        sont verrouillés côté règles Firestore. */}
+                                    {e.type === "note" && (
+                                      <span className="ml-auto flex gap-2">
+                                        <button
+                                          onClick={() => setNoteEnEdition({ id: e.id, texte: e.observations ?? "" })}
+                                          className="text-blue-600 hover:underline"
+                                        >
+                                          modifier
+                                        </button>
+                                        <button
+                                          onClick={() => setNoteASupprimer(e.id)}
+                                          className="text-red-600 hover:underline"
+                                        >
+                                          supprimer
+                                        </button>
+                                      </span>
+                                    )}
+                                  </div>
+                                  {e.observations && (
+                                    <div className="text-[11px] text-gray-700 whitespace-pre-wrap mt-0.5 bg-gray-50 rounded px-2 py-1">
+                                      {e.observations}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             ))
                         )}
@@ -485,19 +669,98 @@ export default function MailingPage() {
         />
       )}
 
+      <Modal
+        isOpen={!!noteEnEdition}
+        onClose={() => setNoteEnEdition(null)}
+        title="Modifier la note"
+        size="sm"
+      >
+        <AutoTextarea
+          value={noteEnEdition?.texte ?? ""}
+          onChange={(v) => setNoteEnEdition((n) => (n ? { ...n, texte: v } : n))}
+          minRows={3}
+          className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
+        />
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={() => setNoteEnEdition(null)} className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition">
+            Annuler
+          </button>
+          <button
+            onClick={async () => {
+              if (!noteEnEdition?.texte.trim()) return;
+              await modifierNote(noteEnEdition.id, noteEnEdition.texte.trim());
+              setNoteEnEdition(null);
+              notifier("Note modifiée.");
+            }}
+            disabled={!noteEnEdition?.texte.trim()}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-40"
+          >
+            Enregistrer
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!noteASupprimer}
+        onClose={() => setNoteASupprimer(null)}
+        title="Supprimer cette note ?"
+        size="sm"
+      >
+        <p className="text-sm text-gray-600">
+          Seule la note disparaît. Les envois et changements de statut du journal restent intacts —
+          ils ne sont pas modifiables, par choix.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={() => setNoteASupprimer(null)} className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition">
+            Annuler
+          </button>
+          <button
+            onClick={async () => {
+              if (!noteASupprimer) return;
+              await supprimerNote(noteASupprimer);
+              setNoteASupprimer(null);
+              notifier("Note supprimée.");
+            }}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition"
+          >
+            Supprimer
+          </button>
+        </div>
+      </Modal>
+
       {statutEnCours && (
         <StatutModal
           prospect={statutEnCours.prospect}
           statutCible={statutEnCours.cible}
           labels={STATUT_LABEL}
           onClose={() => setStatutEnCours(null)}
-          onValider={async (obs) => {
+          onValider={async (obs, logiciel) => {
             if (statutEnCours.cible) {
-              await appliquerStatut(statutEnCours.prospect, statutEnCours.cible, obs);
+              await appliquerStatut(statutEnCours.prospect, statutEnCours.cible, obs, logiciel);
             } else {
               await ajouterNote(statutEnCours.prospect, obs);
             }
           }}
+        />
+      )}
+
+      {annuaireOuvert && (
+        <AnnuaireModal
+          userId={currentUser?.uid ?? ""}
+          metiers={metiers}
+          existants={prospects}
+          optouts={optouts}
+          onClose={() => setAnnuaireOuvert(false)}
+          onToast={notifier}
+        />
+      )}
+
+      {enrichOuvert && (
+        <EnrichirModal
+          prospects={prospects}
+          metiers={metiers}
+          onClose={() => setEnrichOuvert(false)}
+          onToast={notifier}
         />
       )}
 

@@ -59,6 +59,7 @@ export const updateMetier = async (id: string, data: Partial<MailingMetier>): Pr
   if (data.sections !== undefined) payload.sections = data.sections
   if (data.objet !== undefined) payload.objet = data.objet
   if (data.problematiques !== undefined) payload.problematiques = data.problematiques
+  if (data.codesNaf !== undefined) payload.codesNaf = data.codesNaf
   await updateDoc(doc(db, 'mailing_metiers', id), payload)
 }
 
@@ -261,6 +262,22 @@ export const journaliser = async (
     } as Record<string, unknown>),
     createdAt: Timestamp.now(),
   })
+}
+
+/**
+ * Modifie une note du journal.
+ * Réservé au type 'note' : les règles Firestore refusent la même opération sur
+ * un envoi ou un changement de statut, et c'est volontaire.
+ */
+export const modifierNote = async (id: string, observations: string): Promise<void> => {
+  await updateDoc(doc(db, 'mailing_evenements', id), {
+    observations,
+    modifieAt: Timestamp.now(),
+  })
+}
+
+export const supprimerNote = async (id: string): Promise<void> => {
+  await deleteDoc(doc(db, 'mailing_evenements', id))
 }
 
 /* ------------------------------------------------------------------ */

@@ -5,7 +5,8 @@ import Modal from "@/components/ui/Modal";
 import { createProspect, updateProspect } from "@/lib/mailingService";
 import { isEmailGenerique, isEmailValide, normalizeEmail } from "@/lib/mailingModel";
 import {
-  libelleEffectif, normaliserSiret, rechercherParSiret, siretValide, type InfoEntreprise,
+  libelleEffectif, normaliserSiret, rechercherCandidats, rechercherParSiret, siretValide,
+  type Candidats, type InfoEntreprise,
 } from "@/lib/sirene";
 import type { MailingMetier, Prospect } from "@/types";
 
@@ -36,7 +37,31 @@ export default function ProspectModal({
   const [info, setInfo] = useState<InfoEntreprise | null>(null);
   const [errSiret, setErrSiret] = useState<string | null>(null);
   const [enrichEnCours, setEnrichEnCours] = useState(false);
+  const [rechEnCours, setRechEnCours] = useState(false);
+  const [candidats, setCandidats] = useState<Candidats | null>(null);
   const [enCours, setEnCours] = useState(false);
+
+  const chercherParNom = async () => {
+    setRechEnCours(true);
+    setErrSiret(null);
+    try {
+      const naf = metiers.find((m) => m.id === metierId)?.codesNaf;
+      setCandidats(await rechercherCandidats(societe, codePostal.trim() || undefined, naf));
+    } catch {
+      setErrSiret("L'annuaire des entreprises est injoignable pour le moment.");
+    } finally {
+      setRechEnCours(false);
+    }
+  };
+
+  // Choix explicite de l'utilisateur : au-delà d'un candidat, on ne devine pas.
+  const retenirCandidat = (c: InfoEntreprise) => {
+    setInfo(c);
+    setCandidats(null);
+    if (c.siret) setSiret(c.siret);
+    if (!ville.trim() && c.ville) setVille(c.ville);
+    if (!codePostal.trim() && c.codePostal) setCodePostal(c.codePostal);
+  };
 
   // L'enrichissement ne remplit que ce qui est vide : il complète une saisie,
   // il ne la corrige pas dans le dos de l'utilisateur.
@@ -150,13 +175,59 @@ export default function ProspectModal({
               className={inputCls}
             />
             <button
-              onClick={enrichir}
-              disabled={!siretValide(siret) || enrichEnCours}
-              className="shrink-0 px-3 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={siret.trim() ? enrichir : chercherParNom}
+              disabled={
+                siret.trim()
+                  ? !siretValide(siret) || enrichEnCours
+                  : societe.trim().length < 2 || rechEnCours
+              }
+              className="shrink-0 px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {enrichEnCours ? "…" : "Enrichir"}
+              {enrichEnCours || rechEnCours
+                ? "Recherche…"
+                : siret.trim()
+                  ? "Enrichir"
+                  : "Trouver par nom"}
             </button>
           </div>
+          <p className="text-[11px] text-gray-500 mt-1">
+            {siret.trim()
+              ? "Complète effectif, activité et état depuis l'annuaire public des entreprises."
+              : societe.trim().length < 2
+                ? "Renseigne d'abord la société : le SIRET sera retrouvé à partir de son nom."
+                : "Pas de SIRET ? Il sera retrouvé depuis la raison sociale et le code postal."}
+          </p>
+
+          {candidats && (
+            <div className="mt-2 border rounded-lg divide-y">
+              <div className="px-3 py-1.5 text-[11px] text-gray-500 bg-gray-50">
+                {candidats.candidats.length === 0
+                  ? "Aucune entreprise trouvée."
+                  : `${candidats.candidats.length} candidat(s) pour « ${candidats.requete} »`}
+                {candidats.nomTronque && (
+                  <span className="text-amber-700">
+                    {" "}— trouvé en retirant le début du nom (enseigne de réseau ?)
+                  </span>
+                )}
+              </div>
+              {candidats.candidats.map((c) => (
+                <button
+                  key={c.siren}
+                  onClick={() => retenirCandidat(c)}
+                  className="w-full text-left px-3 py-2 hover:bg-blue-50 transition"
+                >
+                  <div className="text-xs font-medium">{c.nom}</div>
+                  <div className="text-[11px] text-gray-500">
+                    SIREN {c.siren} · {libelleEffectif(c.effectifCode)}
+                    {c.activiteNaf ? ` · NAF ${c.activiteNaf}` : ""}
+                    {c.ville ? ` · ${c.ville}` : ""}
+                    {c.etat === "C" && <span className="text-red-700"> · cessée</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
           {errSiret && <p className="text-[11px] text-amber-700 mt-1">{errSiret}</p>}
           {info && (
             <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs space-y-0.5">
