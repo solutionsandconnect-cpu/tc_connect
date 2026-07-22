@@ -8,6 +8,7 @@ import {
   DELAI_RELANCE_JOURS, MIN_PERSONNALISATION, QUOTA_JOUR, STATUT_LABEL, STATUT_STYLE,
   doublonSociete, peutContacter,
 } from "@/lib/mailingModel";
+import { estMailCourt } from "@/lib/mailingRender";
 import { renderMailHtml, renderMailTexte, sujetMail } from "@/lib/mailingRender";
 import { construirePromptRecherche } from "@/lib/mailingPrompt";
 import { GROUPES_EFFECTIF, groupeEffectif, type GroupeEffectif } from "@/lib/sirene";
@@ -137,7 +138,13 @@ export default function Composeur({
   const doublon = prospect ? doublonSociete(prospect, prospects) : null;
   const quotaAtteint = envoyesAujourdhui >= QUOTA_JOUR;
   const persoOk = perso.trim().length >= MIN_PERSONNALISATION;
-  const sectionsOk = (metier?.sections ?? []).some((s) => s.afficher && s.problemeMail?.trim());
+  // Un kit au format court se suffit à lui-même : ses thèmes n'alimentent que la
+  // brochure. Exiger une section remplie rendrait inutilisable un kit qui n'a
+  // qu'un mail court (Carreleur, Paysagiste, Peintre, Plaquiste).
+  const contenuOk =
+    !!metier &&
+    (estMailCourt(metier) ||
+      (metier.sections ?? []).some((s) => s.afficher && s.problemeMail?.trim()));
 
   const ctx = prospect && metier && origin
     ? { metier, prospect, personnalisation: perso, origin }
@@ -147,7 +154,7 @@ export default function Composeur({
   const html = ctx ? renderMailHtml(ctx) : "";
   const texte = ctx ? renderMailTexte(ctx) : "";
   const sujet = prospect && metier ? sujetMail(metier, prospect) : "";
-  const pret = !!ctx && sectionsOk && !!blocage?.ok && !quotaAtteint;
+  const pret = !!ctx && contenuOk && !!blocage?.ok && !quotaAtteint;
 
   const basculer = (id: string) => {
     const n = new Set(selection);
@@ -283,9 +290,10 @@ export default function Composeur({
           </p>
         </div>
 
-        {metier && !sectionsOk && (
+        {metier && !contenuOk && (
           <div className="rounded-lg bg-amber-50 text-amber-800 text-sm px-3 py-2">
-            Ce kit n&apos;a aucun thème affiché avec une accroche mail. Complète-le dans « Kits métier ».
+            Ce kit n&apos;a ni mail court, ni thème affiché avec une accroche mail. Complète-le dans
+            « Kits métier ».
           </div>
         )}
 
@@ -454,7 +462,7 @@ export default function Composeur({
           </button>
           <button
             onClick={lancerFile}
-            disabled={selection.size === 0 || quotaAtteint || !sectionsOk}
+            disabled={selection.size === 0 || quotaAtteint || !contenuOk}
             className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Préparer {selection.size || ""} envoi{selection.size > 1 ? "s" : ""}

@@ -1349,6 +1349,8 @@ export interface Prospect {
   dernierEnvoiAt?: Timestamp | null
   prochaineRelanceAt?: Timestamp | null
   clientId?: string              // rempli à la promotion vers le CRM
+  /** Fiches écartées à la main comme « pas la même société » — ne plus les proposer. */
+  doublonsIgnores?: string[]
   notes?: string
   createdAt: Timestamp
   updatedAt?: Timestamp

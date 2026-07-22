@@ -37,7 +37,11 @@ CE QUE JE SAIS DÉJÀ
 ${connu.join('\n')}
 
 CE QUE JE CHERCHE
-1. Taille et organisation réelles : combien de personnes travaillent dans l'entreprise, y a-t-il des équipes sur le terrain distinctes du bureau, et surtout quelqu'un dédié à la planification ou à l'administratif ?
+1. Taille et organisation réelles. C'est le point le plus important, parce qu'il décide du message que je vais écrire :
+   - combien de personnes travaillent dans l'entreprise, et combien sur le terrain ;
+   - y a-t-il un bureau distinct des équipes de chantier ?
+   - y a-t-il quelqu'un dont c'est le métier de planifier, gérer les devis ou l'administratif (assistante, chargé de planning, responsable d'exploitation, conjoint(e) qui gère la gestion), ou bien le dirigeant fait-il tout lui-même ?
+   - qui répond au téléphone et qui reçoit les mails : le dirigeant, ou quelqu'un d'autre ?
 2. Ancienneté, dirigeant(s), et signes de croissance récente (recrutements en cours, nouveaux locaux, nouvelle agence).
 3. Spécialités réelles et type de clientèle : particuliers ou professionnels, neuf ou rénovation, dépannage ou chantiers longs.
 4. Présence en ligne : site web, réseaux sociaux, avis clients. Pour les avis, relève les THÈMES RÉCURRENTS, en particulier ce qui touche aux délais, aux devis, aux rendez-vous manqués ou à la communication.
@@ -52,6 +56,11 @@ RÈGLES STRICTES
 
 CE QUE JE VEUX EN SORTIE
 - Une fiche courte et factuelle, point par point.
-- Puis une section « PHRASE DE PERSONNALISATION » : UNE seule phrase, factuelle et vérifiable, que je pourrai mettre en tête de mon mail pour montrer que je me suis renseigné. Pas de flatterie, pas de superlatif, rien d'inventé.
+
+- Une section « ANGLE À PRIVILÉGIER ». Mon message par défaut parle de la SURCHARGE DU DIRIGEANT : le planning refait le soir, le téléphone qui sonne toute la journée depuis les chantiers, le temps qui se perd entre les chantiers plutôt que sur les chantiers. Cet angle porte tant que le patron fait tout lui-même — c'est le cas de la grande majorité des artisans.
+  Mais dès qu'il y a un bureau et quelqu'un dont c'est le métier de planifier, cet angle tombe à plat : cette entreprise a déjà réglé le problème de la surcharge, elle a un problème de CIRCULATION DE L'INFORMATION — le planning fait au bureau que le chantier ne voit pas, les heures reconstituées en fin de mois sur des feuilles papier, le coût réel d'un chantier connu une fois qu'il est terminé.
+  Dis-moi donc lequel des deux angles colle à CETTE entreprise, et sur quel élément factuel tu t'appuies pour le dire. Si tu n'as pas assez d'éléments sur son organisation, dis « je ne sais pas » : je partirai sur l'angle par défaut, qui est le bon dans le doute.
+
+- Une section « PHRASE DE PERSONNALISATION » : UNE seule phrase, factuelle et vérifiable, que je pourrai mettre en tête de mon mail pour montrer que je me suis renseigné. Pas de flatterie, pas de superlatif, rien d'inventé.
 - Si rien de solide ne ressort, écris « aucune phrase fiable possible » — je préfère ça à une phrase creuse.`
 }

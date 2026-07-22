@@ -355,6 +355,82 @@ export const enregistrerEnvoi = async (
 }
 
 /**
+ * Fusionne deux fiches d'une même entreprise (INSEE sans email + annuaire avec
+ * email, typiquement). `garde` absorbe ce qui manque, `absorbe` est supprimée.
+ *
+ * ⚠️ LES ARCHIVES D'ENVOI NE SONT PAS DÉPLACÉES. `mailing_envois` et les faits
+ * de `mailing_evenements` sont immuables côté règles Firestore (`update: if
+ * false`) : impossible de leur réattribuer un `prospectId`. On fusionne donc les
+ * COMPTEURS — `nbEnvois` cumulé et `dernierEnvoiAt` le plus récent — car ce sont
+ * eux qui pilotent les garde-fous (délai de relance, plafond de relances). Les
+ * messages archivés de la fiche absorbée restent en base, rattachés à son ancien
+ * identifiant. Une note datée le consigne sur la fiche conservée.
+ */
+export const fusionnerProspects = async (garde: Prospect, absorbe: Prospect): Promise<void> => {
+  const patch: Record<string, unknown> = {}
+  const vide = (v?: string) => !v?.trim()
+
+  // Chaque champ absent chez `garde` est repris de `absorbe`.
+  if (vide(garde.siren) && absorbe.siren) patch.siren = absorbe.siren
+  if (vide(garde.siret) && absorbe.siret) patch.siret = absorbe.siret
+  if (vide(garde.effectifCode) && absorbe.effectifCode) {
+    patch.effectifCode = absorbe.effectifCode
+    if (absorbe.effectifAnnee) patch.effectifAnnee = absorbe.effectifAnnee
+    patch.effectifDeLEntreprise = !!absorbe.effectifDeLEntreprise
+  }
+  if (vide(garde.activiteNaf) && absorbe.activiteNaf) patch.activiteNaf = absorbe.activiteNaf
+  if (vide(garde.etatEntreprise) && absorbe.etatEntreprise) patch.etatEntreprise = absorbe.etatEntreprise
+  if (vide(garde.telephone) && absorbe.telephone) patch.telephone = absorbe.telephone
+  if (vide(garde.ville) && absorbe.ville) patch.ville = absorbe.ville
+  if (vide(garde.codePostal) && absorbe.codePostal) patch.codePostal = absorbe.codePostal
+  if (vide(garde.metierId) && absorbe.metierId) {
+    patch.metierId = absorbe.metierId
+    if (absorbe.metier) patch.metier = absorbe.metier
+  }
+  if (vide(garde.logicielActuel) && absorbe.logicielActuel) patch.logicielActuel = absorbe.logicielActuel
+  if (absorbe.enrichiAt && !garde.enrichiAt) patch.enrichiAt = absorbe.enrichiAt
+
+  // Compteurs d'envoi : cumulés, date la plus récente conservée.
+  const envois = (garde.nbEnvois ?? 0) + (absorbe.nbEnvois ?? 0)
+  if (envois !== (garde.nbEnvois ?? 0)) patch.nbEnvois = envois
+  const dG = garde.dernierEnvoiAt?.toMillis?.() ?? 0
+  const dA = absorbe.dernierEnvoiAt?.toMillis?.() ?? 0
+  if (dA > dG && absorbe.dernierEnvoiAt) patch.dernierEnvoiAt = absorbe.dernierEnvoiAt
+
+  // Un second email n'est jamais écrasé ni perdu : il part dans les notes, à
+  // charge pour l'utilisateur de choisir lequel il utilise au moment d'écrire.
+  const lignes: string[] = []
+  if (absorbe.email?.trim() && normalizeEmail(absorbe.email) !== normalizeEmail(garde.email ?? '')) {
+    lignes.push(`Autre email connu : ${absorbe.email.trim()}`)
+  }
+  if (absorbe.notes?.trim()) lignes.push(absorbe.notes.trim())
+  if (lignes.length) {
+    patch.notes = [garde.notes?.trim(), ...lignes].filter(Boolean).join('\n')
+  }
+
+  patch.updatedAt = Timestamp.now()
+  await updateDoc(doc(db, 'prospects', garde.id), patch)
+
+  await journaliser(garde, {
+    type: 'note',
+    observations:
+      `Fusion avec la fiche « ${absorbe.societe} »`
+      + (absorbe.nbEnvois ? ` (${absorbe.nbEnvois} envoi(s) repris au compteur ;`
+        + ' les messages archivés restent sur l\'ancienne fiche)' : ''),
+  })
+
+  await deleteDoc(doc(db, 'prospects', absorbe.id))
+}
+
+/** Mémorise qu'une paire n'est PAS un doublon, pour ne plus la reproposer. */
+export const ignorerDoublon = async (a: Prospect, b: Prospect): Promise<void> => {
+  await updateDoc(doc(db, 'prospects', a.id), {
+    doublonsIgnores: [...(a.doublonsIgnores ?? []), b.id],
+    updatedAt: Timestamp.now(),
+  })
+}
+
+/**
  * Efface les données INSEE d'un prospect mal apparié.
  *
  * Le cas réel : un nom sans code postal trouve un homonyme à l'autre bout de la

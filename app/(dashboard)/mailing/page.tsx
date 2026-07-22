@@ -26,6 +26,8 @@ import EnrichirModal from "@/components/mailing/EnrichirModal";
 import AnnuaireModal from "@/components/mailing/AnnuaireModal";
 import SuiviTab from "@/components/mailing/SuiviTab";
 import FiltreRayon, { useRayon } from "@/components/mailing/FiltreRayon";
+import DoublonsModal from "@/components/mailing/DoublonsModal";
+import { trouverDoublons } from "@/lib/mailingDoublons";
 import KitEditor from "@/components/mailing/KitEditor";
 import Composeur from "@/components/mailing/Composeur";
 import type {
@@ -34,7 +36,7 @@ import type {
 import {
   ArrowUpTrayIcon, PaperAirplaneIcon, RectangleStackIcon, UsersIcon, TrashIcon, PlusIcon,
   PencilIcon, ClockIcon, ChartBarIcon, ChatBubbleLeftEllipsisIcon, BuildingOffice2Icon,
-  ArrowUturnLeftIcon,
+  ArrowUturnLeftIcon, Square2StackIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
 
@@ -132,6 +134,7 @@ export default function MailingPage() {
   const [ajoutOuvert, setAjoutOuvert] = useState(false);
   const [enrichOuvert, setEnrichOuvert] = useState(false);
   const [annuaireOuvert, setAnnuaireOuvert] = useState(false);
+  const [doublonsOuvert, setDoublonsOuvert] = useState(false);
   /** Les listeners ont-ils répondu ? Distingue « vide » de « pas encore chargé ». */
   const [charge, setCharge] = useState(false);
   const [aEditer, setAEditer] = useState<Prospect | null>(null);
@@ -261,6 +264,10 @@ export default function MailingPage() {
   }, [prospects]);
 
   const rayon = useRayon(prospects);
+
+  // Comptage seulement (les paires sont recalculées dans la modale) : la
+  // détection est en O(n²) par code postal, inutile de la garder en mémoire ici.
+  const nbDoublons = useMemo(() => trouverDoublons(prospects).length, [prospects]);
 
   /** Critères actifs — la recherche et le rayon comptent comme les pastilles. */
   const nbFiltresActifs =
@@ -448,6 +455,16 @@ export default function MailingPage() {
           >
             <BuildingOffice2Icon className="w-4 h-4" /> Enrichir
           </button>
+          {nbDoublons > 0 && (
+            <button
+              onClick={() => setDoublonsOuvert(true)}
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-sm font-medium hover:bg-amber-100 transition"
+              title="Fiches d'une même entreprise à rapprocher (INSEE sans email + annuaire avec email)"
+            >
+              <Square2StackIcon className="w-4 h-4" /> Doublons
+              <span className="text-amber-600">{nbDoublons}</span>
+            </button>
+          )}
           <button
             onClick={() => setAjoutOuvert(true)}
             className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
@@ -1395,6 +1412,14 @@ export default function MailingPage() {
           onClose={() => setAPromouvoir(null)}
           onToast={notifier}
           onFait={(clientId) => { setAPromouvoir(null); router.push(`/clients?id=${clientId}`); }}
+        />
+      )}
+
+      {doublonsOuvert && (
+        <DoublonsModal
+          prospects={prospects}
+          onClose={() => setDoublonsOuvert(false)}
+          onToast={notifier}
         />
       )}
 
