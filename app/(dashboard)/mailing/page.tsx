@@ -516,28 +516,37 @@ export default function MailingPage() {
 
       {/* Borne de mesure. Sans elle, les 1070 envois repris d'AppSheet — restés
           sans réponse — écrasent le taux d'une nouvelle campagne. */}
+      {/* Champ de date TOUJOURS visible : derrière un menu « à partir d'une
+          date », il restait invisible tant qu'on n'avait pas deviné qu'il
+          fallait d'abord basculer le menu. Vide = tout l'historique. */}
       <div className="flex flex-wrap items-center gap-2 mb-5 text-xs text-gray-600">
-        <span>Mesurer les envois et réponses</span>
-        <select
-          value={depuis ? "date" : "tout"}
-          onChange={(e) => majDepuis(e.target.value === "tout" ? "" : "2026-09-01")}
+        <span>Compter les envois et réponses à partir du</span>
+        <input
+          type="date"
+          value={depuis}
+          onChange={(e) => majDepuis(e.target.value)}
           className="border rounded-lg px-2 py-1.5 text-xs bg-white"
-        >
-          <option value="tout">sur tout l&apos;historique</option>
-          <option value="date">à partir d&apos;une date</option>
-        </select>
+        />
+        {depuis !== "2026-09-01" && (
+          <button
+            onClick={() => majDepuis("2026-09-01")}
+            className="px-2.5 py-1.5 rounded-lg border text-xs font-medium hover:bg-gray-50 transition"
+          >
+            1ᵉʳ septembre 2026
+          </button>
+        )}
         {depuis && (
-          <input
-            type="date"
-            value={depuis}
-            onChange={(e) => majDepuis(e.target.value)}
-            className="border rounded-lg px-2 py-1.5 text-xs bg-white"
-          />
+          <button
+            onClick={() => majDepuis("")}
+            className="px-2.5 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100 transition"
+          >
+            Tout l&apos;historique
+          </button>
         )}
         <span className="text-gray-400">
           {depuis
-            ? `Cohorte : les ${stats.envoyes} prospect(s) contacté(s) depuis cette date.`
-            : "Inclut les 1070 envois repris de l'ancien système, restés sans réponse — le taux affiché n'est pas celui de tes campagnes actuelles."}
+            ? `Cohorte : ${stats.envoyes} prospect(s) contacté(s) depuis cette date.`
+            : "Champ vide = tout l'historique, y compris les 1070 envois repris de l'ancien système restés sans réponse. Le taux affiché n'est donc pas celui de tes campagnes actuelles."}
         </span>
       </div>
 

@@ -9,7 +9,13 @@ import { STATUT_LABEL } from "@/lib/mailingModel";
 import type { Prospect } from "@/types";
 
 /** Colonne d'une fiche : ce qu'elle apporte doit sauter aux yeux. */
-function Fiche({ p, principale }: { p: Prospect; principale: boolean }) {
+function Fiche({
+  p, principale, onChoisir,
+}: {
+  p: Prospect;
+  principale: boolean;
+  onChoisir: () => void;
+}) {
   const ligne = (label: string, valeur?: string | null) => (
     <div className="flex gap-2 text-[11px]">
       <span className="text-gray-400 w-20 shrink-0">{label}</span>
@@ -19,17 +25,20 @@ function Fiche({ p, principale }: { p: Prospect; principale: boolean }) {
   return (
     <div
       className={`rounded-lg border p-2.5 space-y-1 ${
-        principale ? "border-blue-300 bg-blue-50/40" : "border-gray-200"
+        principale ? "border-blue-400 bg-blue-50/50" : "border-gray-200"
       }`}
     >
-      <div className="flex items-center gap-1.5 mb-1">
+      {/* La fiche conservée est PROPOSÉE, pas imposée : sur deux fiches
+          partielles, l'utilisateur sait parfois mieux laquelle fait référence. */}
+      <label className="flex items-center gap-1.5 mb-1 cursor-pointer">
+        <input type="radio" checked={principale} onChange={onChoisir} className="shrink-0" />
         <span className="text-xs font-semibold truncate">{p.societe}</span>
         {principale && (
           <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-600 text-white shrink-0">
             conservée
           </span>
         )}
-      </div>
+      </label>
       {ligne("Email", p.email)}
       {ligne("Téléphone", p.telephone)}
       {ligne("Ville", [p.codePostal, p.ville].filter(Boolean).join(" "))}
@@ -52,22 +61,30 @@ export default function DoublonsModal({
   const [index, setIndex] = useState(0);
   const [traites, setTraites] = useState(0);
   const [enCours, setEnCours] = useState(false);
+  /** Choix explicite de la fiche à conserver. Null = proposition automatique. */
+  const [choixGarde, setChoixGarde] = useState<string | null>(null);
 
   // Recalculé à chaque changement de `prospects` (le flux temps réel renvoie la
   // liste après chaque fusion) : les paires résolues disparaissent d'elles-mêmes.
   const paires = useMemo(() => trouverDoublons(prospects), [prospects]);
   const paire: PaireDoublon | undefined = paires[index];
 
-  const suivant = () => setIndex((i) => (i + 1 < paires.length ? i + 1 : 0));
+  // Changer de paire remet la proposition automatique : un choix fait sur une
+  // paire n'a aucun sens sur la suivante.
+  const suivant = () => {
+    setChoixGarde(null);
+    setIndex((i) => (i + 1 < paires.length ? i + 1 : 0));
+  };
 
   const fusionner = async () => {
     if (!paire) return;
-    const { garde, absorbe } = fichePrincipale(paire.a, paire.b);
+    const { garde, absorbe } = fusionOrientee;
     setEnCours(true);
     try {
       await fusionnerProspects(garde, absorbe);
       setTraites((n) => n + 1);
       onToast("Fiches fusionnées.");
+      setChoixGarde(null);
       setIndex(0);
     } finally {
       setEnCours(false);
@@ -80,13 +97,21 @@ export default function DoublonsModal({
     try {
       await ignorerDoublon(paire.a, paire.b);
       setTraites((n) => n + 1);
+      setChoixGarde(null);
       setIndex(0);
     } finally {
       setEnCours(false);
     }
   };
 
-  const principale = paire ? fichePrincipale(paire.a, paire.b) : null;
+  /** Sens de la fusion : le choix de l'utilisateur prime sur la proposition. */
+  const fusionOrientee = (() => {
+    const defaut = paire ? fichePrincipale(paire.a, paire.b) : null;
+    if (!paire || !defaut) return { garde: paire?.a as Prospect, absorbe: paire?.b as Prospect };
+    if (choixGarde === paire.a.id) return { garde: paire.a, absorbe: paire.b };
+    if (choixGarde === paire.b.id) return { garde: paire.b, absorbe: paire.a };
+    return defaut;
+  })();
   const historiqueDouble =
     !!paire && (paire.a.nbEnvois ?? 0) > 0 && (paire.b.nbEnvois ?? 0) > 0;
 
@@ -124,14 +149,23 @@ export default function DoublonsModal({
           )}
 
           <div className="grid sm:grid-cols-2 gap-2">
-            <Fiche p={paire.a} principale={principale?.garde.id === paire.a.id} />
-            <Fiche p={paire.b} principale={principale?.garde.id === paire.b.id} />
+            <Fiche
+              p={paire.a}
+              principale={fusionOrientee.garde.id === paire.a.id}
+              onChoisir={() => setChoixGarde(paire.a.id)}
+            />
+            <Fiche
+              p={paire.b}
+              principale={fusionOrientee.garde.id === paire.b.id}
+              onChoisir={() => setChoixGarde(paire.b.id)}
+            />
           </div>
 
           <p className="text-[11px] text-gray-500 mt-2">
-            La fiche conservée est celle qui porte l&apos;email : elle garde son jeton de
-            désinscription. Elle se complète des champs vides de l&apos;autre ; un second email
-            différent est recopié dans les notes plutôt qu&apos;écrasé.
+            La fiche conservée est proposée par défaut (celle qui porte l&apos;email, pour garder son
+            jeton de désinscription) — <strong>coche l&apos;autre si tu préfères la garder</strong>.
+            Elle se complète des champs vides de la seconde, qui est ensuite supprimée. Un second
+            email différent est recopié dans les notes plutôt qu&apos;écrasé.
           </p>
 
           <div className="flex flex-wrap justify-between gap-2 mt-5">

@@ -397,11 +397,23 @@ export const fusionnerProspects = async (garde: Prospect, absorbe: Prospect): Pr
   const dA = absorbe.dernierEnvoiAt?.toMillis?.() ?? 0
   if (dA > dG && absorbe.dernierEnvoiAt) patch.dernierEnvoiAt = absorbe.dernierEnvoiAt
 
-  // Un second email n'est jamais écrasé ni perdu : il part dans les notes, à
-  // charge pour l'utilisateur de choisir lequel il utilise au moment d'écrire.
+  // La fiche conservée peut être celle SANS email (l'utilisateur choisit) :
+  // l'email de l'autre devient alors le sien, avec ses champs dérivés — sans
+  // quoi elle resterait « Email à trouver » et injoignable. `optoutToken` n'est
+  // PAS repris : il est propre au document, pas à l'adresse.
   const lignes: string[] = []
-  if (absorbe.email?.trim() && normalizeEmail(absorbe.email) !== normalizeEmail(garde.email ?? '')) {
-    lignes.push(`Autre email connu : ${absorbe.email.trim()}`)
+  const emailAbsorbe = absorbe.email?.trim()
+  if (emailAbsorbe && !garde.email?.trim()) {
+    patch.email = emailAbsorbe
+    patch.emailNormalise = normalizeEmail(emailAbsorbe)
+    patch.domaine = emailDomain(emailAbsorbe)
+    if (garde.statut === 'email_manquant') {
+      patch.statut = (garde.nbEnvois ?? 0) > 0 ? 'envoye' : 'a_contacter'
+    }
+  } else if (emailAbsorbe && normalizeEmail(emailAbsorbe) !== normalizeEmail(garde.email ?? '')) {
+    // Deux adresses différentes : la seconde n'est jamais écrasée ni perdue,
+    // elle part dans les notes — l'utilisateur choisit au moment d'écrire.
+    lignes.push(`Autre email connu : ${emailAbsorbe}`)
   }
   if (absorbe.notes?.trim()) lignes.push(absorbe.notes.trim())
   if (lignes.length) {
