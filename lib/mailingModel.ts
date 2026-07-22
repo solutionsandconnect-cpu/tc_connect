@@ -55,6 +55,42 @@ export const STATUT_STYLE: Record<ProspectStatut, string> = {
 }
 
 /* ------------------------------------------------------------------ */
+/* Mesure du taux de réponse                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Statuts qui traduisent une RÉPONSE, quelle qu'elle soit.
+ *
+ * « Pas intéressé » et « Déjà équipé » en font partie : le prospect a pris la
+ * peine de répondre. Les exclure sous-estimerait le mail — ce qu'on mesure ici,
+ * c'est sa capacité à faire réagir, pas le taux de vente. C'est aussi ce qui
+ * distingue un message ignoré d'un message lu et refusé, deux problèmes très
+ * différents à corriger.
+ */
+export const STATUTS_AVEC_REPONSE: ProspectStatut[] = [
+  'repondu', 'interesse', 'converti', 'pas_interesse', 'a_un_logiciel',
+]
+
+export function aRepondu(p: Prospect): boolean {
+  return STATUTS_AVEC_REPONSE.includes(p.statut)
+}
+
+/**
+ * Le prospect a-t-il été contacté dans la période mesurée ?
+ *
+ * ⚠️ Indispensable depuis la reprise de l'historique AppSheet : 1070 prospects
+ * portent un envoi ancien resté sans réponse. Sans borne, une nouvelle campagne
+ * de 200 mails avec 10 réponses afficherait ~1 % au lieu de 5 % — et on
+ * conclurait à tort que le message ne marche pas.
+ */
+export function contacteDepuis(p: Prospect, depuis: Date | null): boolean {
+  if ((p.nbEnvois ?? 0) <= 0) return false
+  if (!depuis) return true
+  const d = p.dernierEnvoiAt?.toDate?.()
+  return !!d && d >= depuis
+}
+
+/* ------------------------------------------------------------------ */
 /* Garde-fous anti-spam                                                */
 /* ------------------------------------------------------------------ */
 

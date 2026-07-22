@@ -13,6 +13,7 @@ import PromotionModal from "@/components/mailing/PromotionModal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
 import {
   QUOTA_JOUR, peutContacter, isEmailGenerique, STATUT_LABEL, STATUT_STYLE,
+  aRepondu, contacteDepuis,
 } from "@/lib/mailingModel";
 import Modal from "@/components/ui/Modal";
 import {
@@ -193,17 +194,31 @@ export default function MailingPage() {
     ).length;
   }, [prospects]);
 
+  /** Début de la période mesurée. Vide = tout l'historique, AppSheet compris. */
+  const [depuis, setDepuis] = useState<string>("");
+  useEffect(() => {
+    setDepuis(window.localStorage.getItem("tc.mailing.depuis") ?? "");
+  }, []);
+  const dateDepuis = depuis ? new Date(`${depuis}T00:00:00`) : null;
+  const majDepuis = (v: string) => {
+    setDepuis(v);
+    window.localStorage.setItem("tc.mailing.depuis", v);
+  };
+
   const stats = useMemo(() => {
-    const envoyes = prospects.filter((p) => (p.nbEnvois ?? 0) > 0).length;
-    const repondus = prospects.filter((p) => p.statut === "repondu").length;
+    // Cohorte : parmi ceux contactés DANS la période, combien ont répondu.
+    // Mesurer les réponses sur l'ensemble de la base rapporterait les retours
+    // d'aujourd'hui à des envois vieux de plusieurs années.
+    const cohorte = prospects.filter((p) => contacteDepuis(p, dateDepuis));
+    const repondus = cohorte.filter(aRepondu).length;
     return {
       total: prospects.length,
       aContacter: prospects.filter((p) => p.statut === "a_contacter").length,
-      envoyes,
+      envoyes: cohorte.length,
       repondus,
-      taux: envoyes ? Math.round((repondus / envoyes) * 100) : 0,
+      taux: cohorte.length ? Math.round((repondus / cohorte.length) * 100) : 0,
     };
-  }, [prospects]);
+  }, [prospects, dateDepuis]);
 
   const compteursVifs = useMemo<Compteurs>(
     () => ({
@@ -497,6 +512,33 @@ export default function MailingPage() {
             <div className="text-lg font-semibold">{s.v}</div>
           </div>
         ))}
+      </div>
+
+      {/* Borne de mesure. Sans elle, les 1070 envois repris d'AppSheet — restés
+          sans réponse — écrasent le taux d'une nouvelle campagne. */}
+      <div className="flex flex-wrap items-center gap-2 mb-5 text-xs text-gray-600">
+        <span>Mesurer les envois et réponses</span>
+        <select
+          value={depuis ? "date" : "tout"}
+          onChange={(e) => majDepuis(e.target.value === "tout" ? "" : "2026-09-01")}
+          className="border rounded-lg px-2 py-1.5 text-xs bg-white"
+        >
+          <option value="tout">sur tout l&apos;historique</option>
+          <option value="date">à partir d&apos;une date</option>
+        </select>
+        {depuis && (
+          <input
+            type="date"
+            value={depuis}
+            onChange={(e) => majDepuis(e.target.value)}
+            className="border rounded-lg px-2 py-1.5 text-xs bg-white"
+          />
+        )}
+        <span className="text-gray-400">
+          {depuis
+            ? `Cohorte : les ${stats.envoyes} prospect(s) contacté(s) depuis cette date.`
+            : "Inclut les 1070 envois repris de l'ancien système, restés sans réponse — le taux affiché n'est pas celui de tes campagnes actuelles."}
+        </span>
       </div>
 
       {/* La bordure vit sur le conteneur externe : le conteneur défilant peut
@@ -1269,6 +1311,7 @@ export default function MailingPage() {
           metiers={metiers}
           evenements={evenements}
           optouts={optouts}
+          depuis={dateDepuis}
         />
       )}
 

@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { departementDuCp } from "@/lib/territoires";
 import {
-  DELAI_RELANCE_JOURS, MAX_RELANCES, STATUT_LABEL, STATUT_STYLE, peutContacter,
+  DELAI_RELANCE_JOURS, MAX_RELANCES, STATUT_LABEL, STATUT_STYLE, aRepondu, contacteDepuis,
+  peutContacter,
 } from "@/lib/mailingModel";
 import { effectifMinimum, libelleEffectif } from "@/lib/sirene";
 import type { MailingEvenement, MailingMetier, Prospect } from "@/types";
@@ -31,22 +32,29 @@ function fmtDate(ts?: { toDate: () => Date }): string {
 }
 
 export default function SuiviTab({
-  prospects, metiers, evenements, optouts,
+  prospects, metiers, evenements, optouts, depuis,
 }: {
   prospects: Prospect[];
   metiers: MailingMetier[];
   evenements: MailingEvenement[];
   optouts: Set<string>;
+  /** Début de la période mesurée (réglé en haut de page). Null = tout l'historique. */
+  depuis: Date | null;
 }) {
   const [niveau, setNiveau] = useState<"region" | "departement">("region");
+
+  // Tous les tableaux comptent sur la MÊME cohorte que les cartes du haut de
+  // page : « contactés » = envoyés dans la période, « réponses » = parmi eux.
+  const contacte = (p: Prospect) => contacteDepuis(p, depuis);
 
   /** Par métier : ce que la photo des statuts courants ne peut pas montrer seule. */
   const parMetier = useMemo(() => {
     const lignes = metiers.map((m) => {
       const liste = prospects.filter((p) => p.metierId === m.id);
-      const envoyes = liste.filter((p) => (p.nbEnvois ?? 0) > 0).length;
-      const repondus = liste.filter((p) => p.statut === "repondu").length;
-      const refus = liste.filter((p) => p.statut === "pas_interesse").length;
+      const cohorte = liste.filter(contacte);
+      const envoyes = cohorte.length;
+      const repondus = cohorte.filter(aRepondu).length;
+      const refus = cohorte.filter((p) => p.statut === "pas_interesse").length;
       return {
         id: m.id, metier: m.metier, total: liste.length, envoyes, repondus, refus,
         taux: envoyes ? Math.round((repondus / envoyes) * 100) : 0,
@@ -54,16 +62,17 @@ export default function SuiviTab({
     });
     const orphelins = prospects.filter((p) => !p.metierId);
     if (orphelins.length) {
-      const envoyes = orphelins.filter((p) => (p.nbEnvois ?? 0) > 0).length;
-      const repondus = orphelins.filter((p) => p.statut === "repondu").length;
+      const cohorte = orphelins.filter(contacte);
+      const envoyes = cohorte.length;
+      const repondus = cohorte.filter(aRepondu).length;
       lignes.push({
         id: "_sans", metier: "Sans métier", total: orphelins.length, envoyes, repondus,
-        refus: orphelins.filter((p) => p.statut === "pas_interesse").length,
+        refus: cohorte.filter((p) => p.statut === "pas_interesse").length,
         taux: envoyes ? Math.round((repondus / envoyes) * 100) : 0,
       });
     }
     return lignes.filter((l) => l.total > 0).sort((a, b) => b.envoyes - a.envoyes);
-  }, [prospects, metiers]);
+  }, [prospects, metiers, depuis]);
 
   /** Délai moyen entre l'envoi et la réponse — figé à l'écriture de l'événement. */
   const delaiMoyen = useMemo(() => {
@@ -93,8 +102,10 @@ export default function SuiviTab({
       const cle = niveau === "region" ? d.region : `${d.code} ${d.nom}`;
       const e = par.get(cle) ?? { total: 0, envoyes: 0, repondus: 0 };
       e.total++;
-      if ((p.nbEnvois ?? 0) > 0) e.envoyes++;
-      if (p.statut === "repondu" || p.statut === "interesse") e.repondus++;
+      if (contacte(p)) {
+        e.envoyes++;
+        if (aRepondu(p)) e.repondus++;
+      }
       par.set(cle, e);
     }
     return [...par.entries()]
@@ -103,7 +114,7 @@ export default function SuiviTab({
         taux: v.envoyes ? Math.round((v.repondus / v.envoyes) * 100) : 0,
       }))
       .sort((a, b) => b.total - a.total);
-  }, [prospects, niveau]);
+  }, [prospects, niveau, depuis]);
 
   /**
    * Répartition par taille d'entreprise (tranche d'effectif INSEE).
@@ -122,8 +133,10 @@ export default function SuiviTab({
       const cle = p.effectifCode ?? "NN";
       const e = par.get(cle) ?? { total: 0, envoyes: 0, repondus: 0 };
       e.total++;
-      if ((p.nbEnvois ?? 0) > 0) e.envoyes++;
-      if (p.statut === "repondu" || p.statut === "interesse") e.repondus++;
+      if (contacte(p)) {
+        e.envoyes++;
+        if (aRepondu(p)) e.repondus++;
+      }
       par.set(cle, e);
     }
     return [...par.entries()]
@@ -140,7 +153,7 @@ export default function SuiviTab({
       .sort((a, b) =>
         a.code === "NN" ? 1 : b.code === "NN" ? -1 : effectifMinimum(a.code) - effectifMinimum(b.code),
       );
-  }, [prospects]);
+  }, [prospects, depuis]);
 
   /** Regroupement par logiciel déjà en place, insensible à la casse. */
   const logiciels = useMemo(() => {
@@ -165,6 +178,14 @@ export default function SuiviTab({
 
   return (
     <div className="space-y-4">
+      {/* Rappel de la borne : ces tableaux ne se lisent pas pareil selon qu'ils
+          incluent ou non les 1070 envois repris de l'ancien système. */}
+      <div className="text-[11px] text-gray-500">
+        {depuis
+          ? `Envois et réponses comptés à partir du ${depuis.toLocaleDateString("fr-FR")} (réglable en haut de page).`
+          : "Envois et réponses comptés sur tout l'historique, y compris les envois repris de l'ancien système — borne réglable en haut de page."}
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
           { l: "Délai moyen de réponse", v: delaiMoyen === null ? "—" : `${delaiMoyen} j` },
