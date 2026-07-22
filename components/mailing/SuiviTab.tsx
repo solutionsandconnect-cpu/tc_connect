@@ -5,13 +5,22 @@ import { departementDuCp } from "@/lib/territoires";
 import {
   DELAI_RELANCE_JOURS, MAX_RELANCES, STATUT_LABEL, STATUT_STYLE, peutContacter,
 } from "@/lib/mailingModel";
+import { effectifMinimum, libelleEffectif } from "@/lib/sirene";
 import type { MailingEvenement, MailingMetier, Prospect } from "@/types";
+
+/**
+ * Nombre de contactés en dessous duquel un taux de réponse ne veut rien dire.
+ * Volontairement bas (on parle de prospection artisanale, pas de statistiques) :
+ * il sert à écarter le « 1 sur 2 = 50 % » qui ferait basculer toute la stratégie.
+ */
+const SEUIL_FIABILITE = 15;
 
 const TYPE_LABEL: Record<MailingEvenement["type"], string> = {
   envoi: "Envoi",
   statut: "Statut",
   note: "Note",
   promotion: "Promotion",
+  annulation: "Envoi annulé",
 };
 
 function fmtDate(ts?: { toDate: () => Date }): string {
@@ -96,6 +105,43 @@ export default function SuiviTab({
       .sort((a, b) => b.total - a.total);
   }, [prospects, niveau]);
 
+  /**
+   * Répartition par taille d'entreprise (tranche d'effectif INSEE).
+   *
+   * L'hypothèse à vérifier : le besoin d'outil naît au moment où l'entreprise
+   * passe un cap (plannings, devis et chantiers que le carnet ne tient plus).
+   * Ce tableau dit lequel de tes segments répond réellement — après quoi les
+   * imports INSEE se ciblent dessus.
+   *
+   * « Non renseigné » est une ligne comme une autre : ce sont les prospects non
+   * enrichis, la masquer donnerait l'illusion d'une base complète.
+   */
+  const parTaille = useMemo(() => {
+    const par = new Map<string, { total: number; envoyes: number; repondus: number }>();
+    for (const p of prospects) {
+      const cle = p.effectifCode ?? "NN";
+      const e = par.get(cle) ?? { total: 0, envoyes: 0, repondus: 0 };
+      e.total++;
+      if ((p.nbEnvois ?? 0) > 0) e.envoyes++;
+      if (p.statut === "repondu" || p.statut === "interesse") e.repondus++;
+      par.set(cle, e);
+    }
+    return [...par.entries()]
+      .map(([code, v]) => ({
+        code,
+        libelle: libelleEffectif(code === "NN" ? undefined : code),
+        ...v,
+        taux: v.envoyes ? Math.round((v.repondus / v.envoyes) * 100) : 0,
+        // Un taux calculé sur une poignée d'envois n'est pas un taux : 1 réponse
+        // sur 3 afficherait « 33 % » et orienterait toute la prospection à tort.
+        fiable: v.envoyes >= SEUIL_FIABILITE,
+      }))
+      // Par taille croissante, « non renseigné » rejeté à la fin.
+      .sort((a, b) =>
+        a.code === "NN" ? 1 : b.code === "NN" ? -1 : effectifMinimum(a.code) - effectifMinimum(b.code),
+      );
+  }, [prospects]);
+
   /** Regroupement par logiciel déjà en place, insensible à la casse. */
   const logiciels = useMemo(() => {
     const par = new Map<string, Prospect[]>();
@@ -172,6 +218,61 @@ export default function SuiviTab({
         <div className="px-4 py-2.5 border-t text-[11px] text-gray-500">
           Le taux se lit sur les contactés, pas sur les prospects — un métier peu contacté n&apos;a
           pas de taux significatif.
+        </div>
+      </div>
+
+      <div className="border rounded-xl bg-white overflow-hidden">
+        <div className="px-4 py-3 border-b flex items-baseline justify-between">
+          <span className="text-sm font-medium">Par taille d&apos;entreprise</span>
+          <span className="text-xs text-gray-500">tranche d&apos;effectif INSEE</span>
+        </div>
+        {parTaille.length === 0 ? (
+          <div className="px-4 py-8 text-center text-xs text-gray-500">
+            Aucun prospect pour l&apos;instant.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-gray-500 border-b">
+                  <th className="text-left font-medium px-4 py-2">Taille</th>
+                  <th className="text-right font-medium px-3 py-2">Prospects</th>
+                  <th className="text-right font-medium px-3 py-2">Contactés</th>
+                  <th className="text-right font-medium px-3 py-2">Réponses</th>
+                  <th className="text-right font-medium px-4 py-2">Taux</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {parTaille.map((l) => (
+                  <tr key={l.code} className={l.code === "NN" ? "text-gray-400" : undefined}>
+                    <td className="px-4 py-2 font-medium">{l.libelle}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{l.total}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{l.envoyes}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{l.repondus}</td>
+                    <td className="px-4 py-2 text-right">
+                      {!l.envoyes ? (
+                        <span className="text-gray-400">—</span>
+                      ) : l.fiable ? (
+                        <span className="font-semibold">{l.taux} %</span>
+                      ) : (
+                        <span
+                          className="text-gray-400 font-normal"
+                          title={`Seulement ${l.envoyes} contacté${l.envoyes > 1 ? "s" : ""} : trop peu pour conclure.`}
+                        >
+                          {l.taux} %<span className="text-[10px]"> (peu fiable)</span>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="px-4 py-2.5 border-t text-[11px] text-gray-500">
+          Un taux n&apos;est affiché en clair qu&apos;à partir de {SEUIL_FIABILITE} contactés : en
+          dessous, une seule réponse suffirait à faire croire à un bon segment. « Non renseigné » =
+          prospects pas encore passés par « Enrichir ».
         </div>
       </div>
 

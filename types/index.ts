@@ -1267,6 +1267,19 @@ export interface MailingMetier {
   nbThemesMail?: number          // nb de thèmes gardés dans le mail (défaut 3)
   /** Codes NAF du métier (ex. « 43.22A,43.22B ») — désambiguïsent la recherche SIRET. */
   codesNaf?: string
+  /**
+   * ── Mail court (premier contact) ──────────────────────────────────────────
+   * Format retenu en juillet 2026 : une scène vécue, des exemples présentés
+   * comme des illustrations, une question ouverte. Il remplace les 3 thèmes
+   * problème/solution, trop longs et trop « catalogue » pour un contact froid.
+   *
+   * Les trois champs vont ENSEMBLE : le mail court n'est produit que s'ils sont
+   * tous les trois remplis, sinon le kit sort l'ancien format. C'est ce qui
+   * permet de migrer métier par métier sans rien casser.
+   */
+  mailScene?: string
+  mailExemples?: string
+  mailQuestion?: string
   /** Brochure PDF stockée (Storage) — évite de la régénérer à chaque consultation. */
   brochureUrl?: string
   brochureGenereeAt?: Timestamp
@@ -1380,7 +1393,7 @@ export interface MailingEvenement {
   prospectId: string
   societe: string
   metier?: string
-  type: 'statut' | 'envoi' | 'note' | 'promotion'
+  type: 'statut' | 'envoi' | 'note' | 'promotion' | 'annulation'
   statutAvant?: ProspectStatut
   statutApres?: ProspectStatut
   observations?: string

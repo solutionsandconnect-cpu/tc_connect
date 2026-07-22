@@ -7,6 +7,7 @@ import {
   listenMetiers, listenProspects, listenOptouts, listenEvenements, listenLogiciels,
   updateProspect, deleteProspect, ajouterOptout, journaliser,
   modifierNote, supprimerNote, ajouterLogiciel, supprimerLogiciel, detacherDuClient,
+  annulerDernierEnvoi,
 } from "@/lib/mailingService";
 import PromotionModal from "@/components/mailing/PromotionModal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
@@ -30,6 +31,7 @@ import type {
 import {
   ArrowUpTrayIcon, PaperAirplaneIcon, RectangleStackIcon, UsersIcon, TrashIcon, PlusIcon,
   PencilIcon, ClockIcon, ChartBarIcon, ChatBubbleLeftEllipsisIcon, BuildingOffice2Icon,
+  ArrowUturnLeftIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
 
@@ -41,6 +43,7 @@ const EVT_LABEL: Record<MailingEvenement["type"], string> = {
   statut: "STATUT",
   note: "NOTE",
   promotion: "CLIENT",
+  annulation: "ANNULÉ",
 };
 
 function Chip({
@@ -77,6 +80,7 @@ const EVT_STYLE: Record<MailingEvenement["type"], string> = {
   statut: "bg-indigo-100 text-indigo-700",
   note: "bg-amber-100 text-amber-800",
   promotion: "bg-green-100 text-green-700",
+  annulation: "bg-gray-200 text-gray-600",
 };
 
 /**
@@ -142,6 +146,7 @@ export default function MailingPage() {
   const [filtreRegion, setFiltreRegion] = useState<string>("tous");
   const [filtreDept, setFiltreDept] = useState<string>("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
+  const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -603,6 +608,15 @@ export default function MailingPage() {
                       </button>
                     )}
 
+                    {(p.nbEnvois ?? 0) > 0 && (
+                      <button
+                        onClick={() => setADesenvoyer(p)}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition"
+                        title="Annuler le dernier envoi (mail jamais parti)"
+                      >
+                        <ArrowUturnLeftIcon className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => setStatutEnCours({ prospect: p })}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition"
@@ -762,6 +776,42 @@ export default function MailingPage() {
           onToast={notifier}
         />
       )}
+
+      <Modal
+        isOpen={!!aDesenvoyer}
+        onClose={() => setADesenvoyer(null)}
+        title="Annuler le dernier envoi ?"
+        size="sm"
+      >
+        <p className="text-sm text-gray-600">
+          <strong>{aDesenvoyer?.societe}</strong>
+          {" repassera au compteur précédent : le délai avant relance se rouvre aussitôt."}
+        </p>
+        <p className="text-xs text-gray-500 mt-2">
+          À utiliser quand le mail n&apos;est jamais parti (clic de trop sur « Envoyé »).
+          Le message archivé et le journal sont conservés — l&apos;annulation s&apos;y ajoute
+          comme un fait de plus, elle n&apos;efface rien.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <button
+            onClick={() => setADesenvoyer(null)}
+            className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition"
+          >
+            Annuler
+          </button>
+          <button
+            onClick={async () => {
+              if (!aDesenvoyer) return;
+              await annulerDernierEnvoi(aDesenvoyer);
+              setADesenvoyer(null);
+              notifier("Envoi annulé — le prospect est de nouveau contactable.");
+            }}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-amber-600 text-white hover:bg-amber-700 transition"
+          >
+            Annuler l&apos;envoi
+          </button>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={!!aSupprimer}

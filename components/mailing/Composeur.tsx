@@ -5,9 +5,11 @@ import AutoTextarea from "@/components/ui/AutoTextarea";
 import { copyText } from "@/lib/clipboard";
 import { enregistrerEnvoi } from "@/lib/mailingService";
 import {
-  MIN_PERSONNALISATION, QUOTA_JOUR, STATUT_LABEL, STATUT_STYLE, doublonSociete, peutContacter,
+  DELAI_RELANCE_JOURS, MIN_PERSONNALISATION, QUOTA_JOUR, STATUT_LABEL, STATUT_STYLE,
+  doublonSociete, peutContacter,
 } from "@/lib/mailingModel";
 import { renderMailHtml, renderMailTexte, sujetMail } from "@/lib/mailingRender";
+import { construirePromptRecherche } from "@/lib/mailingPrompt";
 import { downloadBrochurePDF } from "@/lib/brochurePdf";
 import type { MailingMetier, Prospect } from "@/types";
 
@@ -30,6 +32,9 @@ export default function Composeur({
   const [index, setIndex] = useState(0);
   const [perso, setPerso] = useState("");
   const [copie, setCopie] = useState(false);
+  const [confirmSansCopie, setConfirmSansCopie] = useState(false);
+  const [promptOuvert, setPromptOuvert] = useState(false);
+  const [promptCopie, setPromptCopie] = useState(false);
   const [brochureEnCours, setBrochureEnCours] = useState(false);
   const [filtre, setFiltre] = useState<"tous" | "jamais" | "relance">("tous");
   const [recherche, setRecherche] = useState("");
@@ -78,6 +83,7 @@ export default function Composeur({
     ? { metier, prospect, personnalisation: perso, origin }
     : null;
 
+  const promptRecherche = prospect ? construirePromptRecherche(prospect) : "";
   const html = ctx ? renderMailHtml(ctx) : "";
   const texte = ctx ? renderMailTexte(ctx) : "";
   const sujet = prospect && metier ? sujetMail(metier, prospect) : "";
@@ -100,6 +106,7 @@ export default function Composeur({
   const suivant = () => {
     setPerso("");
     setCopie(false);
+    setConfirmSansCopie(false);
     if (index + 1 >= file.length) {
       setFile([]);
       setIndex(0);
@@ -139,6 +146,15 @@ export default function Composeur({
 
   const marquerEnvoye = async () => {
     if (!ctx || !prospect || !metier) return;
+    // Ce bouton n'envoie RIEN : il consigne un envoi fait à la main. Cliqué sans
+    // avoir copié le message, il marque comme contacté un prospect qui n'a rien
+    // reçu — et le rend intouchable pendant le délai de relance. Un second clic
+    // vaut confirmation : on avertit, on ne bloque pas (l'envoi a pu se faire
+    // depuis un autre appareil).
+    if (!copie && !confirmSansCopie) {
+      setConfirmSansCopie(true);
+      return;
+    }
     await enregistrerEnvoi(
       {
         userId,
@@ -397,6 +413,47 @@ export default function Composeur({
             />
           </div>
 
+          {/* L'étude précède la personnalisation, et se trouve donc juste avant
+              le champ qu'elle sert à remplir. */}
+          <div className="border rounded-lg bg-gray-50/70">
+            <button
+              onClick={() => setPromptOuvert(!promptOuvert)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 transition rounded-lg"
+            >
+              <span>Étudier cette entreprise avant d&apos;écrire</span>
+              <span className="text-gray-400">{promptOuvert ? "Masquer" : "Afficher le prompt"}</span>
+            </button>
+            {promptOuvert && (
+              <div className="px-3 pb-3">
+                <p className="text-[11px] text-gray-500 mb-2">
+                  Copie ce prompt dans Claude (ou un autre assistant avec accès au web) : il reprend
+                  déjà tout ce que l&apos;app sait de <strong>{prospect?.societe}</strong> et demande
+                  ce qu&apos;elle ignore — effectif réel, organisation, logiciel en place, avis
+                  clients — en exigeant des sources. Il finit par une phrase de personnalisation
+                  prête à coller ci-dessous.
+                </p>
+                <pre className="text-[11px] leading-relaxed bg-white border rounded-lg p-2.5 max-h-52 overflow-auto whitespace-pre-wrap font-sans text-gray-700">
+                  {promptRecherche}
+                </pre>
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={async () => {
+                      setPromptCopie(await copyText(promptRecherche));
+                      setTimeout(() => setPromptCopie(false), 2500);
+                    }}
+                    className="px-3 py-1.5 rounded-lg border text-xs font-medium hover:bg-white transition"
+                  >
+                    {promptCopie ? "Copié ✓" : "Copier le prompt"}
+                  </button>
+                  <span className="text-[11px] text-amber-700">
+                    Vérifie ce qu&apos;il te renvoie : une information inventée dans un premier mail
+                    se retourne contre toi.
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
               Ligne de personnalisation <span className="text-gray-400">(recommandé)</span>
@@ -433,20 +490,45 @@ export default function Composeur({
           </div>
         )}
 
+        {/* L'app n'envoie aucun mail : elle prépare le message et consigne
+            l'envoi. Les étapes sont rappelées ici parce que le raccourci
+            « le bouton vert envoie » est le réflexe naturel — et faux. */}
+        <ol className="text-xs text-gray-600 space-y-1 border-l-2 border-gray-200 pl-3">
+          <li>
+            <span className="font-medium text-gray-800">1.</span> Copier le message et ouvrir le
+            brouillon dans ta messagerie.
+          </li>
+          <li>
+            <span className="font-medium text-gray-800">2.</span> Coller (Ctrl+V), joindre la
+            brochure si tu le souhaites, puis <strong>envoyer depuis ta messagerie</strong>.
+          </li>
+          <li>
+            <span className="font-medium text-gray-800">3.</span> Revenir ici pour enregistrer
+            l&apos;envoi et passer au prospect suivant.
+          </li>
+        </ol>
+
         <div className="flex flex-wrap gap-2">
           <button
             onClick={copierEtOuvrir}
             disabled={!pret}
             className="px-4 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {copie ? "Copié ✓ — colle dans le brouillon" : "Copier et ouvrir le brouillon"}
+            {copie ? "Copié ✓ — colle dans le brouillon" : "1 · Copier et ouvrir le brouillon"}
           </button>
           <button
             onClick={marquerEnvoye}
             disabled={!pret}
-            className="px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            className={`px-4 py-2.5 rounded-lg text-sm font-medium transition disabled:opacity-40 disabled:cursor-not-allowed ${
+              confirmSansCopie
+                ? "bg-amber-600 text-white hover:bg-amber-700"
+                : "bg-green-600 text-white hover:bg-green-700"
+            }`}
+            title="N'envoie pas le mail : enregistre un envoi que tu as fait depuis ta messagerie."
           >
-            Envoyé — suivant
+            {confirmSansCopie
+              ? "Confirmer : je l'ai bien envoyé"
+              : "3 · Je l'ai envoyé — enregistrer"}
           </button>
           <button
             onClick={suivant}
@@ -455,9 +537,17 @@ export default function Composeur({
             Passer
           </button>
         </div>
+        {confirmSansCopie && (
+          <div className="rounded-lg bg-amber-50 text-amber-800 text-sm px-3 py-2">
+            Tu n&apos;as pas copié ce message. Si tu l&apos;as réellement envoyé depuis ta
+            messagerie, confirme ; sinon reprends à l&apos;étape 1 — enregistrer un envoi qui
+            n&apos;a pas eu lieu rend ce prospect intouchable pendant {DELAI_RELANCE_JOURS} jours.
+          </div>
+        )}
         <p className="text-[11px] text-gray-500">
-          « Envoyé — suivant » archive le message tel qu&apos;il est parti et enchaîne.
-          « Passer » ne consigne rien.
+          Enregistrer archive le message tel qu&apos;il est parti et enchaîne sur le suivant.
+          « Passer » ne consigne rien. Un envoi consigné par erreur se défait depuis la liste
+          des prospects (↩).
         </p>
       </div>
 

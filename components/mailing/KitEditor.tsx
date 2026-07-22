@@ -263,6 +263,9 @@ function KitForm({
     ...metier,
     objet: metier.objet ?? "",
     problematiques: metier.problematiques ?? "",
+    mailScene: metier.mailScene ?? "",
+    mailExemples: metier.mailExemples ?? "",
+    mailQuestion: metier.mailQuestion ?? "",
     nbThemesMail: metier.nbThemesMail ?? NB_THEMES_MAIL_DEFAUT,
     sections: (metier.sections ?? []).map((s) => ({
       ...s,
@@ -283,6 +286,9 @@ function KitForm({
     (brouillon.codesNaf ?? "") !== (metier.codesNaf ?? "") ||
     (brouillon.objet ?? "") !== (metier.objet ?? "") ||
     (brouillon.problematiques ?? "") !== (metier.problematiques ?? "") ||
+    (brouillon.mailScene ?? "") !== (metier.mailScene ?? "") ||
+    (brouillon.mailExemples ?? "") !== (metier.mailExemples ?? "") ||
+    (brouillon.mailQuestion ?? "") !== (metier.mailQuestion ?? "") ||
     (brouillon.nbThemesMail ?? NB_THEMES_MAIL_DEFAUT) !== (metier.nbThemesMail ?? NB_THEMES_MAIL_DEFAUT) ||
     (brouillon.metier ?? "") !== (metier.metier ?? "") ||
     JSON.stringify(brouillon.sections) !== JSON.stringify(metier.sections ?? []);
@@ -316,6 +322,9 @@ function KitForm({
       metier: brouillon.metier,
       problematiques: brouillon.problematiques,
       objet: brouillon.objet,
+      mailScene: brouillon.mailScene ?? "",
+      mailExemples: brouillon.mailExemples ?? "",
+      mailQuestion: brouillon.mailQuestion ?? "",
       codesNaf: brouillon.codesNaf ?? "",
       nbThemesMail: brouillon.nbThemesMail,
       // Les lignes laissées vides pendant la saisie sont écartées ici plutôt que
@@ -422,6 +431,70 @@ function KitForm({
             choses — retrouver le SIRET d&apos;un prospect depuis son nom, et lister les entreprises
             d&apos;un département dans l&apos;onglet Annuaire.
           </p>
+        </div>
+
+        {/* Format court : tant que les 3 champs ne sont pas tous remplis, le kit
+            continue de produire l'ancien mail (cf. estMailCourt). */}
+        <div className="border rounded-xl p-4 bg-gray-50/60 space-y-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-sm font-medium">Mail court (premier contact)</span>
+            <span
+              className={`text-[11px] px-2 py-0.5 rounded-full ${
+                brouillon.mailScene?.trim() && brouillon.mailExemples?.trim() && brouillon.mailQuestion?.trim()
+                  ? "bg-green-100 text-green-700"
+                  : "bg-gray-200 text-gray-600"
+              }`}
+            >
+              {brouillon.mailScene?.trim() && brouillon.mailExemples?.trim() && brouillon.mailQuestion?.trim()
+                ? "actif"
+                : "inactif — ancien format"}
+            </span>
+          </div>
+          <p className="text-[11px] text-gray-500 -mt-1">
+            Les trois champs vont ensemble : remplis, ils remplacent les thèmes ci-dessous par un mail
+            court. Laissés vides, le kit envoie le format d&apos;origine. Un premier contact obtient
+            plus de réponses court, avec une seule scène concrète et une question à la fin — les thèmes
+            restent utilisés par la brochure et les relances.
+          </p>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              La scène <span className="text-gray-400">— ce qu&apos;il vit, dans ses mots</span>
+            </label>
+            <AutoTextarea
+              value={brouillon.mailScene ?? ""}
+              onChange={(v) => setBrouillon({ ...brouillon, mailScene: v })}
+              minRows={3}
+              placeholder="ex. Ce qui revient le plus souvent : le planning de la semaine refait le dimanche soir, et le téléphone qui sonne toute la journée depuis les chantiers…"
+              className={inputCls}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Les exemples <span className="text-gray-400">— des illustrations, pas un catalogue</span>
+            </label>
+            <AutoTextarea
+              value={brouillon.mailExemples ?? ""}
+              onChange={(v) => setBrouillon({ ...brouillon, mailExemples: v })}
+              minRows={3}
+              placeholder="ex. Je crée des outils sur mesure, et aucun ne se ressemble : chez l'un c'est le planning sur le téléphone, chez un autre le suivi du matériel…"
+              className={inputCls}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              La question finale <span className="text-gray-400">— on doit pouvoir y répondre en une ligne</span>
+            </label>
+            <AutoTextarea
+              value={brouillon.mailQuestion ?? ""}
+              onChange={(v) => setBrouillon({ ...brouillon, mailQuestion: v })}
+              minRows={2}
+              placeholder="ex. Est-ce que c'est ça qui vous prend le plus de temps en ce moment, ou c'est ailleurs que ça coince ?"
+              className={inputCls}
+            />
+          </div>
         </div>
 
         <div>

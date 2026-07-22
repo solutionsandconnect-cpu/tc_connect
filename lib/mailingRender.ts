@@ -29,6 +29,13 @@ export interface Expediteur {
   telephone?: string
   siteUrl?: string
   logoUrl?: string
+  /**
+   * Une phrase de présentation, en tête du mail court : elle répond au « c'est
+   * qui ? » avant que le message ne soit classé en démarchage. Volontairement
+   * ancrée localement, et en langage courant — « TPE » est un mot de comptable,
+   * pas de chantier.
+   */
+  presentation?: string
 }
 
 /** Logo par défaut : le wordmark, seul lisible à 150 px de large dans un mail. */
@@ -42,6 +49,8 @@ export const EXPEDITEUR_ENEZO: Expediteur = {
   email: 'contact@enezo.fr',
   telephone: '+33 6 79 40 82 54',
   siteUrl: 'https://enezo.fr',
+  presentation:
+    'Je suis développeur à Pénestin (Morbihan), je travaille avec des artisans et des entreprises de la région.',
 }
 
 export interface RenderContexte {
@@ -65,6 +74,27 @@ export function esc(s: unknown): string {
 
 export function lienDesinscription(origin: string, token: string): string {
   return `${origin.replace(/\/+$/, '')}/desinscription/${token}`
+}
+
+/**
+ * Le kit est-il passé au format court ? Les trois champs vont ensemble : un
+ * mail sans sa question finale n'appellerait aucune réponse, et c'est
+ * précisément ce qu'on corrige. Tant qu'ils ne sont pas tous remplis, le kit
+ * continue de produire l'ancien mail — c'est ce qui permet de migrer un métier
+ * à la fois sans toucher aux autres.
+ */
+export function estMailCourt(metier: MailingMetier): boolean {
+  return !!(metier.mailScene?.trim() && metier.mailExemples?.trim() && metier.mailQuestion?.trim())
+}
+
+/** Paragraphes d'un texte saisi librement (une ligne vide = un paragraphe). */
+function paragraphes(texte: string, style: string): string {
+  return texte
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<tr><td style="${style}">${esc(p).replace(/\n/g, '<br>')}</td></tr>`)
+    .join('\n')
 }
 
 export function sujetMail(metier: MailingMetier, prospect: Prospect): string {
@@ -115,19 +145,41 @@ export function renderMailHtml(ctx: RenderContexte): string {
     ? `Vous recevez ce message à votre adresse professionnelle, identifiée via ${esc(prospect.origine.trim())}.`
     : `Vous recevez ce message à votre adresse professionnelle, collectée dans un annuaire professionnel public.`
 
-  return `<!DOCTYPE html>
-<html lang="fr">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#ffffff;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#ffffff;">
-  <tr>
-    <td align="center" style="padding:16px;">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:${ENCRE};">
+  // ── Corps : format court si le kit a été migré, ancien format sinon ────────
+  // Seul le corps change ; en-tête, signature et mentions RGPD sont communs
+  // (le lien de désinscription conditionne la base légale, il ne bouge jamais).
+  const corpsCourt = `
+        ${exp.presentation ? `<tr><td style="padding-bottom:14px;">${esc(exp.presentation)}</td></tr>` : ''}
 
-        <tr><td style="padding-bottom:14px;">Bonjour,</td></tr>
+        <tr>
+          <td style="padding:2px 0 16px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                   style="border-left:3px solid ${OR};">
+              <tr>
+                <td style="padding:2px 0 2px 13px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                    ${paragraphes(metier.mailScene ?? '', 'padding-bottom:8px;')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
 
-        <tr><td>${perso}</td></tr>
+        ${/* `paragraphes` produit déjà des <tr> : les envelopper dans une <table>
+             ici les sortirait du tableau parent (HTML invalide) et le texte
+             s'afficherait hors de sa place. */ ''}
+        ${paragraphes(metier.mailExemples ?? '', 'padding-bottom:16px;')}
 
+        <tr>
+          <td style="padding-bottom:20px;font-weight:bold;color:${PETROL};">
+            ${esc(metier.mailQuestion ?? '')}
+          </td>
+        </tr>
+
+`
+
+  const corpsLong = `
         <tr>
           <td style="padding-bottom:14px;">
             Nous nous permettons de vous contacter pour vous proposer nos services : un outil qui
@@ -175,6 +227,24 @@ export function renderMailHtml(ctx: RenderContexte): string {
         </tr>
 
         <tr><td style="padding-bottom:6px;">Cordialement,</td></tr>
+`
+
+  const corps = estMailCourt(metier) ? corpsCourt : corpsLong
+
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#ffffff;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#ffffff;">
+  <tr>
+    <td align="center" style="padding:16px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:${ENCRE};">
+
+        <tr><td style="padding-bottom:14px;">Bonjour,</td></tr>
+
+        <tr><td>${perso}</td></tr>
+
+        ${corps}
 
         ${signatureHtml(exp, origin)}
 
@@ -263,6 +333,41 @@ export function renderMailTexte(ctx: RenderContexte): string {
   const themes = sections
     .map((s, i) => `${i + 1}. ${s.theme}\n   Problème : ${s.problemeMail}\n   Solution : ${s.solutionMail}`)
     .join('\n\n')
+
+  const pied = [
+    '',
+    '---',
+    prospect.origine?.trim()
+      ? `Vous recevez ce message à votre adresse professionnelle, identifiée via ${prospect.origine.trim()}.`
+      : 'Vous recevez ce message à votre adresse professionnelle, collectée dans un annuaire professionnel public.',
+    `Pour ne plus être contacté : ${lienDesinscription(origin, prospect.optoutToken)}`,
+  ]
+
+  if (estMailCourt(metier)) {
+    return [
+      'Bonjour,',
+      '',
+      personnalisation?.trim() ?? '',
+      personnalisation?.trim() ? '' : null,
+      exp.presentation ?? null,
+      exp.presentation ? '' : null,
+      metier.mailScene?.trim() ?? '',
+      '',
+      metier.mailExemples?.trim() ?? '',
+      '',
+      metier.mailQuestion?.trim() ?? '',
+      '',
+      exp.nom,
+      `${exp.societe}${exp.lieu ? ` — ${exp.lieu}` : ''}`,
+      exp.telephone ?? '',
+      exp.email,
+      exp.siteUrl ?? '',
+      ...pied,
+    ]
+      .filter((l) => l !== null)
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+  }
 
   return [
     'Bonjour,',

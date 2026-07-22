@@ -76,6 +76,26 @@ const PREFIXES_GENERIQUES = [
   'direction', 'compta', 'comptabilite', 'service', 'sav', 'no-reply', 'noreply',
 ]
 
+/**
+ * Webmails et FAI grand public. Deux artisans en @gmail.com ne sont PAS
+ * collègues : chez les TPE du bâtiment ces adresses sont majoritaires, donc
+ * traiter le domaine comme un employeur ferait passer toute la base pour une
+ * seule et même entreprise.
+ */
+const DOMAINES_GENERIQUES = new Set([
+  'gmail.com', 'googlemail.com', 'hotmail.com', 'hotmail.fr', 'outlook.com',
+  'outlook.fr', 'live.fr', 'live.com', 'msn.com', 'yahoo.com', 'yahoo.fr',
+  'orange.fr', 'wanadoo.fr', 'free.fr', 'sfr.fr', 'neuf.fr', 'laposte.net',
+  'bbox.fr', 'aliceadsl.fr', 'numericable.fr', 'icloud.com', 'me.com',
+  'protonmail.com', 'proton.me', 'gmx.fr', 'aol.com',
+])
+
+/** Un domaine d'email n'identifie une entreprise que s'il lui est propre. */
+export function isDomaineEntreprise(domaine: string): boolean {
+  const d = (domaine ?? '').trim().toLowerCase()
+  return !!d && !DOMAINES_GENERIQUES.has(d)
+}
+
 /* ------------------------------------------------------------------ */
 /* Normalisation                                                       */
 /* ------------------------------------------------------------------ */
@@ -228,7 +248,10 @@ export function peutContacter(
  * boîte est le réflexe qui fait basculer une prospection en spam perçu.
  */
 export function doublonSociete(p: Prospect, tous: Prospect[]): Prospect | null {
-  const dom = p.domaine || emailDomain(p.email)
+  // Le domaine ne vaut comme signal que s'il appartient à l'entreprise : un
+  // webmail partagé (gmail, orange…) rapprocherait des sociétés étrangères.
+  const domBrut = p.domaine || emailDomain(p.email)
+  const dom = isDomaineEntreprise(domBrut) ? domBrut : ''
   const soc = (p.societe ?? '').trim().toLowerCase()
   return (
     tous.find(

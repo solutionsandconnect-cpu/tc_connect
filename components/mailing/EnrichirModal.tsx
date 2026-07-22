@@ -6,7 +6,11 @@ import { appliquerEnrichissement } from "@/lib/mailingService";
 import { libelleEffectif, rechercherLot, type ResultatRecherche } from "@/lib/sirene";
 import type { MailingMetier, Prospect } from "@/types";
 
-type Etat = "pret" | "encours" | "fini";
+// L'enrichissement se fait en DEUX temps, de durées comparables : interroger
+// l'API, puis écrire les résultats en base un par un. Les distinguer n'est pas
+// cosmétique — sans ça, la barre reste pleine et figée pendant toute la seconde
+// phase, et on croit l'app plantée (constaté sur le premier vrai passage).
+type Etat = "pret" | "recherche" | "ecriture" | "fini";
 
 export default function EnrichirModal({
   prospects, metiers, onClose, onToast,
@@ -30,7 +34,7 @@ export default function EnrichirModal({
   );
 
   const lancer = async () => {
-    setEtat("encours");
+    setEtat("recherche");
     setProgres({ fait: 0, total: cibles.length });
     abort.current = new AbortController();
 
@@ -48,9 +52,12 @@ export default function EnrichirModal({
 
     // Application automatique réservée aux correspondances UNIQUES : au-delà,
     // choisir à la place de l'utilisateur produirait de faux effectifs.
+    const aEcrire = res.filter((r) => r.candidats.length === 1);
+    setEtat("ecriture");
+    setProgres({ fait: 0, total: aEcrire.length });
+
     let n = 0;
-    for (const r of res) {
-      if (r.candidats.length !== 1) continue;
+    for (const r of aEcrire) {
       const p = parId.get(r.prospectId);
       if (!p) continue;
       try {
@@ -59,6 +66,7 @@ export default function EnrichirModal({
       } catch {
         /* le prospect reste non enrichi, il ressortira au prochain passage */
       }
+      setProgres({ fait: n, total: aEcrire.length });
     }
     setAppliques(n);
     setResultats(res);
@@ -108,25 +116,38 @@ export default function EnrichirModal({
         </>
       )}
 
-      {etat === "encours" && (
+      {(etat === "recherche" || etat === "ecriture") && (
         <>
           <div className="text-sm text-gray-600 mb-2">
-            Recherche en cours — {progres.fait}/{progres.total}
+            {etat === "recherche"
+              ? `Étape 1/2 — recherche dans l'annuaire : ${progres.fait}/${progres.total}`
+              : `Étape 2/2 — enregistrement des résultats : ${progres.fait}/${progres.total}`}
           </div>
           <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
             <div
-              className="h-full bg-blue-600 transition-all"
+              className={`h-full transition-all ${etat === "recherche" ? "bg-blue-600" : "bg-green-600"}`}
               style={{ width: `${progres.total ? (progres.fait / progres.total) * 100 : 0}%` }}
             />
           </div>
-          <div className="flex justify-end mt-5">
-            <button
-              onClick={() => abort.current?.abort()}
-              className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition"
-            >
-              Arrêter
-            </button>
-          </div>
+          <p className="text-[11px] text-gray-500 mt-2">
+            {etat === "recherche"
+              ? "Une pause est respectée entre chaque requête pour ne pas saturer l'API publique."
+              : "Écriture en base, un prospect à la fois. Ce qui est déjà enregistré est acquis : "
+                + "si tu fermes, relancer reprendra simplement les prospects restants."}
+          </p>
+          {/* Le bouton n'est proposé qu'en phase 1 : l'AbortController ne pilote
+              que les requêtes, il n'aurait aucun effet sur la boucle d'écriture —
+              l'afficher laisserait croire à une action qui n'existe pas. */}
+          {etat === "recherche" && (
+            <div className="flex justify-end mt-5">
+              <button
+                onClick={() => abort.current?.abort()}
+                className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition"
+              >
+                Arrêter
+              </button>
+            </div>
+          )}
         </>
       )}
 
@@ -177,7 +198,10 @@ export default function EnrichirModal({
 
           {erreurs.length > 0 && (
             <div className="rounded-lg bg-amber-50 text-amber-800 text-xs px-3 py-2 mb-3">
-              {erreurs.length} appel(s) en erreur — relance l&apos;enrichissement pour les reprendre.
+              {/* Espace explicite : au passage à la ligne, JSX avale celui qui suit
+                  une accolade — d'où le « 12appel(s) » constaté. */}
+              {erreurs.length}{" "}
+              appel(s) en erreur — relance l&apos;enrichissement pour les reprendre.
             </div>
           )}
 

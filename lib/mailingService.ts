@@ -61,6 +61,9 @@ export const updateMetier = async (id: string, data: Partial<MailingMetier>): Pr
   if (data.objet !== undefined) payload.objet = data.objet
   if (data.problematiques !== undefined) payload.problematiques = data.problematiques
   if (data.codesNaf !== undefined) payload.codesNaf = data.codesNaf
+  if (data.mailScene !== undefined) payload.mailScene = data.mailScene
+  if (data.mailExemples !== undefined) payload.mailExemples = data.mailExemples
+  if (data.mailQuestion !== undefined) payload.mailQuestion = data.mailQuestion
   await updateDoc(doc(db, 'mailing_metiers', id), payload)
 }
 
@@ -348,6 +351,49 @@ export const enregistrerEnvoi = async (
     nbEnvois: (prospect.nbEnvois ?? 0) + 1,
     dernierEnvoiAt: now,
     updatedAt: now,
+  })
+}
+
+/**
+ * Défait le dernier envoi CONSIGNÉ sur un prospect — typiquement un clic sur
+ * « Envoyé » alors que le mail n'est jamais parti.
+ *
+ * L'archive `mailing_envois` et le journal ne sont PAS touchés : ils sont
+ * immuables par conception (règles Firestore) et c'est ce qui garantit qu'un
+ * message archivé reste le message réellement composé. On consigne donc
+ * l'annulation comme un fait de plus, on ne réécrit pas l'histoire. Seul l'état
+ * du prospect revient en arrière — ce qui relâche le délai de relance.
+ */
+export const annulerDernierEnvoi = async (prospect: Prospect): Promise<void> => {
+  const nouveauNb = Math.max(0, (prospect.nbEnvois ?? 0) - 1)
+
+  // Dernier envoi encore valide après annulation. L'archive conserve TOUS les
+  // envois, y compris ceux déjà annulés : on compte à rebours depuis sa fin
+  // plutôt que de prendre l'avant-dernier, sinon deux annulations successives
+  // restaureraient la même date.
+  const snap = await getDocs(query(envoisCol(), where('prospectId', '==', prospect.id)))
+  const archives = snap.docs
+    .map((d) => d.data() as MailingEnvoi)
+    .sort((a, b) => (b.envoyeAt?.toMillis() ?? 0) - (a.envoyeAt?.toMillis() ?? 0))
+  const precedent = nouveauNb > 0 ? archives[archives.length - nouveauNb] : undefined
+
+  // Un prospect qui a RÉPONDU depuis garde son statut : annuler un envoi de
+  // trop ne doit pas le renvoyer dans la file des gens à contacter.
+  const rendreStatut = prospect.statut === 'envoye' || prospect.statut === 'relance'
+  const nouveauStatut: ProspectStatut =
+    nouveauNb === 0 ? 'a_contacter' : nouveauNb === 1 ? 'envoye' : 'relance'
+
+  await journaliser(prospect, {
+    type: 'annulation',
+    statutAvant: prospect.statut,
+    ...(rendreStatut ? { statutApres: nouveauStatut } : {}),
+  })
+
+  await updateDoc(doc(db, 'prospects', prospect.id), {
+    nbEnvois: nouveauNb,
+    dernierEnvoiAt: precedent?.envoyeAt ?? deleteField(),
+    ...(rendreStatut ? { statut: nouveauStatut } : {}),
+    updatedAt: Timestamp.now(),
   })
 }
 
