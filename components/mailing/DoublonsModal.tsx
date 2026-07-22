@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Modal from "@/components/ui/Modal";
-import { fusionnerProspects, ignorerDoublon } from "@/lib/mailingService";
+import { fusionnerProspects, ignorerDoublon, oublierDoublonIgnore } from "@/lib/mailingService";
 import { fichePrincipale, trouverDoublons, type PaireDoublon } from "@/lib/mailingDoublons";
 import { libelleEffectif } from "@/lib/sirene";
 import { STATUT_LABEL } from "@/lib/mailingModel";
@@ -64,9 +64,15 @@ export default function DoublonsModal({
   /** Choix explicite de la fiche à conserver. Null = proposition automatique. */
   const [choixGarde, setChoixGarde] = useState<string | null>(null);
 
+  /** Vue courante : paires à examiner, ou paires déjà écartées à la main. */
+  const [vue, setVue] = useState<"actives" | "ignorees">("actives");
+
   // Recalculé à chaque changement de `prospects` (le flux temps réel renvoie la
   // liste après chaque fusion) : les paires résolues disparaissent d'elles-mêmes.
-  const paires = useMemo(() => trouverDoublons(prospects), [prospects]);
+  const toutes = useMemo(() => trouverDoublons(prospects), [prospects]);
+  const actives = toutes.filter((p) => !p.ignoree);
+  const ignorees = toutes.filter((p) => p.ignoree);
+  const paires = vue === "actives" ? actives : ignorees;
   const paire: PaireDoublon | undefined = paires[index];
 
   // Changer de paire remet la proposition automatique : un choix fait sur une
@@ -104,6 +110,20 @@ export default function DoublonsModal({
     }
   };
 
+  /** Remet une paire écartée dans la file à examiner. */
+  const remettre = async () => {
+    if (!paire) return;
+    setEnCours(true);
+    try {
+      await oublierDoublonIgnore(paire.a, paire.b);
+      onToast("Paire remise à examiner.");
+      setChoixGarde(null);
+      setIndex(0);
+    } finally {
+      setEnCours(false);
+    }
+  };
+
   /** Sens de la fusion : le choix de l'utilisateur prime sur la proposition. */
   const fusionOrientee = (() => {
     const defaut = paire ? fichePrincipale(paire.a, paire.b) : null;
@@ -117,17 +137,43 @@ export default function DoublonsModal({
 
   return (
     <Modal isOpen onClose={onClose} title="Doublons potentiels" size="lg">
+      {/* Les paires écartées restent accessibles : « ce ne sont pas les mêmes »
+          doit pouvoir se corriger, surtout après un enchaînement rapide. */}
+      {ignorees.length > 0 && (
+        <div className="flex gap-1.5 mb-3">
+          {([
+            { k: "actives", l: "À examiner", n: actives.length },
+            { k: "ignorees", l: "Écartées", n: ignorees.length },
+          ] as const).map((v) => (
+            <button
+              key={v.k}
+              onClick={() => { setVue(v.k); setIndex(0); setChoixGarde(null); }}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${
+                vue === v.k ? "bg-blue-600 text-white" : "border text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              {v.l}
+              <span className={`ml-1.5 ${vue === v.k ? "text-blue-100" : "text-gray-400"}`}>
+                {v.n}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {!paire ? (
         <div className="py-8 text-center text-sm text-gray-500">
-          {traites > 0
-            ? `Terminé — ${traites} paire(s) traitée(s).`
-            : "Aucun doublon potentiel : même code postal, même métier et nom proche."}
+          {vue === "ignorees"
+            ? "Aucune paire écartée."
+            : traites > 0
+              ? `Terminé — ${traites} paire(s) traitée(s).`
+              : "Aucun doublon potentiel : même code postal, même métier et nom proche."}
         </div>
       ) : (
         <>
           <div className="flex items-baseline justify-between mb-3">
             <span className="text-sm text-gray-600">
-              {paires.length} paire(s) à examiner
+              {paires.length} paire(s) {vue === "actives" ? "à examiner" : "écartée(s)"}
             </span>
             <span className="text-[11px] text-gray-500">{paire.motif}</span>
           </div>
@@ -177,13 +223,23 @@ export default function DoublonsModal({
               Voir la suivante
             </button>
             <div className="flex gap-2">
-              <button
-                onClick={ignorer}
-                disabled={enCours}
-                className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition disabled:opacity-40"
-              >
-                Ce ne sont pas les mêmes
-              </button>
+              {vue === "actives" ? (
+                <button
+                  onClick={ignorer}
+                  disabled={enCours}
+                  className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition disabled:opacity-40"
+                >
+                  Ce ne sont pas les mêmes
+                </button>
+              ) : (
+                <button
+                  onClick={remettre}
+                  disabled={enCours}
+                  className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition disabled:opacity-40"
+                >
+                  Remettre à examiner
+                </button>
+              )}
               <button
                 onClick={fusionner}
                 disabled={enCours}

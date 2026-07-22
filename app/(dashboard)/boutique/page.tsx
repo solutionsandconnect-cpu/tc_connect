@@ -11,7 +11,6 @@ import { doc, updateDoc, getDoc, Timestamp, collection, addDoc, getDocs, query, 
 import { db } from "@/lib/firebase";
 import { copyText } from "@/lib/clipboard";
 import Modal from "@/components/ui/Modal";
-import BrandGuard from "@/components/BrandGuard";
 import { DEFAULT_DROITS } from "@/types";
 import type { StoreApp, StoreSubStatut, StoreReview, StoreSubscription } from "@/types";
 
@@ -35,12 +34,21 @@ const PERIOD_LABEL: Record<StoreApp["periodicite"], string> = {
   unique: "paiement unique",
 };
 
+/**
+ * La boutique est CONSULTABLE par tous, y compris un client coaching.
+ *
+ * Elle reste absente de la navigation coaching (entrée taguée `enezo` dans
+ * Navbar) : ce n'est pas un espace de son quotidien. Mais plusieurs écrans y
+ * renvoient — `StoreGate` propose « Voir la boutique » quand une app n'est pas
+ * activée, et l'accueil parle des CheckConnect. Garder la page fermée créait un
+ * cul-de-sac : on invitait à découvrir des apps, puis on affichait « cet espace
+ * n'est pas le vôtre ».
+ *
+ * Le cloisonnement d'USAGE n'est pas touché : chaque app reste protégée par
+ * `StoreGate` (abonnement actif requis). Voir le catalogue n'y donne pas accès.
+ */
 export default function BoutiquePage() {
-  return (
-    <BrandGuard allow={["enezo"]}>
-      <BoutiquePageInner />
-    </BrandGuard>
-  );
+  return <BoutiquePageInner />;
 }
 
 function BoutiquePageInner() {

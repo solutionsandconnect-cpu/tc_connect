@@ -282,7 +282,10 @@ export default function MailingPage() {
 
   // Comptage seulement (les paires sont recalculées dans la modale) : la
   // détection est en O(n²) par code postal, inutile de la garder en mémoire ici.
-  const nbDoublons = useMemo(() => trouverDoublons(prospects).length, [prospects]);
+  const nbDoublons = useMemo(
+    () => trouverDoublons(prospects).filter((p) => !p.ignoree).length,
+    [prospects],
+  );
 
   /** Critères actifs — la recherche et le rayon comptent comme les pastilles. */
   const nbFiltresActifs =

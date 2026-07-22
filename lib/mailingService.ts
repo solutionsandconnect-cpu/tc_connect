@@ -443,6 +443,23 @@ export const ignorerDoublon = async (a: Prospect, b: Prospect): Promise<void> =>
 }
 
 /**
+ * Annule un « ce ne sont pas les mêmes ».
+ * Nettoie les DEUX fiches : selon laquelle portait la marque, la paire
+ * resterait masquée si on n'en traitait qu'une.
+ */
+export const oublierDoublonIgnore = async (a: Prospect, b: Prospect): Promise<void> => {
+  const maj = async (p: Prospect, autreId: string) => {
+    if (!p.doublonsIgnores?.includes(autreId)) return
+    await updateDoc(doc(db, 'prospects', p.id), {
+      doublonsIgnores: p.doublonsIgnores.filter((id) => id !== autreId),
+      updatedAt: Timestamp.now(),
+    })
+  }
+  await maj(a, b.id)
+  await maj(b, a.id)
+}
+
+/**
  * Efface les données INSEE d'un prospect mal apparié.
  *
  * Le cas réel : un nom sans code postal trouve un homonyme à l'autre bout de la

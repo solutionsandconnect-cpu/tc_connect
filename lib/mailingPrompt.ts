@@ -43,10 +43,17 @@ CE QUE JE CHERCHE
    - y a-t-il quelqu'un dont c'est le métier de planifier, gérer les devis ou l'administratif (assistante, chargé de planning, responsable d'exploitation, conjoint(e) qui gère la gestion), ou bien le dirigeant fait-il tout lui-même ?
    - qui répond au téléphone et qui reçoit les mails : le dirigeant, ou quelqu'un d'autre ?
 2. Ancienneté, dirigeant(s), et signes de croissance récente (recrutements en cours, nouveaux locaux, nouvelle agence).
-3. Spécialités réelles et type de clientèle : particuliers ou professionnels, neuf ou rénovation, dépannage ou chantiers longs.
-4. Présence en ligne : site web, réseaux sociaux, avis clients. Pour les avis, relève les THÈMES RÉCURRENTS, en particulier ce qui touche aux délais, aux devis, aux rendez-vous manqués ou à la communication.
-5. Indices d'outillage informatique : logiciel de gestion ou de devis mentionné quelque part, prise de rendez-vous en ligne, espace client, offres d'emploi citant un outil précis.
-6. Actualités récentes : certifications (RGE, Qualibat), partenariats, changements notables.
+
+3. Santé et trajectoire économiques, si les comptes sont publiés (INPI, Pappers, Societe.com, Infogreffe) :
+   - le CHIFFRE D'AFFAIRES annuel, et surtout son ÉVOLUTION sur les 3 derniers exercices : en croissance, stable, en recul ?
+   - l'évolution du NOMBRE DE SALARIÉS sur la même période ;
+   - le ratio CHIFFRE D'AFFAIRES PAR SALARIÉ, et sa tendance. Le chiffre d'affaires seul ne dit pas grand-chose : 800 000 € à trois personnes ou à douze, ce n'est pas la même entreprise.
+   Ce que je cherche à lire là-dedans : une entreprise qui embauche plus vite que son chiffre d'affaires ne progresse est en train de perdre en efficacité — c'est souvent le moment où l'organisation craque et où un outil devient nécessaire. À l'inverse, un chiffre d'affaires par salarié qui monte indique une entreprise qui tient sa croissance.
+   ⚠️ Beaucoup de TPE ne déposent pas leurs comptes, ou en demandent la confidentialité : dans ce cas écris « comptes non publiés » et n'invente aucun chiffre. Ne compare à une moyenne de secteur que si tu peux la sourcer.
+4. Spécialités réelles et type de clientèle : particuliers ou professionnels, neuf ou rénovation, dépannage ou chantiers longs.
+5. Présence en ligne : site web, réseaux sociaux, avis clients. Pour les avis, relève les THÈMES RÉCURRENTS, en particulier ce qui touche aux délais, aux devis, aux rendez-vous manqués ou à la communication.
+6. Indices d'outillage informatique : logiciel de gestion ou de devis mentionné quelque part, prise de rendez-vous en ligne, espace client, offres d'emploi citant un outil précis.
+7. Actualités récentes : certifications (RGE, Qualibat), partenariats, changements notables.
 
 RÈGLES STRICTES
 - Ne donne que ce que tu peux SOURCER. Indique l'URL à côté de chaque information.

@@ -78,6 +78,8 @@ export interface PaireDoublon {
   motif: string
   /** Ce que la fusion ferait gagner — sert à trier les paires les plus utiles. */
   apport: string[]
+  /** Paire déjà écartée à la main. Conservée pour pouvoir revenir sur sa décision. */
+  ignoree: boolean
 }
 
 function apportDe(a: Prospect, b: Prospect): string[] {
@@ -116,12 +118,14 @@ export function trouverDoublons(prospects: Prospect[]): PaireDoublon[] {
         const a = liste[i]
         const b = liste[j]
         if (a.metierId && b.metierId && a.metierId !== b.metierId) continue
-        // Paire déjà écartée par l'utilisateur : on ne la repropose plus.
-        if (a.doublonsIgnores?.includes(b.id) || b.doublonsIgnores?.includes(a.id)) continue
         const score = scoreNom(a.societe, b.societe)
         if (score < SEUIL_DOUBLON) continue
+        // Les paires écartées sont MARQUÉES, pas supprimées : « ce ne sont pas
+        // les mêmes » se clique vite, à la chaîne, et doit rester révocable.
+        const ignoree =
+          !!a.doublonsIgnores?.includes(b.id) || !!b.doublonsIgnores?.includes(a.id)
         paires.push({
-          a, b, score,
+          a, b, score, ignoree,
           motif: `${a.codePostal} · nom ${score} %`,
           apport: apportDe(a, b),
         })

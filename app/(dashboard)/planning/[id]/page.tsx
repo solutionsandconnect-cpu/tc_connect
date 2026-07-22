@@ -814,6 +814,9 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
   }
 
   const openBilanClient = () => {
+    // Même garde que `openQuestionnaireDirect` : le bouton est déjà masqué,
+    // mais la fonction reste appelable — on referme la porte des deux côtés.
+    if (!isAdmin && isSessionPastForLock) return
     setBilanMotivationClient((planning as any)?.motivation_pdt_seance ?? 0)
     setBilanIntensiteMiseClient((planning as any)?.intensite_mise_pdt_seance ?? 0)
     setBilanClientIntensity((planning as any)?.intensite_seance ?? 0)
@@ -1679,10 +1682,17 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
                 : <p className="text-xs text-gray-400 mt-0.5">Non renseigné</p>
               }
             </div>
-            <button onClick={openBilanClient}
-              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
-              {(planning as any).motivation_pdt_seance ? 'Modifier' : 'Remplir'}
-            </button>
+            {/* Même verrou que le questionnaire d'avant-séance : une fois le RDV
+                terminé, le ressenti se fige. Retouché plus tard, il ne décrit
+                plus la séance et fausse le suivi. */}
+            {isSessionPastForLock ? (
+              <span className="text-xs text-gray-400">Séance passée</span>
+            ) : (
+              <button onClick={openBilanClient}
+                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
+                {(planning as any).motivation_pdt_seance ? 'Modifier' : 'Remplir'}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -2512,6 +2522,7 @@ export default function DetailPlanningPage({ params }: { params: Promise<{ id: s
               Annuler
             </button>
             <button onClick={async () => {
+              if (!isAdmin && isSessionPastForLock) { setShowBilanClientModal(false); return }
               await updatePlanning(id, {
                 motivation_pdt_seance: bilanMotivationClient,
                 intensite_mise_pdt_seance: bilanIntensiteMiseClient,

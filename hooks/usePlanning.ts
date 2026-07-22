@@ -5,6 +5,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/context/AuthContext'
+import { rdvVisiblePourClient } from '@/lib/planningAccess'
 import type { PlanningPro } from '@/types'
 
 export function usePlanning() {
@@ -26,7 +27,11 @@ export function usePlanning() {
         )
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setPlannings(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as PlanningPro[])
+      const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as PlanningPro[]
+      // Filtré ici plutôt que dans la requête : Firestore exigerait un index
+      // composite, et un champ absent ne remonterait pas du tout — ce qui
+      // masquerait les anciens RDV au lieu des seuls « Non calé ».
+      setPlannings(isAdmin ? rows : rows.filter(rdvVisiblePourClient))
       setLoading(false)
     })
 

@@ -25,6 +25,7 @@ import { useTrips } from '@/hooks/useTrips'
 import { tripProgress } from '@/lib/tripsService'
 import { listenStoreSubscriptions, updateStoreSubscription, updateSubWithEvent, appendSubEvent, computeDateFin, suspendExpiredSubscriptions } from '@/lib/storeService'
 import { cleanupArchivedSubscriptions } from '@/lib/storeCleanup'
+import { rdvVisiblePourClient } from '@/lib/planningAccess'
 
 // Libellés de statut des contrats affichés dans « Mes contrats » (espace client Enezo)
 const CONTRAT_STATUT: Record<string, { label: string; cls: string }> = {
@@ -355,7 +356,14 @@ export default function AccueilPage() {
         orderBy('date_planning', 'asc')
       )
       const rdvSnap = await getDocs(rdvQuery)
-      setRdvAujourdhui(rdvSnap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      // Même règle que le hook `usePlanning` : un client ne voit pas les RDV
+      // encore « Non calé ». Cet écran interroge Firestore directement, il faut
+      // donc appliquer le filtre ici aussi (cf. lib/planningAccess.ts).
+      setRdvAujourdhui(
+        rdvSnap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((p) => isAdmin || rdvVisiblePourClient(p)),
+      )
 
       // Activités d'aujourd'hui (filtrage de la date côté client → pas d'index composite requis)
       const actSnap = await getDocs(query(
@@ -382,7 +390,11 @@ export default function AccueilPage() {
         orderBy('date_planning', 'asc')
       )
       const prochainsSnap = await getDocs(prochainsQuery)
-      setProchainsRdv(prochainsSnap.docs.map((d) => ({ id: d.id, ...d.data() })))
+      setProchainsRdv(
+        prochainsSnap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((p) => isAdmin || rdvVisiblePourClient(p)),
+      )
 
     } catch {}
 

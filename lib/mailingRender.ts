@@ -171,6 +171,20 @@ export function renderMailHtml(ctx: RenderContexte): string {
              s'afficherait hors de sa place. */ ''}
         ${paragraphes(metier.mailExemples ?? '', 'padding-bottom:16px;')}
 
+        ${/* Lien vers le site dans le CORPS (en plus de la signature), à la
+             demande de Teddy. Volontairement en TEXTE et non en bouton, et placé
+             AVANT la question : un second bouton entrerait en concurrence avec
+             l'appel à l'action, et devant deux choix on en prend souvent un
+             troisième — ne rien faire. */ ''}
+        ${exp.siteUrl
+          ? `<tr>
+               <td style="padding-bottom:16px;">
+                 Retrouvez plus d'infos également sur
+                 <a href="${esc(exp.siteUrl)}" style="color:${PETROL};font-weight:600;">${esc(exp.siteUrl.replace(/^https?:\/\//, ''))}</a>.
+               </td>
+             </tr>`
+          : ''}
+
         <tr>
           <td style="padding-bottom:20px;font-weight:bold;color:${PETROL};">
             ${esc(metier.mailQuestion ?? '')}
@@ -355,6 +369,8 @@ export function renderMailTexte(ctx: RenderContexte): string {
       '',
       metier.mailExemples?.trim() ?? '',
       '',
+      exp.siteUrl ? `Vous pouvez voir ce que je fais sur ${exp.siteUrl}` : null,
+      exp.siteUrl ? '' : null,
       metier.mailQuestion?.trim() ?? '',
       '',
       exp.nom,

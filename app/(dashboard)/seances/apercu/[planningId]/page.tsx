@@ -10,6 +10,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useExercices } from '@/hooks/useExercices'
 import { saveExerciceMemory } from '@/lib/exerciceMemory'
 import Modal from '@/components/ui/Modal'
+import QuestionnaireFormeModal, { reponsesDepuisPlanning } from '@/components/ui/QuestionnaireFormeModal'
 import { ArrowLeftIcon, ChevronDownIcon, ChevronUpIcon, PlusIcon, PlayIcon, CheckIcon } from '@heroicons/react/24/outline'
 
 const TYPES_SEANCE_APERCU = ['Circuit classique','Tabata','Circuit en 30-10','Circuit varié (rep)','Circuit varié (temps)','Circuit varié']
@@ -44,6 +45,8 @@ interface PlanningData {
   motivation_pdt_seance?: number
   intensite_mise_pdt_seance?: number
   intensite_seance?: number
+  /** Questionnaire d'état de forme d'avant-séance (indice de Hooper). */
+  questionnaire_rempli?: boolean
 }
 
 interface ExerciceData {
@@ -150,6 +153,8 @@ export default function OverviewSeancePage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const sourcePlanningId = searchParams.get('sourcePlanningId') || ''
+  /** On vient de créer cette séance en refaisant une séance passée. */
+  const estNouvelleSeance = searchParams.get('nouvelle') === '1'
   const { userProfile, currentUser } = useAuth()
   const { exercices } = useExercices()
   const isAdmin = userProfile?.role_app === 'Admin'
@@ -320,6 +325,9 @@ export default function OverviewSeancePage() {
   const [crClient, setCrClient] = useState('')
   const [savingCommentaires, setSavingCommentaires] = useState(false)
   const [savedCommentaires, setSavedCommentaires] = useState(false)
+  const [refaisant, setRefaisant] = useState(false)
+  const [refaite, setRefaite] = useState(false)
+  const [showForme, setShowForme] = useState(false)
 
   useEffect(() => {
     if (!planningId) return
@@ -566,8 +574,11 @@ export default function OverviewSeancePage() {
   const saveCommentaires = async () => {
     setSavingCommentaires(true)
     try {
+      // Le client n'écrit QUE son propre retour : renvoyer `cr_rdv_moi` depuis
+      // son écran le ferait réécrire le mot du coach avec ce qu'il avait chargé
+      // — et l'écraserait si le coach l'a modifié entre-temps.
       await updateDoc(doc(db, 'planning_pro', planningId), {
-        cr_rdv_moi: crCoach,
+        ...(isAdmin ? { cr_rdv_moi: crCoach } : {}),
         cr_rdv_client: crClient,
       })
       setSavedCommentaires(true)
@@ -589,6 +600,165 @@ export default function OverviewSeancePage() {
   })()
 
   const bilanFinFilled = (planning?.motivation_pdt_seance ?? 0) > 0
+
+  /**
+   * La séance appartient-elle à un jour révolu ?
+   *
+   * Comparé au DÉBUT du jour courant, et non à l'instant présent : le client
+   * doit pouvoir saisir son ressenti le soir même de sa séance. Ce n'est qu'à
+   * partir du lendemain que ses réponses se figent — au-delà, un ressenti
+   * modifié n'est plus un ressenti, et il fausserait le suivi du coach.
+   */
+  const seancePassee = (() => {
+    const d = planning?.date_planning?.toDate?.()
+    if (!d) return false
+    const debutDuJour = new Date()
+    debutDuJour.setHours(0, 0, 0, 0)
+    return d < debutDuJour
+  })()
+
+  /** Le coach garde la main : lui doit pouvoir corriger après coup. */
+  const saisieVerrouillee = !isAdmin && seancePassee
+
+  /**
+   * Séance menée seul par le client, créée depuis « Refaire cette séance ».
+   * Elle n'a pas été précédée d'un échange avec le coach : l'état de forme est
+   * donc le seul point de contrôle avant l'effort, et il doit être renseigné
+   * AVANT — rempli après coup, il ne décrit plus l'état de départ.
+   */
+  const estSeanceAutonomie = planning?.type_planning === 'Séance en autonomie'
+  const doitRemplirForme =
+    !isAdmin && estSeanceAutonomie && !planning?.questionnaire_rempli
+
+  /**
+   * « Refaire cette séance » : DUPLIQUE le RDV, ses circuits et leurs exercices
+   * à la date du jour, puis ouvre la copie.
+   *
+   * Pourquoi dupliquer plutôt que rejouer : le mode `replay` remet à zéro
+   * `avancement_circuit` et les tours effectués DE LA SÉANCE D'ORIGINE. Refaire
+   * en place effacerait donc le travail de la première fois. Ici, l'originale
+   * n'est pas touchée — le client repart d'une séance vierge, qu'il peut
+   * lancer et où il saisit ses propres ressentis.
+   *
+   * ⚠️ Rien de ce qui relève du VÉCU n'est copié : ni les ressentis (RPE,
+   * motivation, intensités), ni les comptes rendus, ni l'avancement. Seul le
+   * CONTENU de l'entraînement l'est.
+   */
+  const refaireSeance = async () => {
+    if (!currentUser || !planning) return
+    setRefaisant(true)
+    try {
+      const src = planning as any
+      const now = new Date()
+      const debut = new Date(now)
+      const fin = new Date(now.getTime() + 60 * 60 * 1000)
+
+      // 1. Le RDV. Le type « Séance en autonomie » le distingue, dans le
+      //    planning du coach, d'un rendez-vous qu'il a lui-même programmé.
+      const nouveauPlanning = await addDoc(collection(db, 'planning_pro'), {
+        ...(src.ref_users ? { ref_users: src.ref_users } : {}),
+        ...(src.ref_client ? { ref_client: src.ref_client } : {}),
+        type_planning: 'Séance en autonomie',
+        date_planning: Timestamp.fromDate(now),
+        heure_planning_debut: Timestamp.fromDate(debut),
+        heure_planning_fin: Timestamp.fromDate(fin),
+        // « Calé » et non « Non calé » (le défaut de la création manuelle) :
+        // cette séance a bien lieu, à cette date, et rien n'est à convenir avec
+        // le coach. Elle passera à « Effectué » quand le bilan sera rempli.
+        etat_planning_rdv: 'Calé',
+        // Trace l'origine : utile pour retrouver la séance modèle.
+        refaiteDe: planningId,
+        date_create: Timestamp.now(),
+      })
+
+      // 2. Les circuits, puis 3. leurs exercices — séquentiellement, chaque
+      //    exercice devant pointer sur le circuit fraîchement créé.
+      for (const s of seances) {
+        const sSrc = s as any
+        const copieCircuit = await addDoc(collection(db, 'seance'), {
+          type_seance: sSrc.type_seance ?? 'Circuit classique',
+          partie_seance: sSrc.partie_seance ?? 'Corps de séance',
+          observations_seance: sSrc.observations_seance ?? '',
+          nb_tours: sSrc.nb_tours ?? 3,
+          recup_tours: sSrc.recup_tours ?? 30,
+          tps_recup_exo_default: sSrc.tps_recup_exo_default ?? 5,
+          type_effort_exo_default: sSrc.type_effort_exo_default ?? 'Durée (sec)',
+          tps_effort_exo_default: sSrc.tps_effort_exo_default ?? 30,
+          num_circuit: sSrc.num_circuit ?? 1,
+          nb_exercice: s.programme.length,
+          ref_planning: doc(db, 'planning_pro', nouveauPlanning.id),
+          ref_users: doc(db, 'users', currentUser.uid),
+          avancement_circuit: 0,
+          date_create: Timestamp.now(),
+        })
+
+        for (const { item } of s.programme) {
+          const i = item as any
+          await addDoc(collection(db, 'programme_seance'), {
+            ref_seance: doc(db, 'seance', copieCircuit.id),
+            ...(i.exercice ? { exercice: i.exercice } : {}),
+            num_exercice: i.num_exercice ?? 0,
+            type_effort: i.type_effort ?? 'Durée (sec)',
+            effort: i.effort ?? 0,
+            recup_effort: i.recup_effort ?? 0,
+            tempo_phase1: i.tempo_phase1 ?? 0,
+            tempo_phase2: i.tempo_phase2 ?? 0,
+            tempo_phase3: i.tempo_phase3 ?? 0,
+            tempo_phase4: i.tempo_phase4 ?? 0,
+            charge: i.charge ?? 0,
+            materiel: i.materiel ?? '',
+            alerte_exercice: i.alerte_exercice ?? '',
+            raison_alerte_exercice: i.raison_alerte_exercice ?? '',
+            intensite_exercice: i.intensite_exercice ?? '',
+            explication_exercice: i.explication_exercice ?? '',
+            // Le vécu ne se recopie pas : ni tours effectués, ni observations.
+            nb_serie_effectuee: 0,
+            date_create: Timestamp.now(),
+          })
+        }
+      }
+
+      // 4. Prévenir le coach : une séance en autonomie se décide sans lui, il
+      //    n'a aucun autre moyen de l'apprendre avant le prochain rendez-vous.
+      //    In-app ET push, comme à la création d'un compte.
+      if (!isAdmin) {
+        const nomClient = [userProfile?.prenom, userProfile?.nom].filter(Boolean).join(' ')
+          || userProfile?.email || 'Un client'
+        const texte = `${nomClient} refait une séance aujourd'hui (${planning.type_planning || 'Séance'}).`
+        try {
+          const admins = await getDocs(query(collection(db, 'users'), where('role_app', '==', 'Admin')))
+          await Promise.all(admins.docs.map((a) =>
+            addDoc(collection(db, 'Notifications'), {
+              refUsers: doc(db, 'users', a.id),
+              type_notification: 'SEANCE_AUTONOMIE',
+              notification: texte,
+              etat_notification: 'Non lu',
+              ref_planning: doc(db, 'planning_pro', nouveauPlanning.id),
+              date_create: Timestamp.now(),
+            })
+          ))
+        } catch { /* la séance est créée : une notification manquée ne doit pas la bloquer */ }
+
+        fetch('/api/push/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            toAdmins: true,
+            title: 'Séance en autonomie',
+            body: texte,
+            url: `/seances/apercu/${nouveauPlanning.id}`,
+          }),
+        }).catch(() => {})
+      }
+
+      setRefaite(true)
+      // `nouvelle=1` : la page d'arrivée est la MÊME que celle qu'on quitte, au
+      // paramètre près. Sans repère visuel, on croit que le clic n'a rien fait.
+      router.push(`/seances/apercu/${nouveauPlanning.id}?nouvelle=1`)
+    } finally {
+      setRefaisant(false)
+    }
+  }
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-screen">
@@ -630,6 +800,38 @@ export default function OverviewSeancePage() {
           </button>
         )}
       </div>
+
+      {/* Confirmation d'arrivée sur une séance fraîchement recréée, avec le
+          bouton de lancement bien en vue : on quitte une page identique à
+          celle-ci, sans ce repère on croit que rien ne s'est passé. */}
+      {(estNouvelleSeance || doitRemplirForme) && seances.length > 0 && (
+        <div className={`mb-4 rounded-2xl border-2 p-4 ${
+          doitRemplirForme ? 'border-blue-500 bg-blue-50' : 'border-green-500 bg-green-50'
+        }`}>
+          <div className="flex items-start gap-2">
+            <CheckIcon className={`w-5 h-5 shrink-0 mt-0.5 ${doitRemplirForme ? 'text-blue-600' : 'text-green-600'}`} />
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-bold ${doitRemplirForme ? 'text-blue-900' : 'text-green-900'}`}>
+                {doitRemplirForme ? 'Avant de commencer' : 'Votre séance est prête'}
+              </p>
+              <p className={`text-xs mt-0.5 ${doitRemplirForme ? 'text-blue-700' : 'text-green-700'}`}>
+                {doitRemplirForme
+                  ? 'Renseignez votre état de forme du jour : sommeil, fatigue, courbatures, stress. Il sert de repère avant l’effort et suit votre récupération.'
+                  : 'Une copie a été créée pour aujourd’hui. Vos réponses de la séance d’origine sont conservées.'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => doitRemplirForme ? setShowForme(true) : router.push(launchUrl(seances[0]))}
+            className={`mt-3 w-full flex items-center justify-center gap-2 text-white font-bold text-base py-4 rounded-xl transition ${
+              doitRemplirForme ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'
+            }`}
+          >
+            {!doitRemplirForme && <PlayIcon className="w-5 h-5" />}
+            {doitRemplirForme ? 'Remplir mon état de forme' : 'Lancer la séance'}
+          </button>
+        </div>
+      )}
 
       {/* Switch entre RDVs liés */}
       {isAdmin && linkedPlanningInfos.length > 0 && (
@@ -747,7 +949,12 @@ export default function OverviewSeancePage() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <p className="text-sm font-semibold text-gray-800">{exo?.nom_exercice || `Exercice ${idx + 1}`}</p>
-                                {item.intensite_exercice && <span className="text-xs shrink-0">{item.intensite_exercice}</span>}
+                                {/* Repère de travail du coach (léger / modéré / intense) :
+                                    masqué au client, à qui il ne dirait rien d'utile
+                                    et pourrait suggérer une difficulté avant l'effort. */}
+                                {isAdmin && item.intensite_exercice && (
+                                  <span className="text-xs shrink-0">{item.intensite_exercice}</span>
+                                )}
                                 {isAdmin && (
                                   <svg className="w-3.5 h-3.5 text-gray-300 ml-auto shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -806,6 +1013,24 @@ export default function OverviewSeancePage() {
                       </button>
 
                       {isBilanVisible && (
+                        saisieVerrouillee ? (
+                          // Séance d'un jour révolu : le client relit son ressenti,
+                          // il ne le réécrit plus.
+                          <div className="px-4 pb-4">
+                            {rpe > 0 ? (
+                              <div className={`px-4 py-2.5 rounded-xl text-sm border ${rpeBg(rpe)}`}>
+                                {RPE_LABELS[rpe]}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-400 italic">
+                                Aucune intensité renseignée pour ce circuit.
+                              </p>
+                            )}
+                            <p className="text-[11px] text-gray-400 mt-2">
+                              Séance passée : le ressenti n&apos;est plus modifiable.
+                            </p>
+                          </div>
+                        ) : (
                         <div className="px-4 pb-4 space-y-2">
                           <div className="space-y-1.5">
                             {RPE_LABELS.map((label, i) => (
@@ -832,6 +1057,7 @@ export default function OverviewSeancePage() {
                             {savedRpe[seance.id] ? '✓ Enregistré' : savingRpe[seance.id] ? 'Sauvegarde...' : 'Enregistrer'}
                           </button>
                         </div>
+                        )
                       )}
                     </div>}
 
@@ -905,22 +1131,61 @@ export default function OverviewSeancePage() {
                       </div>
                     )}
 
-                    {/* Lancer */}
-                    <div className="px-4 pb-4 border-t border-gray-50 pt-3">
-                      <button
-                        onClick={() => router.push(launchUrl(seance))}
-
-                        className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl transition"
-                      >
-                        <PlayIcon className="w-4 h-4" />
-                        {isDone ? 'Relancer ce circuit' : 'Lancer ce circuit'}
-                      </button>
-                    </div>
+                    {/* Lancer — masqué au client sur une séance passée : relancer
+                        un circuit y réécrirait les données de la séance d'origine.
+                        Pour la refaire, le bouton « Refaire cette séance » en bas
+                        de page crée une activité datée d'aujourd'hui. */}
+                    {!saisieVerrouillee && (
+                      <div className="px-4 pb-4 border-t border-gray-50 pt-3">
+                        {doitRemplirForme ? (
+                          // Le lancement reste fermé tant que l'état de forme
+                          // n'est pas saisi : renseigné après l'effort, il ne
+                          // décrirait plus l'état de départ.
+                          <button
+                            onClick={() => setShowForme(true)}
+                            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition"
+                          >
+                            Remplir mon état de forme d&apos;abord
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => router.push(launchUrl(seance))}
+                            className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl transition"
+                          >
+                            <PlayIcon className="w-4 h-4" />
+                            {isDone ? 'Relancer ce circuit' : 'Lancer ce circuit'}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )
           })}
+
+          {/* ── Refaire la séance (client, séance passée) ── */}
+          {saisieVerrouillee && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+              <p className="text-sm font-semibold text-gray-700">Refaire cette séance</p>
+              <p className="text-xs text-gray-500 mt-0.5 mb-3">
+                Crée une copie datée d&apos;aujourd&apos;hui, que vous pourrez lancer et remplir
+                normalement. Cette séance-ci et vos réponses ne sont pas modifiées.
+              </p>
+              <button
+                onClick={refaireSeance}
+                disabled={refaisant || refaite}
+                className={`w-full flex items-center justify-center gap-2 font-semibold py-3 rounded-xl transition ${
+                  refaite
+                    ? 'bg-green-500 text-white'
+                    : 'bg-gray-700 hover:bg-gray-800 disabled:opacity-60 text-white'
+                }`}
+              >
+                <PlayIcon className="w-4 h-4" />
+                {refaite ? '✓ Séance créée' : refaisant ? 'Création…' : 'Refaire cette séance'}
+              </button>
+            </div>
+          )}
 
           {/* ── Bilan de fin de séance ── */}
           {(isAdmin || droits?.questionnaire !== false) && <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -953,7 +1218,38 @@ export default function OverviewSeancePage() {
               </div>
             </button>
 
-            {bilanFinOpen && (
+            {bilanFinOpen && saisieVerrouillee && (
+              // Séance d'un jour révolu : le client relit son bilan sans pouvoir
+              // le réécrire. Un ressenti retouché des semaines plus tard ne
+              // décrit plus la séance et fausse le suivi.
+              <div className="px-4 pb-5 space-y-3 border-t border-gray-100 pt-4">
+                {bilanFinFilled ? (
+                  <>
+                    <p className="text-sm text-gray-700">
+                      Motivation :{" "}
+                      <span className={`font-bold ${scale5Color(motivSeance)}`}>{motivSeance}/5</span>
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      Intensité mise :{" "}
+                      <span className={`font-bold ${scale5Color(intensiteMise)}`}>{intensiteMise}/5</span>
+                    </p>
+                    {intensiteSeance > 0 && (
+                      <p className="text-sm text-gray-700">
+                        Intensité de la séance :{" "}
+                        <span className="font-bold text-gray-800">{intensiteSeance}/10</span>
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-400 italic">Bilan non rempli pour cette séance.</p>
+                )}
+                <p className="text-[11px] text-gray-400">
+                  Séance passée : le bilan n&apos;est plus modifiable.
+                </p>
+              </div>
+            )}
+
+            {bilanFinOpen && !saisieVerrouillee && (
               <div className="px-4 pb-5 space-y-6 border-t border-gray-100 pt-4">
 
                 {/* Motivation */}
@@ -1075,15 +1371,30 @@ export default function OverviewSeancePage() {
 
             {commentairesOpen && (
               <div className="px-4 pb-4 space-y-4 border-t border-gray-100 pt-4">
+                {/* Le commentaire du coach est ÉCRIT par le coach et seulement LU
+                    par le client : côté client, un champ de saisie laisserait
+                    croire qu'il peut répondre là — et il écraserait le mot du
+                    coach. Il a son propre champ juste en dessous. */}
                 <div>
-                  <label className="text-xs font-semibold text-gray-600 block mb-1">Commentaire du coach <span className="font-normal text-blue-500">(visible par le client)</span></label>
-                  <textarea
-                    value={crCoach}
-                    onChange={e => setCrCoach(e.target.value)}
-                    rows={3}
-                    placeholder="Votre compte-rendu de séance..."
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-gray-500 resize-none"
-                  />
+                  <label className="text-xs font-semibold text-gray-600 block mb-1">
+                    Commentaire du coach
+                    {isAdmin && <span className="font-normal text-blue-500"> (visible par le client)</span>}
+                  </label>
+                  {isAdmin ? (
+                    <textarea
+                      value={crCoach}
+                      onChange={e => setCrCoach(e.target.value)}
+                      rows={3}
+                      placeholder="Votre compte-rendu de séance..."
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-gray-500 resize-none"
+                    />
+                  ) : crCoach.trim() ? (
+                    <p className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap">
+                      {crCoach}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-gray-400 italic px-1">Aucun commentaire pour le moment.</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-600 block mb-1">Commentaire client</label>
@@ -1112,6 +1423,20 @@ export default function OverviewSeancePage() {
 
         </div>
       )}
+      {/* Questionnaire de forme, par-dessus la séance : le client le remplit
+          sans quitter la page, et retrouve son écran à l'enregistrement. */}
+      {showForme && (
+        <QuestionnaireFormeModal
+          isOpen
+          planningId={planningId}
+          initial={reponsesDepuisPlanning(planning as any)}
+          onClose={() => setShowForme(false)}
+          // Mise à jour locale : `planning` vient d'un chargement ponctuel, sans
+          // ça le verrou resterait actif jusqu'au prochain rechargement.
+          onSaved={() => setPlanning(p => p ? { ...p, questionnaire_rempli: true } : p)}
+        />
+      )}
+
       {/* Modal édition rapide d'un exercice (admin) */}
       <Modal isOpen={!!editExo} onClose={() => setEditExo(null)} title={editExo ? `Modifier — ${editExo.exoName}` : 'Modifier'} size="lg">
         <div className="space-y-4">
