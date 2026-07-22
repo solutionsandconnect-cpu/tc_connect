@@ -23,6 +23,7 @@ export default function EnrichirModal({
   const [etat, setEtat] = useState<Etat>("pret");
   const [progres, setProgres] = useState({ fait: 0, total: 0 });
   const [resultats, setResultats] = useState<ResultatRecherche[]>([]);
+  const [sansCodePostal, setSansCodePostal] = useState<ResultatRecherche[]>([]);
   const [appliques, setAppliques] = useState(0);
   const abort = useRef<AbortController | null>(null);
 
@@ -50,9 +51,22 @@ export default function EnrichirModal({
       abort.current.signal,
     );
 
-    // Application automatique réservée aux correspondances UNIQUES : au-delà,
-    // choisir à la place de l'utilisateur produirait de faux effectifs.
-    const aEcrire = res.filter((r) => r.candidats.length === 1);
+    // Application automatique réservée aux correspondances UNIQUES **et**
+    // géographiquement contraintes.
+    //
+    // ⚠️ Sans code postal, la recherche porte sur la France entière : un nom
+    // même très particulier y trouve souvent UN seul homonyme, à 800 km. C'est
+    // ainsi qu'un artisan de Trédion (56) s'est retrouvé enrichi avec une
+    // société de Fort-de-France — et son code postal réécrit en 97200, puisque
+    // l'enrichissement complète les champs vides. 28 prospects sur 547 avaient
+    // atterri hors zone. Un candidat unique non contraint n'est donc PAS une
+    // correspondance sûre : il part avec les cas à trancher.
+    const aCodePostal = (id: string) => !!parId.get(id)?.codePostal?.trim();
+    const aEcrire = res.filter((r) => r.candidats.length === 1 && aCodePostal(r.prospectId));
+    const nonContraints = res.filter(
+      (r) => r.candidats.length === 1 && !aCodePostal(r.prospectId),
+    );
+    setSansCodePostal(nonContraints);
     setEtat("ecriture");
     setProgres({ fait: 0, total: aEcrire.length });
 
@@ -192,6 +206,23 @@ export default function EnrichirModal({
               </div>
               <div className="px-3 py-2 text-[11px] text-gray-500 max-h-32 overflow-y-auto">
                 {introuvables.map((r) => r.societe).join(" · ")}
+              </div>
+            </div>
+          )}
+
+          {sansCodePostal.length > 0 && (
+            <div className="border border-amber-200 rounded-xl overflow-hidden mb-3">
+              <div className="px-3 py-2 bg-amber-50 text-xs font-medium text-amber-800">
+                {sansCodePostal.length}{" "}
+                candidat(s) unique(s) NON appliqué(s) — prospect sans code postal
+              </div>
+              <div className="px-3 py-2 text-[11px] text-gray-600">
+                Sans code postal, la recherche porte sur toute la France : le seul résultat trouvé
+                peut être un homonyme à l&apos;autre bout du pays. Complète le code postal sur la
+                fiche, puis relance l&apos;enrichissement.
+              </div>
+              <div className="px-3 pb-2 text-[11px] text-gray-500 max-h-32 overflow-y-auto">
+                {sansCodePostal.map((r) => r.societe).join(" · ")}
               </div>
             </div>
           )}

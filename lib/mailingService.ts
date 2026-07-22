@@ -355,6 +355,33 @@ export const enregistrerEnvoi = async (
 }
 
 /**
+ * Efface les données INSEE d'un prospect mal apparié.
+ *
+ * Le cas réel : un nom sans code postal trouve un homonyme à l'autre bout de la
+ * France, l'enrichissement l'applique, ET complète le code postal vide avec
+ * celui de l'homonyme — le prospect « déménage ». Comme on ne sait pas quelle
+ * ville était la bonne, on retire aussi la ville et le code postal issus de
+ * l'enrichissement : mieux vaut un champ vide qu'une fausse adresse.
+ *
+ * Le prospect ressortira au prochain enrichissement (il n'a plus de `siren`).
+ */
+export const annulerEnrichissement = async (prospect: Prospect): Promise<void> => {
+  await updateDoc(doc(db, 'prospects', prospect.id), {
+    siren: deleteField(),
+    siret: deleteField(),
+    effectifCode: deleteField(),
+    effectifAnnee: deleteField(),
+    effectifDeLEntreprise: deleteField(),
+    activiteNaf: deleteField(),
+    etatEntreprise: deleteField(),
+    enrichiAt: deleteField(),
+    codePostal: deleteField(),
+    ville: deleteField(),
+    updatedAt: Timestamp.now(),
+  })
+}
+
+/**
  * Défait le dernier envoi CONSIGNÉ sur un prospect — typiquement un clic sur
  * « Envoyé » alors que le mail n'est jamais parti.
  *

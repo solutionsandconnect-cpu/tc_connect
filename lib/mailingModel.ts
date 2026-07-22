@@ -1,6 +1,7 @@
 // Mailing — règles métier pures (aucune dépendance Firestore/React).
 // Partagé entre le client (import, composeur) et le serveur (désinscription).
 
+import { estCessee } from '@/lib/sirene'
 import type { MailingMetier, MailingSection, Prospect, ProspectStatut } from '@/types'
 
 /* ------------------------------------------------------------------ */
@@ -19,6 +20,7 @@ export const STATUT_LABEL: Record<ProspectStatut, string> = {
   email_manquant: 'Email à trouver',
   oppose: 'Opposition',
   bounce: 'Adresse invalide',
+  cessee: "N'existe plus",
 }
 
 /** Explication affichée en aide : ces états engagent des conséquences durables. */
@@ -34,6 +36,7 @@ export const STATUT_AIDE: Record<ProspectStatut, string> = {
   email_manquant: "Entreprise identifiée via l'INSEE, sans adresse email. À compléter sur la fiche avant tout envoi.",
   oppose: "A demandé à ne plus être contacté (droit d'opposition RGPD). Définitif : l'adresse rejoint le registre et ne peut plus jamais être réimportée.",
   bounce: "Le message est revenu en erreur : adresse inexistante, boîte pleine ou domaine mort. Technique, pas un refus.",
+  cessee: "La société n'existe plus : radiée, liquidée, ou reprise sous un autre nom. À distinguer de l'état INSEE, qui n'est connu que pour les prospects enrichis — ici c'est ton constat, il fait foi.",
 }
 
 export const STATUT_STYLE: Record<ProspectStatut, string> = {
@@ -48,6 +51,7 @@ export const STATUT_STYLE: Record<ProspectStatut, string> = {
   email_manquant: 'bg-orange-100 text-orange-700',
   oppose: 'bg-red-100 text-red-700',
   bounce: 'bg-red-50 text-red-600',
+  cessee: 'bg-slate-700 text-white',
 }
 
 /* ------------------------------------------------------------------ */
@@ -218,8 +222,14 @@ export function peutContacter(
   if (p.statut === 'converti') {
     return { ok: false, raison: 'Devenu client — la relation se suit dans le CRM.' }
   }
+  // Constat de l'utilisateur : il prime sur tout, il a vérifié.
+  if (p.statut === 'cessee') {
+    return { ok: false, raison: "Cette société n'existe plus." }
+  }
   // Donnée officielle INSEE : écrire à une société radiée est une perte sèche.
-  if (p.etatEntreprise === 'C') {
+  // ⚠️ Deux codes possibles ('F' établissement, 'C' entreprise) : ne tester que
+  // 'C' — ce que faisait ce garde-fou — laissait passer les 62 sociétés fermées.
+  if (estCessee(p.etatEntreprise)) {
     return { ok: false, raison: 'Société cessée selon les données INSEE.' }
   }
   if (!p.email?.trim() || p.statut === 'email_manquant') {

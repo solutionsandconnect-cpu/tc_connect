@@ -130,8 +130,11 @@ export default function KitEditor({
     }
   };
 
+  // `[&>*]:min-w-0` : sans ça, la colonne `1fr` prend la largeur de son contenu
+  // le plus long (textes d'aide, codes NAF) au lieu de le contraindre, et
+  // l'éditeur déborde de l'écran en mobile.
   return (
-    <div className="grid lg:grid-cols-[16rem_1fr] gap-4">
+    <div className="grid lg:grid-cols-[16rem_1fr] gap-4 [&>*]:min-w-0">
       <div>
         <button
           onClick={() => { setNouveauNom(""); setCreation(true); }}

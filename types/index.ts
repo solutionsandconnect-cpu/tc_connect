@@ -1300,6 +1300,8 @@ export type ProspectStatut =
   | 'email_manquant'
   | 'oppose'
   | 'bounce'
+  /** Société disparue (radiée, liquidée, reprise sous un autre nom). */
+  | 'cessee'
 
 /**
  * Document Firestore : prospects/{id}
@@ -1332,7 +1334,13 @@ export interface Prospect {
   /** true si l'effectif provient de l'entreprise faute de donnée d'établissement. */
   effectifDeLEntreprise?: boolean
   activiteNaf?: string
-  /** 'A' = active, 'C' = cessée : une société cessée ne doit plus être contactée. */
+  /**
+   * État administratif au registre, tel que renvoyé par l'API. 'A' = active.
+   * Fermée/cessée = 'F' (code de l'ÉTABLISSEMENT, celui que renvoie l'API en
+   * priorité) OU 'C' (code de l'ENTREPRISE, en repli) — tester les deux via
+   * `estCessee()`. À ne pas confondre avec le STATUT `cessee`, qui est un
+   * constat de l'utilisateur : ici c'est la donnée officielle.
+   */
   etatEntreprise?: string
   enrichiAt?: Timestamp
   statut: ProspectStatut

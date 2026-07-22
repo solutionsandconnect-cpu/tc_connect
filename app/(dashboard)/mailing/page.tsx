@@ -7,7 +7,7 @@ import {
   listenMetiers, listenProspects, listenOptouts, listenEvenements, listenLogiciels,
   updateProspect, deleteProspect, ajouterOptout, journaliser,
   modifierNote, supprimerNote, ajouterLogiciel, supprimerLogiciel, detacherDuClient,
-  annulerDernierEnvoi,
+  annulerDernierEnvoi, annulerEnrichissement,
 } from "@/lib/mailingService";
 import PromotionModal from "@/components/mailing/PromotionModal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
@@ -15,7 +15,9 @@ import {
   QUOTA_JOUR, peutContacter, isEmailGenerique, STATUT_LABEL, STATUT_STYLE,
 } from "@/lib/mailingModel";
 import Modal from "@/components/ui/Modal";
-import { libelleEffectif } from "@/lib/sirene";
+import {
+  GROUPES_EFFECTIF, estCessee, groupeEffectif, libelleEffectif, type GroupeEffectif,
+} from "@/lib/sirene";
 import { departementDuCp } from "@/lib/territoires";
 import ImportModal from "@/components/mailing/ImportModal";
 import ProspectModal from "@/components/mailing/ProspectModal";
@@ -23,6 +25,7 @@ import StatutModal from "@/components/mailing/StatutModal";
 import EnrichirModal from "@/components/mailing/EnrichirModal";
 import AnnuaireModal from "@/components/mailing/AnnuaireModal";
 import SuiviTab from "@/components/mailing/SuiviTab";
+import FiltreRayon, { useRayon } from "@/components/mailing/FiltreRayon";
 import KitEditor from "@/components/mailing/KitEditor";
 import Composeur from "@/components/mailing/Composeur";
 import type {
@@ -145,8 +148,18 @@ export default function MailingPage() {
   const [recherche, setRecherche] = useState("");
   const [filtreRegion, setFiltreRegion] = useState<string>("tous");
   const [filtreDept, setFiltreDept] = useState<string>("tous");
+  const [filtreEffectif, setFiltreEffectif] = useState<GroupeEffectif | "tous">("tous");
+  const [filtreEtat, setFiltreEtat] = useState<"tous" | "actives" | "cessees">("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
+  const [aDesenrichir, setADesenrichir] = useState<Prospect | null>(null);
+  // Le mode sélection est OPT-IN : en lecture courante, des cases à cocher sur
+  // chaque ligne ajoutent du bruit et invitent au clic accidentel.
+  const [modeSelection, setModeSelection] = useState(false);
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [actionLot, setActionLot] = useState<"statut" | "insee" | "supprimer" | null>(null);
+  const [statutLot, setStatutLot] = useState<ProspectStatut>("cessee");
+  const [lotEnCours, setLotEnCours] = useState<{ fait: number; total: number } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -247,18 +260,97 @@ export default function MailingPage() {
     };
   }, [prospects]);
 
+  const rayon = useRayon(prospects);
+
+  /** Critères actifs — la recherche et le rayon comptent comme les pastilles. */
+  const nbFiltresActifs =
+    (filtreStatut !== "tous" ? 1 : 0) +
+    (filtreMetier !== "tous" ? 1 : 0) +
+    (filtreRegion !== "tous" ? 1 : 0) +
+    (filtreDept !== "tous" ? 1 : 0) +
+    (filtreEffectif !== "tous" ? 1 : 0) +
+    (filtreEtat !== "tous" ? 1 : 0) +
+    (rayon.rayon !== null ? 1 : 0) +
+    (recherche.trim() ? 1 : 0);
+
+  const reinitialiserFiltres = () => {
+    setFiltreStatut("tous");
+    setFiltreMetier("tous");
+    setFiltreRegion("tous");
+    setFiltreDept("tous");
+    setFiltreEffectif("tous");
+    setFiltreEtat("tous");
+    setRecherche("");
+    // Le rayon est remis à « partout », mais le code postal de référence et les
+    // communes déjà chargées restent : les recharger n'aurait aucun intérêt.
+    rayon.setRayon(null);
+  };
+
   const listeFiltree = useMemo(() => {
     const q = recherche.trim().toLowerCase();
-    return prospects.filter((p) => {
+    const liste = prospects.filter((p) => {
+      // « cessée » = état administratif 'C' au registre. L'état n'est connu que
+      // pour les prospects enrichis : les autres ne sont ni actifs ni cessés.
+      if (filtreEtat === "cessees" && !estCessee(p.etatEntreprise)) return false;
+      if (filtreEtat === "actives" && estCessee(p.etatEntreprise)) return false;
       if (filtreStatut !== "tous" && p.statut !== filtreStatut) return false;
       if (filtreMetier !== "tous" && (p.metierId ?? "") !== filtreMetier) return false;
       const d = departementDuCp(p.codePostal);
       if (filtreRegion !== "tous" && d?.region !== filtreRegion) return false;
       if (filtreDept !== "tous" && d?.code !== filtreDept) return false;
+      if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
+      if (!rayon.dansRayon(p)) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, recherche]);
+    // Rayon actif = les plus proches d'abord : c'est l'ordre dans lequel Teddy
+    // veut les traiter, pas l'ordre alphabétique.
+    return rayon.rayon === null
+      ? liste
+      : [...liste].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9));
+  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, recherche, rayon]);
+
+  const basculerSelection = (id: string) => {
+    setSelection((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const selectionnes = listeFiltree.filter((p) => selection.has(p.id));
+
+  /**
+   * Actions groupées. Séquentielles et non transactionnelles : sur un lot
+   * interrompu, ce qui est fait est fait — c'est acceptable ici (chaque prospect
+   * est indépendant) et ça évite une écriture par lot de 500 qui échouerait en bloc.
+   */
+  const executerLot = async () => {
+    const cibles = [...selectionnes];
+    setLotEnCours({ fait: 0, total: cibles.length });
+    let fait = 0;
+    for (const p of cibles) {
+      try {
+        if (actionLot === "statut") {
+          // Passe par le même chemin qu'une modification unitaire : le journal
+          // doit garder la trace de chaque transition, même en masse.
+          await appliquerStatut(p, statutLot, "Modification groupée", "");
+        } else if (actionLot === "insee") {
+          await annulerEnrichissement(p);
+        } else if (actionLot === "supprimer") {
+          await deleteProspect(p.id);
+        }
+      } catch {
+        /* prospect ignoré : le lot continue */
+      }
+      fait++;
+      setLotEnCours({ fait, total: cibles.length });
+    }
+    setLotEnCours(null);
+    setActionLot(null);
+    setSelection(new Set());
+    notifier(`${fait} prospect(s) traité(s).`);
+  };
 
   const appliquerStatut = async (
     p: Prospect, statut: ProspectStatut, observations: string, logiciel: string,
@@ -330,45 +422,52 @@ export default function MailingPage() {
             Prospection par corps de métier — un message ciblé, en petits volumes.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {/* Les libellés longs sont tronqués sous sm : quatre boutons pleins
+            débordaient de l'écran, le dernier passant hors cadre. */}
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
           <div
             className={`px-3 py-2 rounded-lg text-sm ${
               quotaAtteint ? "bg-amber-50 text-amber-700" : "bg-gray-50 text-gray-600"
             }`}
             title="Plafond quotidien : le volume est la première cause de dérive en spam."
           >
-            {`${envoyesAujourdhui}/${QUOTA_JOUR} aujourd'hui`}
+            {`${envoyesAujourdhui}/${QUOTA_JOUR}`}
+            <span className="hidden sm:inline">{" aujourd'hui"}</span>
           </div>
           <button
             onClick={() => setAnnuaireOuvert(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
+            className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
             title="Extraire des artisans depuis l'annuaire public"
           >
             <MagnifyingGlassIcon className="w-4 h-4" /> Annuaire
           </button>
           <button
             onClick={() => setEnrichOuvert(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
+            className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
             title="Compléter effectif, activité et état depuis l'annuaire public des entreprises"
           >
             <BuildingOffice2Icon className="w-4 h-4" /> Enrichir
           </button>
           <button
             onClick={() => setAjoutOuvert(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
+            className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border text-sm font-medium hover:bg-gray-50 transition"
           >
-            <PlusIcon className="w-4 h-4" /> Ajouter un prospect
+            <PlusIcon className="w-4 h-4" /> Ajouter
+            <span className="hidden sm:inline">un prospect</span>
           </button>
           <button
             onClick={() => setImportOuvert(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
+            className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition"
           >
-            <ArrowUpTrayIcon className="w-4 h-4" /> Importer une liste
+            <ArrowUpTrayIcon className="w-4 h-4" /> Importer
+            <span className="hidden sm:inline">une liste</span>
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-5">
+      {/* 5 cartes sur une grille de 2 en mobile : la dernière prend les deux
+          colonnes plutôt que de rester orpheline à gauche. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-5 [&>*:last-child]:col-span-2 sm:[&>*:last-child]:col-span-1">
         {[
           { l: "Prospects", v: stats.total },
           { l: "À contacter", v: stats.aContacter },
@@ -429,6 +528,33 @@ export default function MailingPage() {
               placeholder="Rechercher une société, un email, une ville…"
               className="flex-1 min-w-48 border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition"
             />
+            {/* Affiché seulement quand il y a quelque chose à réinitialiser, avec
+                le nombre de filtres actifs : sur six critères combinables, on
+                oublie vite lequel masque la moitié de la liste. */}
+            {nbFiltresActifs > 0 && (
+              <button
+                onClick={reinitialiserFiltres}
+                className="px-3 py-2 rounded-lg border text-sm font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
+              >
+                Réinitialiser les filtres
+                <span className="ml-1.5 text-gray-400">{nbFiltresActifs}</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                // Quitter le mode vide la sélection : la garder en réserve
+                // ferait agir plus tard sur des lignes qu'on ne voit plus.
+                setModeSelection(!modeSelection);
+                setSelection(new Set());
+              }}
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+                modeSelection
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : "border text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              {modeSelection ? "Quitter la sélection" : "Sélectionner"}
+            </button>
           </div>
 
           {/* Filtres en pastilles : les compteurs montrent d'un coup d'œil où en
@@ -518,16 +644,168 @@ export default function MailingPage() {
             </div>
           )}
 
+          {/* Taille d'entreprise : toujours affichée, y compris les paliers vides
+              (en pointillés) — un filtre qui masque ses catégories vides donne
+              l'impression d'un oubli. */}
+          <FiltreRayon {...rayon} />
+
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(() => {
+              const cessees = prospects.filter((p) => estCessee(p.etatEntreprise)).length;
+              return (
+                <>
+                  <Chip actif={filtreEtat === "tous"} onClick={() => setFiltreEtat("tous")} label="Tous états" />
+                  <Chip
+                    actif={filtreEtat === "actives"}
+                    onClick={() => setFiltreEtat("actives")}
+                    label="En activité"
+                    nombre={prospects.length - cessees}
+                  />
+                  <Chip
+                    actif={filtreEtat === "cessees"}
+                    onClick={() => setFiltreEtat("cessees")}
+                    label="Sociétés cessées"
+                    nombre={cessees}
+                    attenue={cessees === 0}
+                  />
+                </>
+              );
+            })()}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            <Chip
+              actif={filtreEffectif === "tous"}
+              onClick={() => setFiltreEffectif("tous")}
+              label="Toutes tailles"
+            />
+            {GROUPES_EFFECTIF.map((g) => {
+              const n = prospects.filter((p) => groupeEffectif(p.effectifCode) === g.id).length;
+              return (
+                <Chip
+                  key={g.id}
+                  actif={filtreEffectif === g.id}
+                  onClick={() => setFiltreEffectif(g.id)}
+                  label={g.label}
+                  nombre={n}
+                  attenue={n === 0}
+                />
+              );
+            })}
+          </div>
+
+          {/* Barre d'actions groupées : n'apparaît qu'une fois une sélection
+              faite, pour ne pas encombrer la vue de lecture. */}
+          {selectionnes.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-2 px-3 py-2 rounded-xl bg-blue-50 border border-blue-100">
+              <span className="text-sm font-medium text-blue-900">
+                {selectionnes.length} sélectionné{selectionnes.length > 1 ? "s" : ""}
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+                <select
+                  value={statutLot}
+                  onChange={(e) => setStatutLot(e.target.value as ProspectStatut)}
+                  className="border rounded-lg px-2 py-1.5 text-xs bg-white"
+                >
+                  {(Object.keys(STATUT_LABEL) as ProspectStatut[]).map((s) => (
+                    <option key={s} value={s}>{STATUT_LABEL[s]}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => setActionLot("statut")}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition"
+                >
+                  Appliquer l&apos;état
+                </button>
+                <button
+                  onClick={() => setActionLot("insee")}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-white text-gray-700 hover:bg-gray-50 transition"
+                >
+                  Effacer données INSEE
+                </button>
+                <button
+                  onClick={() => setActionLot("supprimer")}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-white text-red-600 hover:bg-red-50 transition"
+                >
+                  Supprimer
+                </button>
+                <button
+                  onClick={() => setSelection(new Set())}
+                  className="px-2.5 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-white transition"
+                >
+                  Désélectionner
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Même formulation que le composeur (« X affichés sur Y ») : le
+              total rappelle ce que les filtres écartent. */}
+          <div className="text-xs text-gray-500 mb-2 flex items-center gap-3">
+            {modeSelection && (
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={listeFiltree.length > 0 && selectionnes.length === listeFiltree.length}
+                  onChange={(e) =>
+                    setSelection(e.target.checked ? new Set(listeFiltree.map((p) => p.id)) : new Set())
+                  }
+                />
+                {/* « Tout » = tout ce qui est AFFICHÉ, donc filtré — c'est ce qui
+                    rend le couple filtres + sélection réellement utile. */}
+                <span>Tout sélectionner ({listeFiltree.length})</span>
+              </label>
+            )}
+            <span>
+            {nbFiltresActifs === 0 ? (
+              <>
+                <span className="font-medium text-gray-700">{prospects.length}</span> prospect
+                {prospects.length > 1 ? "s" : ""}
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-gray-700">{listeFiltree.length}</span> affiché
+                {listeFiltree.length > 1 ? "s" : ""} sur {prospects.length}
+                {rayon.rayon !== null && (
+                  <span className="text-gray-400">
+                    {" "}· triés du plus proche de {rayon.cpRef}
+                  </span>
+                )}
+              </>
+            )}
+            </span>
+          </div>
+
           {listeFiltree.length === 0 ? (
             <div className="border rounded-xl px-4 py-10 text-center text-sm text-gray-500 bg-white">
-              Aucun prospect. Commence par importer une liste CSV.
+              {nbFiltresActifs > 0
+                ? "Aucun prospect ne correspond à ces filtres."
+                : "Aucun prospect. Commence par importer une liste CSV."}
             </div>
           ) : (
             <div className="border rounded-xl overflow-hidden bg-white divide-y">
               {listeFiltree.map((p) => {
                 const blocage = peutContacter(p, optouts);
+                // Mobile : infos sur toute la largeur, actions en dessous. En une
+                // seule rangée (l'ancien comportement), le select et les cinq
+                // boutons mangeaient la place et le nom tombait à « 2… ».
                 return (
-                  <div key={p.id} className="px-3 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <div
+                    key={p.id}
+                    className="px-3 py-2.5 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-x-3 sm:gap-y-1.5"
+                  >
+                    {/* Case + infos dans un même bloc horizontal : en colonne
+                        (mobile), la case seule occuperait toute une ligne. */}
+                    <div className="flex items-start gap-2 min-w-0 w-full sm:w-auto sm:flex-1">
+                    {modeSelection && (
+                      <input
+                        type="checkbox"
+                        checked={selection.has(p.id)}
+                        onChange={() => basculerSelection(p.id)}
+                        className="mt-1 shrink-0"
+                        aria-label={`Sélectionner ${p.societe}`}
+                      />
+                    )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-sm truncate">{p.societe}</span>
@@ -552,7 +830,7 @@ export default function MailingPage() {
                             {p.logicielActuel}
                           </span>
                         )}
-                        {p.etatEntreprise === "C" && (
+                        {estCessee(p.etatEntreprise) && (
                           <span className="px-2 py-0.5 rounded-full text-[11px] bg-red-100 text-red-700">
                             société cessée
                           </span>
@@ -576,13 +854,17 @@ export default function MailingPage() {
                         <div className="text-[11px] text-amber-700 mt-0.5">{blocage.raison}</div>
                       )}
                     </div>
+                    </div>
 
+                    {/* Rangée d'actions : pleine largeur sous les infos en mobile,
+                        alignée à droite dès sm. */}
+                    <div className="flex items-center gap-1 flex-wrap w-full sm:w-auto sm:contents">
                     <select
                       value={p.statut}
                       onChange={(e) =>
                         setStatutEnCours({ prospect: p, cible: e.target.value as ProspectStatut })
                       }
-                      className="border rounded-lg px-2 py-1.5 text-xs"
+                      className="border rounded-lg px-2 py-1.5 text-xs max-w-[10rem] sm:max-w-none"
                     >
                       {(Object.keys(STATUT_LABEL) as ProspectStatut[]).map((s) => (
                         <option key={s} value={s}>{STATUT_LABEL[s]}</option>
@@ -608,6 +890,15 @@ export default function MailingPage() {
                       </button>
                     )}
 
+                    {p.enrichiAt && (
+                      <button
+                        onClick={() => setADesenrichir(p)}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition"
+                        title="Effacer les données INSEE (mauvais appariement)"
+                      >
+                        <BuildingOffice2Icon className="w-4 h-4" />
+                      </button>
+                    )}
                     {(p.nbEnvois ?? 0) > 0 && (
                       <button
                         onClick={() => setADesenvoyer(p)}
@@ -649,6 +940,7 @@ export default function MailingPage() {
                     >
                       <TrashIcon className="w-4 h-4" />
                     </button>
+                    </div>
 
                     {historique === p.id && (
                       <div className="w-full mt-1.5 pl-3 border-l-2 border-blue-100 space-y-1.5">
@@ -776,6 +1068,118 @@ export default function MailingPage() {
           onToast={notifier}
         />
       )}
+
+      <Modal
+        isOpen={!!actionLot}
+        onClose={() => !lotEnCours && setActionLot(null)}
+        title={
+          actionLot === "statut"
+            ? "Changer l'état de la sélection"
+            : actionLot === "insee"
+              ? "Effacer les données INSEE"
+              : "Supprimer la sélection"
+        }
+        size="sm"
+      >
+        <p className="text-sm text-gray-600">
+          {actionLot === "statut" && (
+            <>
+              <strong>{selectionnes.length}</strong> prospect(s) passeront à
+              {" « "}<strong>{STATUT_LABEL[statutLot]}</strong>{" »"}.
+            </>
+          )}
+          {actionLot === "insee" && (
+            <>
+              <strong>{selectionnes.length}</strong> prospect(s) perdront SIRET, effectif,
+              activité, état — ainsi que le code postal et la ville, qui viennent de
+              l&apos;enrichissement.
+            </>
+          )}
+          {actionLot === "supprimer" && (
+            <>
+              <strong>{selectionnes.length}</strong> prospect(s) seront définitivement retirés de
+              la liste. Les oppositions enregistrées, elles, sont conservées.
+            </>
+          )}
+        </p>
+
+        {actionLot === "statut" && (statutLot === "oppose" || statutLot === "bounce") && (
+          <p className="text-xs text-amber-700 mt-2">
+            Ces adresses rejoindront le registre d&apos;opposition : elles ne pourront plus jamais
+            être recontactées, ni réimportées. Sur un lot, c&apos;est irréversible.
+          </p>
+        )}
+
+        {lotEnCours ? (
+          <div className="mt-4">
+            <div className="text-xs text-gray-600 mb-1.5">
+              Traitement… {lotEnCours.fait}/{lotEnCours.total}
+            </div>
+            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+              <div
+                className="h-full bg-blue-600 transition-all"
+                style={{ width: `${lotEnCours.total ? (lotEnCours.fait / lotEnCours.total) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-end gap-2 mt-5">
+            <button
+              onClick={() => setActionLot(null)}
+              className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition"
+            >
+              Annuler
+            </button>
+            <button
+              onClick={executerLot}
+              className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition ${
+                actionLot === "supprimer"
+                  ? "bg-red-600 hover:bg-red-700"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+              Confirmer
+            </button>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={!!aDesenrichir}
+        onClose={() => setADesenrichir(null)}
+        title="Effacer les données INSEE ?"
+        size="sm"
+      >
+        <p className="text-sm text-gray-600">
+          <strong>{aDesenrichir?.societe}</strong>
+          {" perdra son SIRET, son effectif, son activité et son état administratif."}
+        </p>
+        <p className="text-xs text-gray-500 mt-2">
+          Le code postal et la ville sont effacés eux aussi : quand l&apos;appariement est faux,
+          ils viennent de l&apos;entreprise homonyme et t&apos;indiqueraient une mauvaise
+          localisation. Le prospect ressortira au prochain enrichissement — complète son code
+          postal avant, c&apos;est lui qui garantit le bon rattachement.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <button
+            onClick={() => setADesenrichir(null)}
+            className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition"
+          >
+            Annuler
+          </button>
+          <button
+            onClick={async () => {
+              if (!aDesenrichir) return;
+              await annulerEnrichissement(aDesenrichir);
+              setADesenrichir(null);
+              notifier("Données INSEE effacées.");
+            }}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-amber-600 text-white hover:bg-amber-700 transition"
+          >
+            Effacer
+          </button>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={!!aDesenvoyer}

@@ -48,6 +48,47 @@ export function effectifMinimum(code?: string): number {
   return code && code in min ? min[code] : -1
 }
 
+/**
+ * Regroupement des 13 tranches INSEE en 5 paliers utiles à la prospection.
+ *
+ * Les tranches brutes sont trop fines (« 200 à 249 » ne concerne aucun artisan)
+ * et feraient treize filtres illisibles. Ces paliers-ci correspondent à des
+ * réalités d'organisation distinctes : le patron seul, la petite équipe où il
+ * fait tout, la structure où quelqu'un commence à gérer, et celle qui a un poste
+ * dédié à la planification.
+ */
+export const GROUPES_EFFECTIF = [
+  { id: 'nc', label: 'Effectif inconnu' },
+  { id: 'solo', label: 'Sans salarié' },
+  { id: 'micro', label: '1 à 5 salariés' },
+  { id: 'petite', label: '6 à 19 salariés' },
+  { id: 'grande', label: '20 salariés et +' },
+] as const
+
+export type GroupeEffectif = (typeof GROUPES_EFFECTIF)[number]['id']
+
+export function groupeEffectif(code?: string): GroupeEffectif {
+  const min = effectifMinimum(code)
+  if (min < 0) return 'nc'
+  if (min === 0) return 'solo'
+  if (min < 6) return 'micro'
+  if (min < 20) return 'petite'
+  return 'grande'
+}
+
+/**
+ * L'entreprise a-t-elle cessé son activité ?
+ *
+ * ⚠️ Deux codes à tester, et c'est la source d'un bug resté invisible : l'API
+ * renvoie l'état de l'ÉTABLISSEMENT quand il existe (`A` actif / `F` fermé) et
+ * seulement sinon celui de l'ENTREPRISE (`A` / `C` cessée). Ne tester que `C`
+ * — ce que faisait le code — laissait passer 62 sociétés fermées sur 547
+ * enrichies, sans jamais afficher le badge.
+ */
+export function estCessee(etat?: string): boolean {
+  return etat === 'C' || etat === 'F'
+}
+
 export function normaliserSiret(brut: string): string {
   return (brut ?? '').replace(/\D/g, '')
 }

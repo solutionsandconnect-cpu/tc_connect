@@ -10,10 +10,42 @@ import {
 } from "@/lib/mailingModel";
 import { renderMailHtml, renderMailTexte, sujetMail } from "@/lib/mailingRender";
 import { construirePromptRecherche } from "@/lib/mailingPrompt";
+import { GROUPES_EFFECTIF, groupeEffectif, type GroupeEffectif } from "@/lib/sirene";
+import { departementDuCp } from "@/lib/territoires";
+import FiltreRayon, { useRayon } from "@/components/mailing/FiltreRayon";
 import { downloadBrochurePDF } from "@/lib/brochurePdf";
 import type { MailingMetier, Prospect } from "@/types";
 
 const inputCls = "w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition";
+
+/** Pastille de filtre — un palier vide reste visible, en pointillés. */
+function FiltreChip({
+  actif, onClick, label, nombre, attenue,
+}: {
+  actif: boolean;
+  onClick: () => void;
+  label: string;
+  nombre?: number;
+  attenue?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition ${
+        actif
+          ? "bg-blue-600 text-white"
+          : attenue
+            ? "border border-dashed text-gray-400 hover:bg-gray-50"
+            : "border text-gray-600 hover:bg-gray-50"
+      }`}
+    >
+      {label}
+      {nombre !== undefined && (
+        <span className={`ml-1.5 ${actif ? "text-blue-100" : "text-gray-400"}`}>{nombre}</span>
+      )}
+    </button>
+  );
+}
 
 export default function Composeur({
   userId, prospects, metiers, optouts, envoyesAujourdhui, onToast,
@@ -37,6 +69,9 @@ export default function Composeur({
   const [promptCopie, setPromptCopie] = useState(false);
   const [brochureEnCours, setBrochureEnCours] = useState(false);
   const [filtre, setFiltre] = useState<"tous" | "jamais" | "relance">("tous");
+  const [filtreEffectif, setFiltreEffectif] = useState<GroupeEffectif | "tous">("tous");
+  const [filtreDept, setFiltreDept] = useState<string>("tous");
+  const rayon = useRayon(prospects);
   const [recherche, setRecherche] = useState("");
 
   const origin = useSyncExternalStore(
@@ -63,12 +98,37 @@ export default function Composeur({
         const dejaContacte = (p.nbEnvois ?? 0) > 0;
         if (filtre === "jamais" && dejaContacte) return false;
         if (filtre === "relance" && !dejaContacte) return false;
+        if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
+        if (filtreDept !== "tous" && departementDuCp(p.codePostal)?.code !== filtreDept) return false;
+        if (!rayon.dansRayon(p)) return false;
         const q = recherche.trim().toLowerCase();
         if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
         return true;
       }),
-    [eligibles, filtre, recherche],
+    [eligibles, filtre, filtreEffectif, filtreDept, recherche, rayon],
   );
+
+  // Rayon actif : les plus proches en tête, pour les traiter en priorité.
+  const affichesTries = useMemo(
+    () =>
+      rayon.rayon === null
+        ? affiches
+        : [...affiches].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9)),
+    [affiches, rayon],
+  );
+
+  /** Départements réellement présents dans le kit choisi — pas les 101. */
+  const deptsDuKit = useMemo(() => {
+    const par = new Map<string, { nom: string; n: number }>();
+    for (const p of eligibles) {
+      const d = departementDuCp(p.codePostal);
+      if (!d) continue;
+      const e = par.get(d.code) ?? { nom: d.nom, n: 0 };
+      e.n++;
+      par.set(d.code, e);
+    }
+    return [...par.entries()].sort((a, b) => b[1].n - a[1].n);
+  }, [eligibles]);
 
   const enFile = file.length > 0;
   const prospect = enFile ? prospects.find((p) => p.id === file[index]) ?? null : null;
@@ -200,7 +260,11 @@ export default function Composeur({
 
     return (
       <div className="grid lg:grid-cols-2 gap-4 items-start">
-      <div className="space-y-3">
+      {/* `min-w-0` sur les colonnes : un enfant de grille vaut `min-width:auto`
+          par défaut, donc un email ou une ville un peu longs élargissaient la
+          grille au lieu d'être tronqués — d'où le débordement horizontal en
+          mobile, avec le texte coupé par le bord de l'écran. */}
+      <div className="space-y-3 min-w-0">
         <div className="border rounded-xl bg-white p-4">
           <label className="block text-xs font-medium text-gray-600 mb-1">Kit métier</label>
           <select
@@ -271,9 +335,56 @@ export default function Composeur({
                   </button>
                 ))}
               </div>
+
+              {/* Ciblage fin dans le kit choisi. Les compteurs portent sur les
+                  CONTACTABLES du kit, pas sur toute la base : un palier à 0 ici
+                  veut dire « rien à envoyer », pas « aucun prospect ». */}
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                <FiltreChip
+                  actif={filtreEffectif === "tous"}
+                  onClick={() => setFiltreEffectif("tous")}
+                  label="Toutes tailles"
+                />
+                {GROUPES_EFFECTIF.map((g) => {
+                  const n = eligibles.filter((p) => groupeEffectif(p.effectifCode) === g.id).length;
+                  return (
+                    <FiltreChip
+                      key={g.id}
+                      actif={filtreEffectif === g.id}
+                      onClick={() => setFiltreEffectif(g.id)}
+                      label={g.label}
+                      nombre={n}
+                      attenue={n === 0}
+                    />
+                  );
+                })}
+              </div>
+
+              <div className="mt-2">
+                <FiltreRayon {...rayon} />
+              </div>
+
+              {deptsDuKit.length > 1 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  <FiltreChip
+                    actif={filtreDept === "tous"}
+                    onClick={() => setFiltreDept("tous")}
+                    label="Tous départements"
+                  />
+                  {deptsDuKit.map(([code, d]) => (
+                    <FiltreChip
+                      key={code}
+                      actif={filtreDept === code}
+                      onClick={() => setFiltreDept(code)}
+                      label={`${code} ${d.nom}`}
+                      nombre={d.n}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
 
-            {affiches.length === 0 ? (
+            {affichesTries.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-gray-500">
                 {eligibles.length === 0
                   ? "Aucun prospect contactable pour ce métier — délai de relance non écoulé, quota épuisé, ou liste vide."
@@ -281,7 +392,7 @@ export default function Composeur({
               </div>
             ) : (
               <div className="max-h-80 overflow-y-auto divide-y">
-                {affiches.map((p) => {
+                {affichesTries.map((p) => {
                   const nb = p.nbEnvois ?? 0;
                   return (
                     <label key={p.id} className="flex items-start gap-2 px-4 py-2 hover:bg-gray-50 cursor-pointer">
@@ -388,7 +499,7 @@ export default function Composeur({
 
   return (
     <div className="grid lg:grid-cols-2 gap-4">
-      <div className="space-y-3">
+      <div className="space-y-3 min-w-0">
         <div className="border rounded-xl bg-white p-4 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -551,7 +662,7 @@ export default function Composeur({
         </p>
       </div>
 
-      <div className="border rounded-xl bg-white overflow-hidden flex flex-col">
+      <div className="border rounded-xl bg-white overflow-hidden flex flex-col min-w-0">
         <div className="px-4 py-2.5 border-b">
           <div className="text-xs text-gray-500">Objet</div>
           <div className="text-sm font-medium truncate">{sujet || "—"}</div>
