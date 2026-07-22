@@ -301,6 +301,12 @@ export const METIERS_NAF: { label: string; naf: string }[] = [
   { label: 'Étanchéité', naf: '43.99A' },
   { label: 'Paysagiste', naf: '81.30Z' },
   { label: 'Architecte', naf: '71.11Z' },
+  // La maîtrise d'œuvre n'a pas de code à elle : elle se déclare tantôt en
+  // architecture (71.11Z), tantôt en ingénierie / études techniques (71.12B).
+  // Les deux ensemble, sinon on perd la moitié de la profession. (Vérifié :
+  // 547 et 1025 entreprises actives dans le seul Morbihan.)
+  { label: 'Maîtrise d’œuvre / Bureau d’études', naf: '71.12B' },
+  { label: 'Maître d’œuvre + architecte', naf: '71.11Z,71.12B' },
 ]
 
 export interface RechercheCriteres {
