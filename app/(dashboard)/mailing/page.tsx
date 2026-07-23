@@ -398,13 +398,6 @@ export default function MailingPage() {
     return rel;
   }, [prospects]);
 
-  /** Prospects liés de MÊME métier que `p` (candidats à la fusion). */
-  const fusionnablesDe = (p: Prospect): Prospect[] => {
-    const m = liensGroupe.get(p.id);
-    if (!m || !p.metierId) return [];
-    return [...m.values()].filter((o) => o.metierId === p.metierId);
-  };
-
   const listeFiltree = useMemo(() => {
     const q = recherche.trim().toLowerCase();
     const liste = prospects.filter((p) => {
@@ -1452,25 +1445,13 @@ export default function MailingPage() {
                           const lies = liensGroupe.get(p.id);
                           if (!lies || lies.size === 0) return null;
                           const liste = [...lies.values()].map((o) => o.societe);
-                          const fusionnables = fusionnablesDe(p);
                           return (
-                            <>
-                              <span
-                                className="px-2 py-0.5 rounded-full text-[11px] bg-orange-100 text-orange-700 font-medium max-w-[16rem] truncate"
-                                title={`Même groupe/dirigeant que : ${liste.join(", ")} — inutile de contacter les deux`}
-                              >
-                                👥 lié à {liste[0]}{liste.length > 1 ? ` +${liste.length - 1}` : ""}
-                              </span>
-                              {fusionnables.length > 0 && (
-                                <button
-                                  onClick={() => setAFusionner([p, ...fusionnables])}
-                                  className="px-2 py-0.5 rounded-full text-[11px] bg-orange-600 text-white font-medium hover:bg-orange-700 transition"
-                                  title="Fusionner les fiches de même métier en une seule (optionnel)"
-                                >
-                                  ⤵ Fusionner ({fusionnables.length + 1})
-                                </button>
-                              )}
-                            </>
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[11px] bg-orange-100 text-orange-700 font-medium max-w-[16rem] truncate"
+                              title={`Même groupe/dirigeant que : ${liste.join(", ")} — inutile de contacter les deux`}
+                            >
+                              👥 lié à {liste[0]}{liste.length > 1 ? ` +${liste.length - 1}` : ""}
+                            </span>
                           );
                         })()}
                         {isEmailGenerique(p.email) && (
@@ -1626,23 +1607,11 @@ export default function MailingPage() {
                           const lies = liensGroupe.get(p.id);
                           if (!lies || lies.size === 0) return null;
                           const noms = [...lies.values()].map((o) => o.societe);
-                          const fusionnables = fusionnablesDe(p);
                           return (
                             <div className="text-[11px] rounded-lg bg-orange-50 border border-orange-100 px-2.5 py-1.5">
                               <span className="text-orange-700 font-medium">👥 Lié à</span>{" "}
                               <span className="text-gray-700">{noms.join(", ")}</span>
                               <span className="text-gray-400"> — inutile de contacter les deux.</span>
-                              {fusionnables.length > 0 ? (
-                                <button
-                                  onClick={() => setAFusionner([p, ...fusionnables])}
-                                  className="ml-1.5 px-2 py-0.5 rounded-lg bg-orange-600 text-white font-medium hover:bg-orange-700 transition"
-                                  title="Fusionner les fiches de même métier en une seule (optionnel)"
-                                >
-                                  Fusionner ({fusionnables.length + 1})
-                                </button>
-                              ) : (
-                                <span className="text-gray-400"> (métiers différents : pas de fusion)</span>
-                              )}
                             </div>
                           );
                         })()}
