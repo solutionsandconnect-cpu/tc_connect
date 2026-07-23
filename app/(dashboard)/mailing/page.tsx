@@ -362,6 +362,33 @@ export default function MailingPage() {
       : [...liste].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9));
   }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, filtreLogiciel, recherche, rayon]);
 
+  // Prospects LIÉS : même dirigeant OU même groupe/holding (souvent sur des kits
+  // métier différents) → inutile de contacter les deux. id → sociétés liées.
+  const liensGroupe = useMemo(() => {
+    const norm = (s?: string) => (s ?? "").trim().toLowerCase();
+    const parCle = new Map<string, Prospect[]>();
+    const push = (cle: string, p: Prospect) => {
+      const arr = parCle.get(cle);
+      if (arr) arr.push(p); else parCle.set(cle, [p]);
+    };
+    for (const p of prospects) {
+      const d = norm(p.dirigeant);
+      if (d) push("d:" + d, p);
+      const g = norm(p.groupe);
+      if (g && g !== "aucun") push("g:" + g, p);
+    }
+    const rel = new Map<string, Set<string>>();
+    for (const arr of parCle.values()) {
+      if (arr.length < 2) continue;
+      for (const p of arr) {
+        const set = rel.get(p.id) ?? new Set<string>();
+        for (const o of arr) if (o.id !== p.id) set.add(o.societe);
+        rel.set(p.id, set);
+      }
+    }
+    return rel;
+  }, [prospects]);
+
   const basculerSelection = (id: string) => {
     setSelection((s) => {
       const n = new Set(s);
@@ -1078,6 +1105,14 @@ export default function MailingPage() {
                           );
                           return null;
                         })()}
+                        {p.responsableAdmin === true && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-indigo-100 text-indigo-700 font-medium"
+                            title="Une personne dédiée à l'administratif/gestion — signal fort"
+                          >
+                            🗂️ admin dédié
+                          </span>
+                        )}
                         {estCessee(p.etatEntreprise) && (
                           <span className="px-2 py-0.5 rounded-full text-[11px] bg-red-100 text-red-700">
                             société cessée
@@ -1111,6 +1146,19 @@ export default function MailingPage() {
                             👤 {p.dirigeant}
                           </span>
                         )}
+                        {(() => {
+                          const lies = liensGroupe.get(p.id);
+                          if (!lies || lies.size === 0) return null;
+                          const liste = [...lies];
+                          return (
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[11px] bg-orange-100 text-orange-700 font-medium"
+                              title={`Même groupe/dirigeant que : ${liste.join(", ")} — inutile de contacter les deux`}
+                            >
+                              👥 lié{liste.length > 1 ? ` ×${liste.length}` : ""}
+                            </span>
+                          );
+                        })()}
                         {isEmailGenerique(p.email) && (
                           <span
                             className="px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-500"

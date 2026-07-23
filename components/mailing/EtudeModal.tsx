@@ -20,6 +20,13 @@ function logicielTexte(aLogiciel: boolean | undefined, nom?: string): string | n
   return null;
 }
 
+/** Libellé de l'état « responsable administratif dédié ? ». */
+function adminTexte(r: boolean | undefined): string | null {
+  if (r === true) return "Responsable administratif dédié";
+  if (r === false) return "Pas d'admin dédié (le dirigeant gère tout)";
+  return null;
+}
+
 const inputCls =
   "w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition";
 const labelCls = "block text-xs font-medium text-gray-600 mb-1";
@@ -45,10 +52,14 @@ export default function EtudeModal({
 
   // Saisie manuelle — pré-remplie avec ce qui est déjà connu.
   const [dirigeantM, setDirigeantM] = useState(prospect.dirigeant ?? "");
+  const [groupeM, setGroupeM] = useState(prospect.groupe ?? "");
   const [logicielM, setLogicielM] = useState<"" | "oui" | "non">(
     prospect.aLogiciel === true ? "oui" : prospect.aLogiciel === false ? "non" : prospect.logicielActuel ? "oui" : "",
   );
   const [logicielNomM, setLogicielNomM] = useState(prospect.logicielActuel ?? "");
+  const [adminM, setAdminM] = useState<"" | "oui" | "non">(
+    prospect.responsableAdmin === true ? "oui" : prospect.responsableAdmin === false ? "non" : "",
+  );
   const [angleM, setAngleM] = useState<"" | "surcharge" | "circulation" | "inconnu">(prospect.angle ?? "");
   const [resumeM, setResumeM] = useState(prospect.etudeResume ?? "");
 
@@ -99,10 +110,12 @@ export default function EtudeModal({
     try {
       await majInfosProspect(prospect, {
         dirigeant: dirigeantM.trim() || null,
+        groupe: groupeM.trim() || null,
         angle: angleM || null,
         etudeResume: resumeM.trim() || null,
         aLogiciel: logicielM === "oui" ? true : logicielM === "non" ? false : null,
         logicielActuel: logicielM === "oui" ? logicielNomM.trim() || null : null,
+        responsableAdmin: adminM === "oui" ? true : adminM === "non" ? false : null,
       });
       onToast("Infos enregistrées sur la fiche.");
       onClose();
@@ -120,6 +133,8 @@ export default function EtudeModal({
 
   const logDeja = logicielTexte(prospect.aLogiciel, prospect.logicielActuel);
   const logFiche = fiche ? logicielTexte(fiche.aLogiciel, fiche.logicielActuel) : null;
+  const adminDeja = adminTexte(prospect.responsableAdmin);
+  const adminFiche = fiche ? adminTexte(fiche.responsableAdmin) : null;
 
   return (
     <Modal isOpen onClose={onClose} title={`Étudier ${prospect.societe}`} size="lg">
@@ -150,9 +165,11 @@ export default function EtudeModal({
           <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2 text-xs text-emerald-800 space-y-0.5">
             <div className="font-medium">Déjà connu — ce qui est enregistré :</div>
             {prospect.dirigeant && <div>👤 Dirigeant : {prospect.dirigeant}</div>}
+            {prospect.groupe && <div>👥 Groupe : {prospect.groupe}</div>}
             {prospect.personnalisation && <div>✍ {prospect.personnalisation}</div>}
             {prospect.angle && <div>🎯 Angle : {ANGLE_LABEL[prospect.angle]}</div>}
             {logDeja && <div>🧩 {logDeja}</div>}
+            {adminDeja && <div>🗂️ {adminDeja}</div>}
             {prospect.etudeResume && (
               <div className="whitespace-pre-wrap text-emerald-700">{prospect.etudeResume}</div>
             )}
@@ -212,6 +229,9 @@ export default function EtudeModal({
                 {fiche.dirigeant && (
                   <div><span className="text-gray-400">Dirigeant :</span> {fiche.dirigeant}</div>
                 )}
+                {fiche.groupe && (
+                  <div><span className="text-gray-400">Groupe :</span> {fiche.groupe}</div>
+                )}
                 {fiche.personnalisation && (
                   <div><span className="text-gray-400">Personnalisation :</span> {fiche.personnalisation}</div>
                 )}
@@ -220,6 +240,9 @@ export default function EtudeModal({
                 )}
                 {logFiche && (
                   <div><span className="text-gray-400">Logiciel :</span> {logFiche}</div>
+                )}
+                {adminFiche && (
+                  <div><span className="text-gray-400">Admin :</span> {adminFiche}</div>
                 )}
                 {fiche.etudeResume && (
                   <div className="whitespace-pre-wrap">
@@ -262,6 +285,15 @@ export default function EtudeModal({
                 />
               </div>
               <div>
+                <label className={labelCls}>Groupe / holding (si lié à d&apos;autres sociétés)</label>
+                <input
+                  value={groupeM}
+                  onChange={(e) => setGroupeM(e.target.value)}
+                  placeholder="Ex : Groupe BIBARD"
+                  className={inputCls}
+                />
+              </div>
+              <div>
                 <label className={labelCls}>Angle du message</label>
                 <select value={angleM} onChange={(e) => setAngleM(e.target.value as typeof angleM)} className={inputCls}>
                   <option value="">— Non défini —</option>
@@ -296,6 +328,15 @@ export default function EtudeModal({
                   />
                 </div>
               )}
+            </div>
+
+            <div className="sm:w-1/2 sm:pr-1.5">
+              <label className={labelCls}>Responsable administratif dédié ?</label>
+              <select value={adminM} onChange={(e) => setAdminM(e.target.value as typeof adminM)} className={inputCls}>
+                <option value="">On ne sait pas</option>
+                <option value="oui">Oui, une personne dédiée</option>
+                <option value="non">Non, le dirigeant gère tout</option>
+              </select>
             </div>
 
             <div>

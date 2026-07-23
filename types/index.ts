@@ -1332,6 +1332,13 @@ export interface Prospect {
    * n'est affiché). Distinct de `logicielActuel`, qui n'est que le NOM quand connu.
    */
   aLogiciel?: boolean
+  /**
+   * Y a-t-il une personne DÉDIÉE à l'administratif/gestion/planning ? true = oui,
+   * false = non (le dirigeant gère tout), undefined = on ne sait pas. Signal fort :
+   * admin dédié + logiciel = viser une offre meilleure ; admin dédié SANS logiciel
+   * = gros gain de temps « servi sur un plateau ».
+   */
+  responsableAdmin?: boolean
   // ── Étude préalable (résultat du prompt IA, collé dans l'app) ──────────────
   /** Nom du dirigeant à qui écrire, issu de l'étude. */
   dirigeant?: string
@@ -1343,6 +1350,12 @@ export interface Prospect {
    * circulation de l'info), 'inconnu' si l'étude n'a pas tranché.
    */
   angle?: 'surcharge' | 'circulation' | 'inconnu'
+  /**
+   * Nom du groupe / holding auquel appartient l'entreprise, si l'étude en révèle un.
+   * Sert à repérer deux prospects du MÊME groupe (souvent sur des kits métier
+   * différents) — inutile de contacter les deux. Recoupé aussi par le `dirigeant`.
+   */
+  groupe?: string
   /** Fiche factuelle compilée depuis l'étude (effectif réel, organisation, site, avis…). */
   etudeResume?: string
   /** Date de la dernière étude enregistrée sur la fiche. */

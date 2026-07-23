@@ -72,9 +72,11 @@ CE QUE JE VEUX EN SORTIE
 
 ===ENEZO-FICHE===
 dirigeant: <nom de la personne à qui écrire, ou "inconnu">
+groupe: <nom du groupe/holding si l'entreprise en fait partie (avec d'AUTRES sociétés), sinon "aucun">
 angle: <surcharge | circulation | inconnu>
 effectif: <ex: 8 personnes dont 6 sur le terrain, ou "inconnu">
 organisation: <ex: le dirigeant gère tout | bureau d'études + conduite de travaux + terrain, ou "inconnu">
+admin_dedie: <oui si une personne fait SURTOUT de l'administratif/gestion/planning (assistante, conjoint(e) qui gère, responsable exploitation) ; non si le dirigeant gère tout lui-même ; inconnu>
 anciennete: <année de création et/ou ancienneté, ou "inconnu">
 zone: <zone géographique d'intervention, ou "inconnu">
 specialites: <spécialités et types de chantiers, ou "inconnu">
@@ -92,9 +94,11 @@ resume: <2 ou 3 phrases factuelles résumant l'entreprise, sur une seule ligne>
 export type FicheEtude = {
   personnalisation?: string
   dirigeant?: string
+  groupe?: string
   angle?: 'surcharge' | 'circulation' | 'inconnu'
   logicielActuel?: string
   aLogiciel?: boolean
+  responsableAdmin?: boolean
   etudeResume?: string
 }
 
@@ -137,6 +141,9 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   const dirigeant = val('dirigeant')
   if (dirigeant) fiche.dirigeant = dirigeant
 
+  const groupe = val('groupe')
+  if (groupe) fiche.groupe = groupe
+
   const angleRaw = (paires.get('angle') ?? '').toLowerCase()
   if (angleRaw.includes('surcharge')) fiche.angle = 'surcharge'
   else if (angleRaw.includes('circulation')) fiche.angle = 'circulation'
@@ -155,6 +162,11 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   } else if (AUCUN.has(logicielBrut)) {
     fiche.aLogiciel = false
   }
+
+  // Responsable administratif dédié : oui / non / (inconnu = rien).
+  const adminBrut = (paires.get('admin_dedie') ?? '').trim().toLowerCase()
+  if (adminBrut.startsWith('oui')) fiche.responsableAdmin = true
+  else if (adminBrut.startsWith('non')) fiche.responsableAdmin = false
 
   // Fiche compilée : le résumé d'abord, puis chaque rubrique renseignée. Tout ce
   // que le bloc ramène est conservé — c'est ce qui manquait avant.
@@ -178,8 +190,9 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   if (lignes.length) fiche.etudeResume = lignes.join('\n')
 
   if (
-    !fiche.personnalisation && !fiche.dirigeant && !fiche.angle &&
-    !fiche.logicielActuel && fiche.aLogiciel === undefined && !fiche.etudeResume
+    !fiche.personnalisation && !fiche.dirigeant && !fiche.groupe && !fiche.angle &&
+    !fiche.logicielActuel && fiche.aLogiciel === undefined &&
+    fiche.responsableAdmin === undefined && !fiche.etudeResume
   ) {
     return null
   }

@@ -613,9 +613,11 @@ export const enregistrerEtude = async (
   fiche: {
     personnalisation?: string
     dirigeant?: string
+    groupe?: string
     angle?: 'surcharge' | 'circulation' | 'inconnu'
     logicielActuel?: string
     aLogiciel?: boolean
+    responsableAdmin?: boolean
     etudeResume?: string
   },
 ): Promise<void> => {
@@ -637,8 +639,10 @@ export const majInfosProspect = async (
   prospect: Prospect,
   patch: {
     dirigeant?: string | null
+    groupe?: string | null
     logicielActuel?: string | null
     aLogiciel?: boolean | null
+    responsableAdmin?: boolean | null
     angle?: 'surcharge' | 'circulation' | 'inconnu' | null
     etudeResume?: string | null
   },
