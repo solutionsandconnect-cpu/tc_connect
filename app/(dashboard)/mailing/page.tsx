@@ -11,6 +11,7 @@ import {
 } from "@/lib/mailingService";
 import PromotionModal from "@/components/mailing/PromotionModal";
 import EtudeModal from "@/components/mailing/EtudeModal";
+import FusionModal from "@/components/mailing/FusionModal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
 import {
   QUOTA_JOUR, peutContacter, isEmailGenerique, STATUT_LABEL, STATUT_STYLE,
@@ -162,6 +163,7 @@ export default function MailingPage() {
   const [charge, setCharge] = useState(false);
   const [aEditer, setAEditer] = useState<Prospect | null>(null);
   const [aEtudier, setAEtudier] = useState<Prospect | null>(null);
+  const [aFusionner, setAFusionner] = useState<Prospect[] | null>(null);
   const [evenements, setEvenements] = useState<MailingEvenement[]>([]);
   const [logiciels, setLogiciels] = useState<MailingLogiciel[]>([]);
   const [statutEnCours, setStatutEnCours] = useState<
@@ -186,6 +188,7 @@ export default function MailingPage() {
   const [filtreAngle, setFiltreAngle] = useState<"tous" | "surcharge" | "circulation">("tous");
   const [filtreLie, setFiltreLie] = useState(false);
   const [filtreEtude, setFiltreEtude] = useState<"tous" | "etudie" | "lance" | "rien">("tous");
+  const [filtreGerant, setFiltreGerant] = useState<"tous" | "jeune" | "senior">("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
   const [aDesenrichir, setADesenrichir] = useState<Prospect | null>(null);
@@ -338,6 +341,7 @@ export default function MailingPage() {
     (filtreAngle !== "tous" ? 1 : 0) +
     (filtreLie ? 1 : 0) +
     (filtreEtude !== "tous" ? 1 : 0) +
+    (filtreGerant !== "tous" ? 1 : 0) +
     (rayon.rayon !== null ? 1 : 0) +
     (recherche.trim() ? 1 : 0);
 
@@ -357,6 +361,7 @@ export default function MailingPage() {
     setFiltreAngle("tous");
     setFiltreLie(false);
     setFiltreEtude("tous");
+    setFiltreGerant("tous");
     setRecherche("");
     // Le rayon est remis à « partout », mais le code postal de référence et les
     // communes déjà chargées restent : les recharger n'aurait aucun intérêt.
@@ -379,17 +384,26 @@ export default function MailingPage() {
       const g = norm(p.groupe);
       if (g && g !== "aucun") push("g:" + g, p);
     }
-    const rel = new Map<string, Set<string>>();
+    // id → prospects liés (dédupliqués par id : un lien par dirigeant ET par groupe
+    // ne compte qu'une fois).
+    const rel = new Map<string, Map<string, Prospect>>();
     for (const arr of parCle.values()) {
       if (arr.length < 2) continue;
       for (const p of arr) {
-        const set = rel.get(p.id) ?? new Set<string>();
-        for (const o of arr) if (o.id !== p.id) set.add(o.societe);
-        rel.set(p.id, set);
+        const m = rel.get(p.id) ?? new Map<string, Prospect>();
+        for (const o of arr) if (o.id !== p.id) m.set(o.id, o);
+        rel.set(p.id, m);
       }
     }
     return rel;
   }, [prospects]);
+
+  /** Prospects liés de MÊME métier que `p` (candidats à la fusion). */
+  const fusionnablesDe = (p: Prospect): Prospect[] => {
+    const m = liensGroupe.get(p.id);
+    if (!m || !p.metierId) return [];
+    return [...m.values()].filter((o) => o.metierId === p.metierId);
+  };
 
   const listeFiltree = useMemo(() => {
     const q = recherche.trim().toLowerCase();
@@ -418,6 +432,8 @@ export default function MailingPage() {
       if (filtreAngle !== "tous" && p.angle !== filtreAngle) return false;
       if (filtreLie && !liensGroupe.has(p.id)) return false;
       if (filtreEtude !== "tous" && etatEtude(p) !== filtreEtude) return false;
+      if (filtreGerant === "jeune" && p.dirigeantJeune !== true) return false;
+      if (filtreGerant === "senior" && p.dirigeantJeune !== false) return false;
       if (!rayon.dansRayon(p)) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
@@ -427,7 +443,7 @@ export default function MailingPage() {
     return rayon.rayon === null
       ? liste
       : [...liste].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9));
-  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, filtreLogiciel, filtreAdmin, filtreDev, filtreSite, filtreAngle, filtreLie, filtreEtude, liensGroupe, recherche, rayon]);
+  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, filtreLogiciel, filtreAdmin, filtreDev, filtreSite, filtreAngle, filtreLie, filtreEtude, filtreGerant, liensGroupe, recherche, rayon]);
 
   const basculerSelection = (id: string) => {
     setSelection((s) => {
@@ -482,10 +498,25 @@ export default function MailingPage() {
       fait++;
       setLotEnCours({ fait, total: cibles.length });
     }
+    // Après un « Même groupe », proposer la fusion des sélectionnés de MÊME métier
+    // (une holding avec 2 fiches du même métier = souvent un doublon à fusionner).
+    let proposerFusion: Prospect[] | null = null;
+    if (actionLot === "groupe") {
+      const parMetier = new Map<string, Prospect[]>();
+      for (const p of cibles) {
+        if (!p.metierId) continue;
+        const arr = parMetier.get(p.metierId);
+        if (arr) arr.push(p); else parMetier.set(p.metierId, [p]);
+      }
+      proposerFusion = [...parMetier.values()].find((arr) => arr.length >= 2) ?? null;
+    }
+
     setLotEnCours(null);
     setActionLot(null);
     setSelection(new Set());
+    setGroupeLot(""); // le nom de groupe saisi ne doit pas rester d'un lot à l'autre
     notifier(`${fait} prospect(s) traité(s).`);
+    if (proposerFusion) setAFusionner(proposerFusion);
   };
 
   const appliquerStatut = async (
@@ -1078,6 +1109,33 @@ export default function MailingPage() {
             })()}
           </div>
 
+          {/* Profil générationnel du dirigeant (appétence logiciel). */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(() => {
+              const jeune = prospects.filter((p) => p.dirigeantJeune === true).length;
+              const senior = prospects.filter((p) => p.dirigeantJeune === false).length;
+              return (
+                <>
+                  <Chip actif={filtreGerant === "tous"} onClick={() => setFiltreGerant("tous")} label="Gérant : tous" />
+                  <Chip
+                    actif={filtreGerant === "jeune"}
+                    onClick={() => setFiltreGerant(filtreGerant === "jeune" ? "tous" : "jeune")}
+                    label="🎂 Gérant jeune"
+                    nombre={jeune}
+                    attenue={jeune === 0}
+                  />
+                  <Chip
+                    actif={filtreGerant === "senior"}
+                    onClick={() => setFiltreGerant(filtreGerant === "senior" ? "tous" : "senior")}
+                    label="🎂 Gérant senior"
+                    nombre={senior}
+                    attenue={senior === 0}
+                  />
+                </>
+              );
+            })()}
+          </div>
+
           {/* Barre d'actions groupées : n'apparaît qu'une fois une sélection
               faite, pour ne pas encombrer la vue de lecture. */}
           {selectionnes.length > 0 && (
@@ -1369,22 +1427,50 @@ export default function MailingPage() {
                         {p.dirigeant && (
                           <span
                             className="px-2 py-0.5 rounded-full text-[11px] bg-fuchsia-50 text-fuchsia-700 font-medium"
-                            title="Dirigeant — à qui écrire"
+                            title={`Dirigeant — à qui écrire${p.dirigeantAge ? ` (${p.dirigeantAge})` : ""}`}
                           >
                             👤 {p.dirigeant}
+                          </span>
+                        )}
+                        {p.dirigeantJeune === true && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-800 font-medium"
+                            title={`Dirigeant jeune${p.dirigeantAge ? ` (${p.dirigeantAge})` : ""} — a priori plus réceptif au numérique`}
+                          >
+                            🎂 Gérant jeune
+                          </span>
+                        )}
+                        {p.dirigeantJeune === false && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600"
+                            title={`Dirigeant senior${p.dirigeantAge ? ` (${p.dirigeantAge})` : ""} — souvent fin de carrière, moins outillé`}
+                          >
+                            🎂 Gérant senior
                           </span>
                         )}
                         {(() => {
                           const lies = liensGroupe.get(p.id);
                           if (!lies || lies.size === 0) return null;
-                          const liste = [...lies];
+                          const liste = [...lies.values()].map((o) => o.societe);
+                          const fusionnables = fusionnablesDe(p);
                           return (
-                            <span
-                              className="px-2 py-0.5 rounded-full text-[11px] bg-orange-100 text-orange-700 font-medium max-w-[16rem] truncate"
-                              title={`Même groupe/dirigeant que : ${liste.join(", ")} — inutile de contacter les deux`}
-                            >
-                              👥 lié à {liste[0]}{liste.length > 1 ? ` +${liste.length - 1}` : ""}
-                            </span>
+                            <>
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[11px] bg-orange-100 text-orange-700 font-medium max-w-[16rem] truncate"
+                                title={`Même groupe/dirigeant que : ${liste.join(", ")} — inutile de contacter les deux`}
+                              >
+                                👥 lié à {liste[0]}{liste.length > 1 ? ` +${liste.length - 1}` : ""}
+                              </span>
+                              {fusionnables.length > 0 && (
+                                <button
+                                  onClick={() => setAFusionner([p, ...fusionnables])}
+                                  className="px-2 py-0.5 rounded-full text-[11px] bg-orange-600 text-white font-medium hover:bg-orange-700 transition"
+                                  title="Fusionner les fiches de même métier en une seule (optionnel)"
+                                >
+                                  ⤵ Fusionner ({fusionnables.length + 1})
+                                </button>
+                              )}
+                            </>
                           );
                         })()}
                         {isEmailGenerique(p.email) && (
@@ -1539,11 +1625,24 @@ export default function MailingPage() {
                         {(() => {
                           const lies = liensGroupe.get(p.id);
                           if (!lies || lies.size === 0) return null;
+                          const noms = [...lies.values()].map((o) => o.societe);
+                          const fusionnables = fusionnablesDe(p);
                           return (
                             <div className="text-[11px] rounded-lg bg-orange-50 border border-orange-100 px-2.5 py-1.5">
                               <span className="text-orange-700 font-medium">👥 Lié à</span>{" "}
-                              <span className="text-gray-700">{[...lies].join(", ")}</span>
-                              <span className="text-gray-400"> — inutile de contacter les deux</span>
+                              <span className="text-gray-700">{noms.join(", ")}</span>
+                              <span className="text-gray-400"> — inutile de contacter les deux.</span>
+                              {fusionnables.length > 0 ? (
+                                <button
+                                  onClick={() => setAFusionner([p, ...fusionnables])}
+                                  className="ml-1.5 px-2 py-0.5 rounded-lg bg-orange-600 text-white font-medium hover:bg-orange-700 transition"
+                                  title="Fusionner les fiches de même métier en une seule (optionnel)"
+                                >
+                                  Fusionner ({fusionnables.length + 1})
+                                </button>
+                              ) : (
+                                <span className="text-gray-400"> (métiers différents : pas de fusion)</span>
+                              )}
                             </div>
                           );
                         })()}
@@ -1555,6 +1654,14 @@ export default function MailingPage() {
                             {p.etudeAt && <span className="text-gray-400"> · {fmtDateHeure(p.etudeAt)}</span>}
                             {p.dirigeant && (
                               <div className="text-gray-700">👤 {p.dirigeant}</div>
+                            )}
+                            {(p.dirigeantAge || p.dirigeantJeune !== undefined) && (
+                              <div className="text-gray-600">
+                                🎂 {[
+                                  p.dirigeantAge,
+                                  p.dirigeantJeune === true ? "gérant jeune" : p.dirigeantJeune === false ? "gérant senior" : null,
+                                ].filter(Boolean).join(" · ")}
+                              </div>
                             )}
                             {p.personnalisation && (
                               <div className="text-gray-700">✍ {p.personnalisation}</div>
@@ -2078,6 +2185,14 @@ export default function MailingPage() {
         <EtudeModal
           prospect={aEtudier}
           onClose={() => setAEtudier(null)}
+          onToast={notifier}
+        />
+      )}
+
+      {aFusionner && aFusionner.length >= 2 && (
+        <FusionModal
+          groupe={aFusionner}
+          onClose={() => setAFusionner(null)}
           onToast={notifier}
         />
       )}

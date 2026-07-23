@@ -72,6 +72,9 @@ CE QUE JE VEUX EN SORTIE
 
 ===ENEZO-FICHE===
 dirigeant: <nom de la personne à qui écrire, ou "inconnu">
+email: <adresse email de contact TROUVÉE, idéalement nominative (prenom.nom@…), sinon "inconnu" — RECOPIE-la ici MÊME si tu l'as déjà citée plus haut, c'est ce champ qui l'enregistre>
+dirigeant_age: <âge ou année de naissance du dirigeant si trouvé, ex "43 ans" ou "1981", sinon "inconnu">
+dirigeant_profil: <"jeune" si le dirigeant a moins de ~45 ans (a priori plus réceptif au numérique) ; "senior" s'il a plus de ~55 ans (souvent fin de carrière, moins outillé) ; "inconnu">
 groupe: <nom du groupe/holding si l'entreprise en fait partie (avec d'AUTRES sociétés), sinon "aucun">
 angle: <surcharge | circulation | inconnu>
 effectif: <ex: 8 personnes dont 6 sur le terrain, ou "inconnu">
@@ -96,7 +99,10 @@ resume: <2 ou 3 phrases factuelles résumant l'entreprise, sur une seule ligne>
 
 export type FicheEtude = {
   personnalisation?: string
+  email?: string
   dirigeant?: string
+  dirigeantAge?: string
+  dirigeantJeune?: boolean
   groupe?: string
   angle?: 'surcharge' | 'circulation' | 'inconnu'
   logicielActuel?: string
@@ -146,6 +152,19 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
 
   const dirigeant = val('dirigeant')
   if (dirigeant) fiche.dirigeant = dirigeant
+
+  // Email trouvé par l'étude — on ne retient qu'une valeur qui ressemble à une adresse.
+  const emailBrut = val('email')
+  if (emailBrut && /\S+@\S+\.\S+/.test(emailBrut)) {
+    const m = emailBrut.match(/[^\s<>()"]+@[^\s<>()"]+\.[^\s<>()"]+/)
+    if (m) fiche.email = m[0]
+  }
+
+  const age = val('dirigeant_age')
+  if (age) fiche.dirigeantAge = age
+  const profilBrut = (paires.get('dirigeant_profil') ?? '').trim().toLowerCase()
+  if (profilBrut.startsWith('jeune')) fiche.dirigeantJeune = true
+  else if (profilBrut.startsWith('senior') || profilBrut.startsWith('âg') || profilBrut.startsWith('ag')) fiche.dirigeantJeune = false
 
   const groupe = val('groupe')
   if (groupe) fiche.groupe = groupe
@@ -211,7 +230,8 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   if (lignes.length) fiche.etudeResume = lignes.join('\n')
 
   if (
-    !fiche.personnalisation && !fiche.dirigeant && !fiche.groupe && !fiche.angle &&
+    !fiche.personnalisation && !fiche.email && !fiche.dirigeant && !fiche.dirigeantAge &&
+    fiche.dirigeantJeune === undefined && !fiche.groupe && !fiche.angle &&
     !fiche.logicielActuel && fiche.aLogiciel === undefined &&
     fiche.responsableAdmin === undefined && !fiche.effectifReel &&
     fiche.enDeveloppement === undefined && !fiche.siteEtat && !fiche.etudeResume

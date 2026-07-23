@@ -7,7 +7,7 @@ import {
   onSnapshot, query, where, writeBatch, Timestamp,
 } from 'firebase/firestore'
 import { cleanForFirestore } from '@/lib/firebaseUtils'
-import { emailDomain, makeToken, normalizeEmail, safeId } from '@/lib/mailingModel'
+import { emailDomain, isEmailValide, makeToken, normalizeEmail, safeId } from '@/lib/mailingModel'
 import type { InfoEntreprise } from '@/lib/sirene'
 import type {
   Client, MailingEnvoi, MailingEvenement, MailingLogiciel, MailingMetier, MailingOptout,
@@ -390,6 +390,20 @@ export const fusionnerProspects = async (garde: Prospect, absorbe: Prospect): Pr
   if (vide(garde.logicielActuel) && absorbe.logicielActuel) patch.logicielActuel = absorbe.logicielActuel
   if (absorbe.enrichiAt && !garde.enrichiAt) patch.enrichiAt = absorbe.enrichiAt
 
+  // Infos d'étude : chaque champ absent chez `garde` est repris de `absorbe`.
+  if (vide(garde.dirigeant) && absorbe.dirigeant) patch.dirigeant = absorbe.dirigeant
+  if (vide(garde.dirigeantAge) && absorbe.dirigeantAge) patch.dirigeantAge = absorbe.dirigeantAge
+  if (garde.dirigeantJeune === undefined && absorbe.dirigeantJeune !== undefined) patch.dirigeantJeune = absorbe.dirigeantJeune
+  if (vide(garde.groupe) && absorbe.groupe) patch.groupe = absorbe.groupe
+  if (vide(garde.effectifReel) && absorbe.effectifReel) patch.effectifReel = absorbe.effectifReel
+  if (vide(garde.etudeResume) && absorbe.etudeResume) patch.etudeResume = absorbe.etudeResume
+  if (!garde.angle && absorbe.angle) patch.angle = absorbe.angle
+  if (garde.aLogiciel === undefined && absorbe.aLogiciel !== undefined) patch.aLogiciel = absorbe.aLogiciel
+  if (garde.responsableAdmin === undefined && absorbe.responsableAdmin !== undefined) patch.responsableAdmin = absorbe.responsableAdmin
+  if (garde.enDeveloppement === undefined && absorbe.enDeveloppement !== undefined) patch.enDeveloppement = absorbe.enDeveloppement
+  if (!garde.siteEtat && absorbe.siteEtat) patch.siteEtat = absorbe.siteEtat
+  if (!garde.etudeAt && absorbe.etudeAt) patch.etudeAt = absorbe.etudeAt
+
   // Compteurs d'envoi : cumulés, date la plus récente conservée.
   const envois = (garde.nbEnvois ?? 0) + (absorbe.nbEnvois ?? 0)
   if (envois !== (garde.nbEnvois ?? 0)) patch.nbEnvois = envois
@@ -612,7 +626,10 @@ export const enregistrerEtude = async (
   prospect: Prospect,
   fiche: {
     personnalisation?: string
+    email?: string
     dirigeant?: string
+    dirigeantAge?: string
+    dirigeantJeune?: boolean
     groupe?: string
     angle?: 'surcharge' | 'circulation' | 'inconnu'
     logicielActuel?: string
@@ -624,13 +641,36 @@ export const enregistrerEtude = async (
     etudeResume?: string
   },
 ): Promise<void> => {
-  await updateDoc(doc(db, 'prospects', prospect.id), {
+  // L'email est traité à part : il faut ses champs dérivés + le statut, et il ne
+  // doit JAMAIS écraser un email déjà présent (l'officiel prime).
+  const { email, ...rest } = fiche
+  const data: Record<string, unknown> = {
     // cleanForFirestore garde `false` (utile pour aLogiciel) et retire les vides.
-    ...cleanForFirestore(fiche as Record<string, unknown>),
+    ...cleanForFirestore(rest as Record<string, unknown>),
     etudeAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
+  }
+  const notes: string[] = []
+  const trouve = email?.trim() ? normalizeEmail(email) : ''
+  if (trouve && isEmailValide(trouve)) {
+    if (!prospect.email?.trim()) {
+      data.email = trouve
+      data.emailNormalise = trouve
+      data.domaine = emailDomain(trouve)
+      if (prospect.statut === 'email_manquant') {
+        data.statut = (prospect.nbEnvois ?? 0) > 0 ? 'envoye' : 'a_contacter'
+      }
+      notes.push(`Email ajouté depuis l'étude : ${trouve}`)
+    } else if (trouve !== normalizeEmail(prospect.email)) {
+      // Email officiel conservé ; l'autre est noté pour ne pas le perdre.
+      notes.push(`Autre email trouvé par l'étude : ${trouve}`)
+    }
+  }
+  await updateDoc(doc(db, 'prospects', prospect.id), data)
+  await journaliser(prospect, {
+    type: 'note',
+    observations: ['Étude IA enregistrée sur la fiche.', ...notes].join(' '),
   })
-  await journaliser(prospect, { type: 'note', observations: 'Étude IA enregistrée sur la fiche.' })
 }
 
 /**
@@ -642,6 +682,8 @@ export const majInfosProspect = async (
   prospect: Prospect,
   patch: {
     dirigeant?: string | null
+    dirigeantAge?: string | null
+    dirigeantJeune?: boolean | null
     groupe?: string | null
     logicielActuel?: string | null
     aLogiciel?: boolean | null

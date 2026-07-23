@@ -1342,6 +1342,14 @@ export interface Prospect {
   // ── Étude préalable (résultat du prompt IA, collé dans l'app) ──────────────
   /** Nom du dirigeant à qui écrire, issu de l'étude. */
   dirigeant?: string
+  /** Âge ou année de naissance du dirigeant si trouvé (texte libre : « 43 ans », « 1981 »). */
+  dirigeantAge?: string
+  /**
+   * Profil générationnel du dirigeant : true = jeune (< ~45 ans, a priori plus
+   * réceptif au numérique) ; false = senior (> ~55 ans, souvent fin de carrière,
+   * moins outillé) ; undefined = inconnu. Signal d'appétence à un logiciel.
+   */
+  dirigeantJeune?: boolean
   /** Phrase de personnalisation issue de l'étude — pré-remplit le composeur. */
   personnalisation?: string
   /**

@@ -58,6 +58,10 @@ export default function EtudeModal({
 
   // Saisie manuelle — pré-remplie avec ce qui est déjà connu.
   const [dirigeantM, setDirigeantM] = useState(prospect.dirigeant ?? "");
+  const [ageM, setAgeM] = useState(prospect.dirigeantAge ?? "");
+  const [profilM, setProfilM] = useState<"" | "jeune" | "senior">(
+    prospect.dirigeantJeune === true ? "jeune" : prospect.dirigeantJeune === false ? "senior" : "",
+  );
   const [groupeM, setGroupeM] = useState(prospect.groupe ?? "");
   const [logicielM, setLogicielM] = useState<"" | "oui" | "non">(
     prospect.aLogiciel === true ? "oui" : prospect.aLogiciel === false ? "non" : prospect.logicielActuel ? "oui" : "",
@@ -121,6 +125,8 @@ export default function EtudeModal({
     try {
       await majInfosProspect(prospect, {
         dirigeant: dirigeantM.trim() || null,
+        dirigeantAge: ageM.trim() || null,
+        dirigeantJeune: profilM === "jeune" ? true : profilM === "senior" ? false : null,
         groupe: groupeM.trim() || null,
         angle: angleM || null,
         etudeResume: resumeM.trim() || null,
@@ -149,6 +155,9 @@ export default function EtudeModal({
   const logFiche = fiche ? logicielTexte(fiche.aLogiciel, fiche.logicielActuel) : null;
   const adminDeja = adminTexte(prospect.responsableAdmin);
   const adminFiche = fiche ? adminTexte(fiche.responsableAdmin) : null;
+  const dateEtude = prospect.etudeAt ? prospect.etudeAt.toDate().toLocaleString("fr-FR") : null;
+  const profilDeja =
+    prospect.dirigeantJeune === true ? "gérant jeune" : prospect.dirigeantJeune === false ? "gérant senior" : null;
 
   return (
     <Modal isOpen onClose={onClose} title={`Étudier ${prospect.societe}`} size="lg">
@@ -170,15 +179,25 @@ export default function EtudeModal({
           J&apos;ai déjà lancé un prompt sur cette entreprise
           {prospect.promptLanceAt && (
             <span className="text-gray-400">
-              (le {prospect.promptLanceAt.toDate().toLocaleDateString("fr-FR")})
+              (le {prospect.promptLanceAt.toDate().toLocaleString("fr-FR")})
             </span>
           )}
         </label>
 
         {dejaEtudie && (
           <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2 text-xs text-emerald-800 space-y-0.5">
-            <div className="font-medium">Déjà connu — ce qui est enregistré :</div>
+            <div className="font-medium">
+              Déjà connu{dateEtude ? ` — étude du ${dateEtude}` : ""} :
+            </div>
+            {dateEtude && (
+              <div className="text-[11px] text-emerald-600">
+                ⏱️ Récupéré le {dateEtude}. Le code évolue : si c&apos;est ancien, relance le prompt pour récupérer les nouveaux champs.
+              </div>
+            )}
             {prospect.dirigeant && <div>👤 Dirigeant : {prospect.dirigeant}</div>}
+            {(prospect.dirigeantAge || profilDeja) && (
+              <div>🎂 {[prospect.dirigeantAge, profilDeja].filter(Boolean).join(" · ")}</div>
+            )}
             {prospect.groupe && <div>👥 Groupe : {prospect.groupe}</div>}
             {prospect.personnalisation && <div>✍ {prospect.personnalisation}</div>}
             {prospect.angle && <div>🎯 Angle : {ANGLE_LABEL[prospect.angle]}</div>}
@@ -243,8 +262,26 @@ export default function EtudeModal({
             {fiche && (
               <div className="rounded-lg border px-3 py-2 text-xs space-y-1 bg-gray-50">
                 <div className="font-medium text-gray-700">Aperçu — sera enregistré sur la fiche :</div>
+                {fiche.email && (
+                  <div>
+                    <span className="text-gray-400">Email trouvé :</span> {fiche.email}
+                    {!prospect.email?.trim() ? (
+                      <span className="text-green-600 font-medium"> — sera ajouté à la fiche</span>
+                    ) : (
+                      <span className="text-gray-400"> — l&apos;email existant est gardé, celui-ci ira en note</span>
+                    )}
+                  </div>
+                )}
                 {fiche.dirigeant && (
                   <div><span className="text-gray-400">Dirigeant :</span> {fiche.dirigeant}</div>
+                )}
+                {(fiche.dirigeantAge || fiche.dirigeantJeune !== undefined) && (
+                  <div>
+                    <span className="text-gray-400">Gérant :</span>{" "}
+                    {[fiche.dirigeantAge, fiche.dirigeantJeune === true ? "jeune" : fiche.dirigeantJeune === false ? "senior" : null]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
                 )}
                 {fiche.groupe && (
                   <div><span className="text-gray-400">Groupe :</span> {fiche.groupe}</div>
@@ -309,6 +346,23 @@ export default function EtudeModal({
                   placeholder="Nom de la personne"
                   className={inputCls}
                 />
+              </div>
+              <div>
+                <label className={labelCls}>Âge / année de naissance du dirigeant</label>
+                <input
+                  value={ageM}
+                  onChange={(e) => setAgeM(e.target.value)}
+                  placeholder="Ex : 43 ans, 1981"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Profil du dirigeant</label>
+                <select value={profilM} onChange={(e) => setProfilM(e.target.value as typeof profilM)} className={inputCls}>
+                  <option value="">On ne sait pas</option>
+                  <option value="jeune">Jeune (&lt; ~45 ans, réceptif au numérique)</option>
+                  <option value="senior">Senior (&gt; ~55 ans, fin de carrière)</option>
+                </select>
               </div>
               <div>
                 <label className={labelCls}>Groupe / holding (si lié à d&apos;autres sociétés)</label>
