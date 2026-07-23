@@ -251,8 +251,8 @@ export function renderMailHtml(ctx: RenderContexte): string {
 <body style="margin:0;padding:0;background:#ffffff;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#ffffff;">
   <tr>
-    <td align="center" style="padding:16px;">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:${ENCRE};">
+    <td style="padding:16px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:${ENCRE};">
 
         <tr><td style="padding-bottom:14px;">Bonjour,</td></tr>
 
