@@ -590,15 +590,15 @@ export const detacherDuClient = async (
 }
 
 /**
- * Pose (ou retire) la priorité MANUELLE, qui surcharge le score automatique.
- * `null` efface la surcharge → on repasse au score auto. `deleteField()` et non
- * `''` : laisser une chaîne vide masquerait le retour à l'automatique.
+ * Marque (ou retire) « mes prioritaires » — la liste sûre à contacter en premier,
+ * distincte du score auto. `false` efface le champ (`deleteField()` plutôt que
+ * stocker `false`, pour garder les fiches propres).
  */
 export const definirPrioriteManuelle = async (
-  id: string, valeur: 'forcee' | 'exclue' | null,
+  id: string, prioritaire: boolean,
 ): Promise<void> => {
   await updateDoc(doc(db, 'prospects', id), {
-    prioriteManuelle: valeur ?? deleteField(),
+    prioritaireManuel: prioritaire ? true : deleteField(),
     updatedAt: Timestamp.now(),
   })
 }

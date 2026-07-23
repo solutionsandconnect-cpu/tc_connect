@@ -147,12 +147,15 @@ export function evaluerPrioriteAuto(p: Prospect): EvalPriorite {
 }
 
 /**
- * Priorité EFFECTIVE = surcharge manuelle si présente, sinon score auto.
- * C'est elle que lit le filtre « Prioritaires » du composeur.
+ * « Mes prioritaires » — marqués À LA MAIN, à contacter en premier. Liste sûre,
+ * indépendante du score auto : les deux ne se mélangent JAMAIS.
  */
-export function estPrioritaire(p: Prospect): boolean {
-  if (p.prioriteManuelle === 'forcee') return true
-  if (p.prioriteManuelle === 'exclue') return false
+export function estPrioritaireManuel(p: Prospect): boolean {
+  return p.prioritaireManuel === true
+}
+
+/** Suggéré par le score automatique (indicatif, ne force rien). */
+export function estPrioritaireAuto(p: Prospect): boolean {
   return evaluerPrioriteAuto(p).auto
 }
 

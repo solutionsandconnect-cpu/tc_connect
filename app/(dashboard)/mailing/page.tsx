@@ -14,7 +14,7 @@ import EtudeModal from "@/components/mailing/EtudeModal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
 import {
   QUOTA_JOUR, peutContacter, isEmailGenerique, STATUT_LABEL, STATUT_STYLE,
-  aRepondu, contacteDepuis, estPrioritaire, evaluerPrioriteAuto,
+  aRepondu, contacteDepuis, estPrioritaireManuel, estPrioritaireAuto, evaluerPrioriteAuto,
 } from "@/lib/mailingModel";
 import Modal from "@/components/ui/Modal";
 import {
@@ -159,8 +159,7 @@ export default function MailingPage() {
   const [filtreDept, setFiltreDept] = useState<string>("tous");
   const [filtreEffectif, setFiltreEffectif] = useState<GroupeEffectif | "tous">("tous");
   const [filtreEtat, setFiltreEtat] = useState<"tous" | "actives" | "cessees">("tous");
-  const [filtrePriorite, setFiltrePriorite] =
-    useState<"tous" | "prio" | "auto" | "manuel" | "exclu">("tous");
+  const [filtrePriorite, setFiltrePriorite] = useState<"tous" | "manuel" | "auto">("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
   const [aDesenrichir, setADesenrichir] = useState<Prospect | null>(null);
@@ -333,13 +332,8 @@ export default function MailingPage() {
       if (filtreRegion !== "tous" && d?.region !== filtreRegion) return false;
       if (filtreDept !== "tous" && d?.code !== filtreDept) return false;
       if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
-      if (filtrePriorite !== "tous") {
-        const prio = estPrioritaire(p);
-        if (filtrePriorite === "prio" && !prio) return false;
-        if (filtrePriorite === "auto" && !(prio && !p.prioriteManuelle)) return false;
-        if (filtrePriorite === "manuel" && p.prioriteManuelle !== "forcee") return false;
-        if (filtrePriorite === "exclu" && p.prioriteManuelle !== "exclue") return false;
-      }
+      if (filtrePriorite === "manuel" && !estPrioritaireManuel(p)) return false;
+      if (filtrePriorite === "auto" && !estPrioritaireAuto(p)) return false;
       if (!rayon.dansRayon(p)) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
@@ -359,15 +353,11 @@ export default function MailingPage() {
     });
   };
 
-  // Étoile de priorité : un clic bascule la priorité EFFECTIVE. Si la cible
-  // rejoint ce que dit déjà l'auto, on efface la surcharge (retour à l'automatique)
-  // plutôt que de figer une valeur redondante.
+  // Étoile = « mes prioritaires » (marquage manuel, à contacter en premier).
+  // Indépendante du score auto : elle ne fait que basculer MON marquage.
   const basculerPriorite = async (p: Prospect) => {
-    const auto = evaluerPrioriteAuto(p).auto;
-    const cible = !estPrioritaire(p);
-    const valeur = cible === auto ? null : cible ? "forcee" : "exclue";
     try {
-      await definirPrioriteManuelle(p.id, valeur);
+      await definirPrioriteManuelle(p.id, !estPrioritaireManuel(p));
     } catch {
       notifier("La priorité n'a pas pu être enregistrée.");
     }
@@ -795,43 +785,28 @@ export default function MailingPage() {
             })}
           </div>
 
-          {/* Priorité : effective, puis par source (auto / forcée / exclue). */}
+          {/* Priorité : DEUX listes distinctes — mes prioritaires (manuel, à
+              contacter en premier) et les suggestions automatiques. */}
           <div className="flex flex-wrap gap-1.5 mb-3">
             {(() => {
-              const prios = prospects.filter((p) => estPrioritaire(p));
-              const nAuto = prios.filter((p) => !p.prioriteManuelle).length;
-              const nManuel = prospects.filter((p) => p.prioriteManuelle === "forcee").length;
-              const nExclu = prospects.filter((p) => p.prioriteManuelle === "exclue").length;
+              const nManuel = prospects.filter((p) => estPrioritaireManuel(p)).length;
+              const nAuto = prospects.filter((p) => estPrioritaireAuto(p)).length;
               return (
                 <>
                   <Chip actif={filtrePriorite === "tous"} onClick={() => setFiltrePriorite("tous")} label="Toutes priorités" />
                   <Chip
-                    actif={filtrePriorite === "prio"}
-                    onClick={() => setFiltrePriorite("prio")}
-                    label="★ Prioritaires"
-                    nombre={prios.length}
-                    attenue={prios.length === 0}
-                  />
-                  <Chip
-                    actif={filtrePriorite === "auto"}
-                    onClick={() => setFiltrePriorite("auto")}
-                    label="Auto"
-                    nombre={nAuto}
-                    attenue={nAuto === 0}
-                  />
-                  <Chip
                     actif={filtrePriorite === "manuel"}
                     onClick={() => setFiltrePriorite("manuel")}
-                    label="Forcées (manuel)"
+                    label="★ Mes prioritaires"
                     nombre={nManuel}
                     attenue={nManuel === 0}
                   />
                   <Chip
-                    actif={filtrePriorite === "exclu"}
-                    onClick={() => setFiltrePriorite("exclu")}
-                    label="Exclues (manuel)"
-                    nombre={nExclu}
-                    attenue={nExclu === 0}
+                    actif={filtrePriorite === "auto"}
+                    onClick={() => setFiltrePriorite("auto")}
+                    label="Suggérées (auto)"
+                    nombre={nAuto}
+                    attenue={nAuto === 0}
                   />
                 </>
               );
@@ -953,46 +928,36 @@ export default function MailingPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         {(() => {
-                          const prio = estPrioritaire(p);
+                          const mien = estPrioritaireManuel(p);
                           const ev = evaluerPrioriteAuto(p);
-                          const forced = p.prioriteManuelle === "forcee";
-                          const excluded = p.prioriteManuelle === "exclue";
-                          const source = forced
-                            ? "forcé à la main"
-                            : excluded
-                              ? "exclu à la main"
-                              : `auto ${ev.score}/${ev.max}`;
-                          const detail = prio
-                            ? ev.raisons.length ? ` — ${ev.raisons.join(", ")}` : ""
-                            : ev.manques.length ? ` — manque : ${ev.manques.join(", ")}` : "";
-                          // Pastille de SOURCE : d'où vient la priorité effective.
-                          const pastille = forced
-                            ? { txt: "manuel", cls: "bg-amber-200 text-amber-900" }
-                            : excluded
-                              ? { txt: "exclu", cls: "bg-gray-200 text-gray-600" }
-                              : prio
-                                ? { txt: "auto", cls: "bg-amber-100 text-amber-700" }
-                                : null;
+                          const auto = ev.auto;
                           return (
                             <>
+                              {/* Étoile DORÉE = mes prioritaires (à contacter en premier). */}
                               <button
                                 onClick={() => basculerPriorite(p)}
                                 className={`shrink-0 p-0.5 rounded transition ${
-                                  prio
+                                  mien
                                     ? "text-amber-500 hover:bg-amber-50"
                                     : "text-gray-300 hover:text-amber-500 hover:bg-amber-50"
                                 }`}
-                                title={`${prio ? "Prioritaire" : "Non prioritaire"} (${source})${detail}. Cliquer pour ${prio ? "retirer" : "mettre"} la priorité.`}
-                                aria-label={prio ? "Retirer la priorité" : "Mettre en priorité"}
+                                title={
+                                  mien
+                                    ? "Dans mes prioritaires (à contacter en premier). Cliquer pour retirer."
+                                    : "Marquer comme prioritaire (à contacter en premier)."
+                                }
+                                aria-label={mien ? "Retirer de mes prioritaires" : "Ajouter à mes prioritaires"}
                               >
-                                {prio ? <StarSolid className="w-4 h-4" /> : <StarIcon className="w-4 h-4" />}
+                                {mien ? <StarSolid className="w-4 h-4" /> : <StarIcon className="w-4 h-4" />}
                               </button>
-                              {pastille && (
+                              {/* Pastille BLEUE = simple suggestion automatique, distincte. */}
+                              {auto && (
                                 <span
-                                  className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${pastille.cls}`}
-                                  title={`Priorité : ${source}${detail}`}
+                                  className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-sky-100 text-sky-700"
+                                  title={`Suggéré par le score auto (${ev.score}/${ev.max})${ev.raisons.length ? ` — ${ev.raisons.join(", ")}` : ""}`}
                                 >
-                                  {pastille.txt}
+                                  <SparklesIcon className="w-3 h-3" />
+                                  auto
                                 </span>
                               )}
                             </>

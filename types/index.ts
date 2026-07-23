@@ -1350,11 +1350,12 @@ export interface Prospect {
   prochaineRelanceAt?: Timestamp | null
   clientId?: string              // rempli à la promotion vers le CRM
   /**
-   * Priorité de contact posée À LA MAIN, qui SURCHARGE le score automatique :
-   * 'forcee' = toujours prioritaire, 'exclue' = jamais prioritaire, absent = on
-   * suit le score auto (cf. `evaluerPrioriteAuto`). Voir `estPrioritaire`.
+   * « Mes prioritaires » : marqué À LA MAIN comme à contacter EN PREMIER. C'est une
+   * liste SÛRE, choisie par l'utilisateur, TOTALEMENT distincte du score automatique
+   * (`evaluerPrioriteAuto`, une simple suggestion). Les deux coexistent sans se
+   * mélanger. Voir `estPrioritaireManuel` / `estPrioritaireAuto`.
    */
-  prioriteManuelle?: 'forcee' | 'exclue'
+  prioritaireManuel?: boolean
   /** Fiches écartées à la main comme « pas la même société » — ne plus les proposer. */
   doublonsIgnores?: string[]
   notes?: string

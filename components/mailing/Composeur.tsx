@@ -6,9 +6,10 @@ import { copyText } from "@/lib/clipboard";
 import { enregistrerEnvoi } from "@/lib/mailingService";
 import {
   DELAI_RELANCE_JOURS, MIN_PERSONNALISATION, QUOTA_JOUR, STATUT_LABEL, STATUT_STYLE,
-  doublonSociete, peutContacter, estPrioritaire,
+  doublonSociete, peutContacter, estPrioritaireManuel, estPrioritaireAuto,
 } from "@/lib/mailingModel";
 import { StarIcon as StarSolid } from "@heroicons/react/24/solid";
+import { SparklesIcon } from "@heroicons/react/24/outline";
 import { estMailCourt } from "@/lib/mailingRender";
 import { renderMailHtml, renderMailTexte, sujetMail } from "@/lib/mailingRender";
 import { construirePromptRecherche } from "@/lib/mailingPrompt";
@@ -71,7 +72,7 @@ export default function Composeur({
   const [promptCopie, setPromptCopie] = useState(false);
   const [brochureEnCours, setBrochureEnCours] = useState(false);
   const [filtre, setFiltre] = useState<"tous" | "jamais" | "relance">("tous");
-  const [priorosOnly, setPriorosOnly] = useState(false);
+  const [filtrePrio, setFiltrePrio] = useState<"tous" | "manuel" | "auto">("tous");
   const [filtreEffectif, setFiltreEffectif] = useState<GroupeEffectif | "tous">("tous");
   const [filtreDept, setFiltreDept] = useState<string>("tous");
   const rayon = useRayon(prospects);
@@ -91,7 +92,12 @@ export default function Composeur({
       prospects
         .filter((p) => (metierId ? p.metierId === metierId : false))
         .filter((p) => peutContacter(p, optouts).ok)
-        .sort((a, b) => a.societe.localeCompare(b.societe)),
+        // « Mes prioritaires » d'abord — je veux les prendre en premier —, puis alpha.
+        .sort(
+          (a, b) =>
+            Number(estPrioritaireManuel(b)) - Number(estPrioritaireManuel(a)) ||
+            a.societe.localeCompare(b.societe),
+        ),
     [prospects, metierId, optouts],
   );
 
@@ -101,7 +107,8 @@ export default function Composeur({
         const dejaContacte = (p.nbEnvois ?? 0) > 0;
         if (filtre === "jamais" && dejaContacte) return false;
         if (filtre === "relance" && !dejaContacte) return false;
-        if (priorosOnly && !estPrioritaire(p)) return false;
+        if (filtrePrio === "manuel" && !estPrioritaireManuel(p)) return false;
+        if (filtrePrio === "auto" && !estPrioritaireAuto(p)) return false;
         if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
         if (filtreDept !== "tous" && departementDuCp(p.codePostal)?.code !== filtreDept) return false;
         if (!rayon.dansRayon(p)) return false;
@@ -109,15 +116,20 @@ export default function Composeur({
         if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
         return true;
       }),
-    [eligibles, filtre, priorosOnly, filtreEffectif, filtreDept, recherche, rayon],
+    [eligibles, filtre, filtrePrio, filtreEffectif, filtreDept, recherche, rayon],
   );
 
-  // Rayon actif : les plus proches en tête, pour les traiter en priorité.
+  // « Mes prioritaires » restent en tête ; ensuite, si un rayon est actif, les
+  // plus proches d'abord (sinon l'ordre alpha hérité d'`eligibles`).
   const affichesTries = useMemo(
     () =>
       rayon.rayon === null
         ? affiches
-        : [...affiches].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9)),
+        : [...affiches].sort(
+            (a, b) =>
+              Number(estPrioritaireManuel(b)) - Number(estPrioritaireManuel(a)) ||
+              (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9),
+          ),
     [affiches, rayon],
   );
 
@@ -346,21 +358,35 @@ export default function Composeur({
                   </button>
                 ))}
                 {(() => {
-                  const nPrio = eligibles.filter(estPrioritaire).length;
+                  const nManuel = eligibles.filter(estPrioritaireManuel).length;
+                  const nAuto = eligibles.filter(estPrioritaireAuto).length;
+                  const bascule = (v: "manuel" | "auto") =>
+                    setFiltrePrio((c) => (c === v ? "tous" : v));
                   return (
-                    <button
-                      onClick={() => setPriorosOnly((v) => !v)}
-                      title="N'afficher que les sociétés à contacter en priorité"
-                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
-                        priorosOnly
-                          ? "bg-amber-500 text-white"
-                          : "border hover:bg-amber-50 text-gray-600"
-                      }`}
-                    >
-                      <StarSolid className={`w-3.5 h-3.5 ${priorosOnly ? "text-white" : "text-amber-500"}`} />
-                      Prioritaires
-                      <span className={priorosOnly ? "text-amber-100" : "text-gray-400"}>{nPrio}</span>
-                    </button>
+                    <>
+                      <button
+                        onClick={() => bascule("manuel")}
+                        title="Mes prioritaires — marqués à la main, à contacter en premier"
+                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                          filtrePrio === "manuel" ? "bg-amber-500 text-white" : "border hover:bg-amber-50 text-gray-600"
+                        }`}
+                      >
+                        <StarSolid className={`w-3.5 h-3.5 ${filtrePrio === "manuel" ? "text-white" : "text-amber-500"}`} />
+                        Mes prioritaires
+                        <span className={filtrePrio === "manuel" ? "text-amber-100" : "text-gray-400"}>{nManuel}</span>
+                      </button>
+                      <button
+                        onClick={() => bascule("auto")}
+                        title="Suggestions automatiques (score)"
+                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                          filtrePrio === "auto" ? "bg-sky-600 text-white" : "border hover:bg-sky-50 text-gray-600"
+                        }`}
+                      >
+                        <SparklesIcon className={`w-3.5 h-3.5 ${filtrePrio === "auto" ? "text-white" : "text-sky-600"}`} />
+                        Auto
+                        <span className={filtrePrio === "auto" ? "text-sky-100" : "text-gray-400"}>{nAuto}</span>
+                      </button>
+                    </>
                   );
                 })()}
               </div>
@@ -433,8 +459,11 @@ export default function Composeur({
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          {estPrioritaire(p) && (
-                            <StarSolid className="w-3.5 h-3.5 shrink-0 text-amber-500" title="À contacter en priorité" />
+                          {estPrioritaireManuel(p) && (
+                            <StarSolid className="w-3.5 h-3.5 shrink-0 text-amber-500" title="Mes prioritaires — à contacter en premier" />
+                          )}
+                          {!estPrioritaireManuel(p) && estPrioritaireAuto(p) && (
+                            <SparklesIcon className="w-3.5 h-3.5 shrink-0 text-sky-600" title="Suggéré par le score auto" />
                           )}
                           <span className="text-sm font-medium truncate">{p.societe}</span>
                           <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${STATUT_STYLE[p.statut]}`}>
