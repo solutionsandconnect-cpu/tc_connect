@@ -99,21 +99,27 @@ export type EvalPriorite = {
 /** Au-delà de ce score (sur `max`), un prospect est jugé prioritaire par l'auto. */
 export const SEUIL_PRIORITE_AUTO = 3
 
+/** En-deçà de cette distance (km) au point de référence, un prospect est « proche ». */
+export const SEUIL_PROXIMITE_KM = 30
+
 /**
  * Score AUTOMATIQUE de priorité de contact — volontairement TRANSPARENT et
- * ajustable (chaque critère est une ligne, pas un poids caché). Il ne s'appuie
- * que sur des données SYNCHRONES de la fiche (pas de calcul de distance, qui est
- * asynchrone et vit côté UI).
+ * ajustable (chaque critère est une ligne, pas un poids caché).
  *
  * Prérequis dur : être JOIGNABLE (email valide). Un prospect qu'on ne peut pas
  * contacter n'est jamais « à contacter en priorité » — score 0.
  *
+ * `distanceKm` est optionnel car le calcul de distance est ASYNCHRONE (coordonnées
+ * chargées côté UI) : quand elle est CONNUE, la proximité ajoute un 5ᵉ critère
+ * (max = 5) qui BOOSTE le local ; quand elle est inconnue, le score reste sur 4 et
+ * rien ne change. Être loin ne pénalise pas — l'absence de bonus suffit.
+ *
  * Les critères visent le profil le plus rentable pour de la prospection locale :
- * une petite entreprise vivante, à taille où le patron décide encore vite, jamais
- * contactée, joignable sur une adresse nominative. À faire évoluer avec le retour
- * terrain — c'est une PREMIÈRE grille, pas une vérité.
+ * une petite entreprise vivante, proche, à taille où le patron décide encore vite,
+ * jamais contactée, joignable sur une adresse nominative. À faire évoluer avec le
+ * retour terrain — c'est une PREMIÈRE grille, pas une vérité.
  */
-export function evaluerPrioriteAuto(p: Prospect): EvalPriorite {
+export function evaluerPrioriteAuto(p: Prospect, distanceKm?: number | null): EvalPriorite {
   const raisons: string[] = []
   const manques: string[] = []
   const norm = normalizeEmail(p.email ?? '')
@@ -126,7 +132,7 @@ export function evaluerPrioriteAuto(p: Prospect): EvalPriorite {
     return ok ? 1 : 0
   }
 
-  const max = 4
+  let max = 4
   if (!joignable) {
     manques.push('pas d’adresse email valide (injoignable)')
     return { auto: false, score: 0, max, raisons, manques }
@@ -143,6 +149,16 @@ export function evaluerPrioriteAuto(p: Prospect): EvalPriorite {
   score += crit(g === 'micro' || g === 'petite', 'taille cible (1 à 19 salariés)', 'taille hors cible ou inconnue')
   score += crit((p.nbEnvois ?? 0) === 0, 'jamais contacté', 'déjà contacté')
 
+  // 5ᵉ critère seulement si la distance est connue (coordonnées chargées).
+  if (typeof distanceKm === 'number' && Number.isFinite(distanceKm)) {
+    max = 5
+    score += crit(
+      distanceKm <= SEUIL_PROXIMITE_KM,
+      `proche (≤ ${SEUIL_PROXIMITE_KM} km)`,
+      `éloigné (> ${SEUIL_PROXIMITE_KM} km)`,
+    )
+  }
+
   return { auto: score >= SEUIL_PRIORITE_AUTO, score, max, raisons, manques }
 }
 
@@ -155,8 +171,8 @@ export function estPrioritaireManuel(p: Prospect): boolean {
 }
 
 /** Suggéré par le score automatique (indicatif, ne force rien). */
-export function estPrioritaireAuto(p: Prospect): boolean {
-  return evaluerPrioriteAuto(p).auto
+export function estPrioritaireAuto(p: Prospect, distanceKm?: number | null): boolean {
+  return evaluerPrioriteAuto(p, distanceKm).auto
 }
 
 /**

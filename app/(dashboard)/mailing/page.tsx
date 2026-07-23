@@ -336,7 +336,7 @@ export default function MailingPage() {
       if (filtreDept !== "tous" && d?.code !== filtreDept) return false;
       if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
       if (filtrePriorite === "manuel" && !estPrioritaireManuel(p)) return false;
-      if (filtrePriorite === "auto" && !estPrioritaireAuto(p)) return false;
+      if (filtrePriorite === "auto" && !estPrioritaireAuto(p, rayon.distance(p))) return false;
       const aEmail = !!p.email?.trim();
       if (filtreEmail === "avec" && !aEmail) return false;
       if (filtreEmail === "sans" && aEmail) return false;
@@ -796,7 +796,7 @@ export default function MailingPage() {
           <div className="flex flex-wrap gap-1.5 mb-3">
             {(() => {
               const nManuel = prospects.filter((p) => estPrioritaireManuel(p)).length;
-              const nAuto = prospects.filter((p) => estPrioritaireAuto(p)).length;
+              const nAuto = prospects.filter((p) => estPrioritaireAuto(p, rayon.distance(p))).length;
               return (
                 <>
                   <Chip actif={filtrePriorite === "tous"} onClick={() => setFiltrePriorite("tous")} label="Toutes priorités" />
@@ -963,7 +963,7 @@ export default function MailingPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         {(() => {
                           const mien = estPrioritaireManuel(p);
-                          const ev = evaluerPrioriteAuto(p);
+                          const ev = evaluerPrioriteAuto(p, rayon.distance(p));
                           const auto = ev.auto;
                           return (
                             <>

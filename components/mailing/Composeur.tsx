@@ -108,7 +108,7 @@ export default function Composeur({
         if (filtre === "jamais" && dejaContacte) return false;
         if (filtre === "relance" && !dejaContacte) return false;
         if (filtrePrio === "manuel" && !estPrioritaireManuel(p)) return false;
-        if (filtrePrio === "auto" && !estPrioritaireAuto(p)) return false;
+        if (filtrePrio === "auto" && !estPrioritaireAuto(p, rayon.distance(p))) return false;
         if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
         if (filtreDept !== "tous" && departementDuCp(p.codePostal)?.code !== filtreDept) return false;
         if (!rayon.dansRayon(p)) return false;
@@ -368,7 +368,7 @@ export default function Composeur({
                 ))}
                 {(() => {
                   const nManuel = eligibles.filter(estPrioritaireManuel).length;
-                  const nAuto = eligibles.filter(estPrioritaireAuto).length;
+                  const nAuto = eligibles.filter((p) => estPrioritaireAuto(p, rayon.distance(p))).length;
                   const bascule = (v: "manuel" | "auto") =>
                     setFiltrePrio((c) => (c === v ? "tous" : v));
                   return (
@@ -471,7 +471,7 @@ export default function Composeur({
                           {estPrioritaireManuel(p) && (
                             <StarSolid className="w-3.5 h-3.5 shrink-0 text-amber-500" title="Mes prioritaires — à contacter en premier" />
                           )}
-                          {!estPrioritaireManuel(p) && estPrioritaireAuto(p) && (
+                          {!estPrioritaireManuel(p) && estPrioritaireAuto(p, rayon.distance(p)) && (
                             <SparklesIcon className="w-3.5 h-3.5 shrink-0 text-sky-600" title="Suggéré par le score auto" />
                           )}
                           <span className="text-sm font-medium truncate">{p.societe}</span>
