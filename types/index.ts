@@ -1326,6 +1326,12 @@ export interface Prospect {
   // Enrichissement SIRET (API publique « Recherche d'entreprises »)
   /** Nom du logiciel déjà en place — renseigné avec le statut 'a_un_logiciel'. */
   logicielActuel?: string
+  /**
+   * Sait-on si l'entreprise a un logiciel de gestion ? true = oui, false = non
+   * (bon signe : pas de concurrent en place), undefined = on ne sait pas (rien
+   * n'est affiché). Distinct de `logicielActuel`, qui n'est que le NOM quand connu.
+   */
+  aLogiciel?: boolean
   // ── Étude préalable (résultat du prompt IA, collé dans l'app) ──────────────
   /** Nom du dirigeant à qui écrire, issu de l'étude. */
   dirigeant?: string

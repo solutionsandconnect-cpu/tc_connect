@@ -80,7 +80,7 @@ zone: <zone géographique d'intervention, ou "inconnu">
 specialites: <spécialités et types de chantiers, ou "inconnu">
 croissance: <signes de croissance ou trajectoire récente, ou "inconnu">
 sante: <santé économique SI les comptes sont publiés, sinon "comptes non publiés">
-logiciel: <logiciel de gestion/devis/chantier en place, ou "aucun">
+logiciel: <nom du logiciel de gestion/devis/chantier en place ; "aucun" si tu es sûr qu'il n'en a pas ; "inconnu" si tu ne sais pas>
 site: <url du site principal, ou "aucun">
 reseaux: <réseaux sociaux et plateformes d'avis, ou "aucun">
 certifications: <RGE, Qualibat, labels, agréments, ou "aucun">
@@ -94,6 +94,7 @@ export type FicheEtude = {
   dirigeant?: string
   angle?: 'surcharge' | 'circulation' | 'inconnu'
   logicielActuel?: string
+  aLogiciel?: boolean
   etudeResume?: string
 }
 
@@ -141,8 +142,19 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   else if (angleRaw.includes('circulation')) fiche.angle = 'circulation'
   else if (angleRaw.includes('inconnu')) fiche.angle = 'inconnu'
 
-  const logiciel = val('logiciel')
-  if (logiciel) fiche.logicielActuel = logiciel
+  // Logiciel : trois cas distincts.
+  //  - un NOM  → il en a un (aLogiciel = true) + on retient le nom ;
+  //  - "aucun" / "pas de logiciel" / "non" → il n'en a pas (aLogiciel = false) ;
+  //  - "inconnu" ou absent → on ne sait pas (rien).
+  const logicielBrut = (paires.get('logiciel') ?? '').trim().toLowerCase()
+  const AUCUN = new Set(['aucun', 'aucune', 'pas de logiciel', 'non', 'sans logiciel', 'rien'])
+  const logicielNom = val('logiciel')
+  if (logicielNom) {
+    fiche.logicielActuel = logicielNom
+    fiche.aLogiciel = true
+  } else if (AUCUN.has(logicielBrut)) {
+    fiche.aLogiciel = false
+  }
 
   // Fiche compilée : le résumé d'abord, puis chaque rubrique renseignée. Tout ce
   // que le bloc ramène est conservé — c'est ce qui manquait avant.
@@ -167,7 +179,7 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
 
   if (
     !fiche.personnalisation && !fiche.dirigeant && !fiche.angle &&
-    !fiche.logicielActuel && !fiche.etudeResume
+    !fiche.logicielActuel && fiche.aLogiciel === undefined && !fiche.etudeResume
   ) {
     return null
   }

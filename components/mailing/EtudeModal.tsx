@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Modal from "@/components/ui/Modal";
 import { construirePromptRecherche, parserFicheEtude } from "@/lib/mailingPrompt";
-import { enregistrerEtude, definirPromptLance } from "@/lib/mailingService";
+import { enregistrerEtude, majInfosProspect, definirPromptLance } from "@/lib/mailingService";
 import type { Prospect } from "@/types";
 
 const ANGLE_LABEL: Record<"surcharge" | "circulation" | "inconnu", string> = {
@@ -12,9 +12,22 @@ const ANGLE_LABEL: Record<"surcharge" | "circulation" | "inconnu", string> = {
   inconnu: "Indéterminé",
 };
 
-// « Étudier cette entreprise » — aller-retour avec un assistant IA :
-//  1. on copie le prompt ;
-//  2. on colle la réponse : l'app extrait le bloc récapitulatif et remplit la fiche.
+/** Libellé lisible de l'état « a un logiciel ? » (true / false / inconnu). */
+function logicielTexte(aLogiciel: boolean | undefined, nom?: string): string | null {
+  if (aLogiciel === true) return `A un logiciel${nom ? ` : ${nom}` : ""}`;
+  if (aLogiciel === false) return "Pas de logiciel";
+  if (nom) return `Logiciel : ${nom}`; // fiches anciennes : nom sans le booléen
+  return null;
+}
+
+const inputCls =
+  "w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition";
+const labelCls = "block text-xs font-medium text-gray-600 mb-1";
+
+// « Étudier cette entreprise » — trois voies :
+//  1. copier le prompt ;
+//  2. coller la réponse IA (parse automatique) ;
+//  3. saisir/corriger à la main (entreprise qu'on connaît déjà).
 export default function EtudeModal({
   prospect,
   onClose,
@@ -24,17 +37,28 @@ export default function EtudeModal({
   onClose: () => void;
   onToast: (m: string) => void;
 }) {
-  const [onglet, setOnglet] = useState<"prompt" | "coller">("prompt");
+  const [onglet, setOnglet] = useState<"prompt" | "coller" | "manuel">("prompt");
   const [copie, setCopie] = useState(false);
   const [texte, setTexte] = useState("");
   const [enCours, setEnCours] = useState(false);
   const [promptLance, setPromptLance] = useState(!!prospect.promptLanceAt);
 
+  // Saisie manuelle — pré-remplie avec ce qui est déjà connu.
+  const [dirigeantM, setDirigeantM] = useState(prospect.dirigeant ?? "");
+  const [logicielM, setLogicielM] = useState<"" | "oui" | "non">(
+    prospect.aLogiciel === true ? "oui" : prospect.aLogiciel === false ? "non" : prospect.logicielActuel ? "oui" : "",
+  );
+  const [logicielNomM, setLogicielNomM] = useState(prospect.logicielActuel ?? "");
+  const [angleM, setAngleM] = useState<"" | "surcharge" | "circulation" | "inconnu">(prospect.angle ?? "");
+  const [resumeM, setResumeM] = useState(prospect.etudeResume ?? "");
+
   const prompt = construirePromptRecherche(prospect);
   const fiche = useMemo(() => parserFicheEtude(texte), [texte]);
-  const dejaEtudie = !!(prospect.etudeAt || prospect.dirigeant || prospect.personnalisation || prospect.etudeResume);
+  const dejaEtudie = !!(
+    prospect.etudeAt || prospect.dirigeant || prospect.personnalisation ||
+    prospect.etudeResume || prospect.aLogiciel !== undefined
+  );
 
-  // Marquer « prompt lancé » — optimiste côté UI, best-effort côté base.
   const marquerLance = async (lance: boolean) => {
     setPromptLance(lance);
     try {
@@ -50,7 +74,6 @@ export default function EtudeModal({
       await navigator.clipboard.writeText(prompt);
       setCopie(true);
       onToast("Prompt copié — colle-le dans ton assistant IA.");
-      // Copier le prompt = le lancer : on coche tout seul (sans écraser un décochage manuel).
       if (!promptLance) void marquerLance(true);
     } catch {
       onToast("Copie impossible : sélectionne le texte à la main.");
@@ -71,29 +94,50 @@ export default function EtudeModal({
     }
   };
 
+  const enregistrerManuel = async () => {
+    setEnCours(true);
+    try {
+      await majInfosProspect(prospect, {
+        dirigeant: dirigeantM.trim() || null,
+        angle: angleM || null,
+        etudeResume: resumeM.trim() || null,
+        aLogiciel: logicielM === "oui" ? true : logicielM === "non" ? false : null,
+        logicielActuel: logicielM === "oui" ? logicielNomM.trim() || null : null,
+      });
+      onToast("Infos enregistrées sur la fiche.");
+      onClose();
+    } catch {
+      onToast("Enregistrement impossible.");
+    } finally {
+      setEnCours(false);
+    }
+  };
+
   const ongletCls = (actif: boolean) =>
     `px-3 py-1.5 rounded-lg text-sm font-medium transition ${
       actif ? "bg-blue-600 text-white" : "border text-gray-600 hover:bg-gray-50"
     }`;
 
+  const logDeja = logicielTexte(prospect.aLogiciel, prospect.logicielActuel);
+  const logFiche = fiche ? logicielTexte(fiche.aLogiciel, fiche.logicielActuel) : null;
+
   return (
     <Modal isOpen onClose={onClose} title={`Étudier ${prospect.societe}`} size="lg">
       <div className="space-y-3">
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button className={ongletCls(onglet === "prompt")} onClick={() => setOnglet("prompt")}>
             1 · Copier le prompt
           </button>
           <button className={ongletCls(onglet === "coller")} onClick={() => setOnglet("coller")}>
             2 · Coller le résultat
           </button>
+          <button className={ongletCls(onglet === "manuel")} onClick={() => setOnglet("manuel")}>
+            ✎ Saisie manuelle
+          </button>
         </div>
 
         <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={promptLance}
-            onChange={(e) => marquerLance(e.target.checked)}
-          />
+          <input type="checkbox" checked={promptLance} onChange={(e) => marquerLance(e.target.checked)} />
           J&apos;ai déjà lancé un prompt sur cette entreprise
           {prospect.promptLanceAt && (
             <span className="text-gray-400">
@@ -104,18 +148,18 @@ export default function EtudeModal({
 
         {dejaEtudie && (
           <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2 text-xs text-emerald-800 space-y-0.5">
-            <div className="font-medium">Déjà étudié — ce qui est enregistré :</div>
+            <div className="font-medium">Déjà connu — ce qui est enregistré :</div>
             {prospect.dirigeant && <div>👤 Dirigeant : {prospect.dirigeant}</div>}
             {prospect.personnalisation && <div>✍ {prospect.personnalisation}</div>}
             {prospect.angle && <div>🎯 Angle : {ANGLE_LABEL[prospect.angle]}</div>}
-            {prospect.logicielActuel && <div>🧩 Logiciel : {prospect.logicielActuel}</div>}
+            {logDeja && <div>🧩 {logDeja}</div>}
             {prospect.etudeResume && (
               <div className="whitespace-pre-wrap text-emerald-700">{prospect.etudeResume}</div>
             )}
           </div>
         )}
 
-        {onglet === "prompt" ? (
+        {onglet === "prompt" && (
           <>
             <p className="text-xs text-gray-500">
               Copie ce prompt dans ton assistant IA (ChatGPT, Claude…). Il te renseigne sur
@@ -140,7 +184,9 @@ export default function EtudeModal({
               </button>
             </div>
           </>
-        ) : (
+        )}
+
+        {onglet === "coller" && (
           <>
             <p className="text-xs text-gray-500">
               Colle ici la réponse de l&apos;IA (le bloc <code>===ENEZO-FICHE===</code> suffit,
@@ -172,8 +218,8 @@ export default function EtudeModal({
                 {fiche.angle && (
                   <div><span className="text-gray-400">Angle :</span> {ANGLE_LABEL[fiche.angle]}</div>
                 )}
-                {fiche.logicielActuel && (
-                  <div><span className="text-gray-400">Logiciel :</span> {fiche.logicielActuel}</div>
+                {logFiche && (
+                  <div><span className="text-gray-400">Logiciel :</span> {logFiche}</div>
                 )}
                 {fiche.etudeResume && (
                   <div className="whitespace-pre-wrap">
@@ -193,6 +239,85 @@ export default function EtudeModal({
                 className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {enCours ? "Enregistrement…" : "Enregistrer sur la fiche"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {onglet === "manuel" && (
+          <>
+            <p className="text-xs text-gray-500">
+              Pour une entreprise que tu connais déjà : renseigne à la main ce que tu sais.
+              Laisse vide ce que tu ignores.
+            </p>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Dirigeant</label>
+                <input
+                  value={dirigeantM}
+                  onChange={(e) => setDirigeantM(e.target.value)}
+                  placeholder="Nom de la personne"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Angle du message</label>
+                <select value={angleM} onChange={(e) => setAngleM(e.target.value as typeof angleM)} className={inputCls}>
+                  <option value="">— Non défini —</option>
+                  <option value="surcharge">Surcharge du dirigeant</option>
+                  <option value="circulation">Circulation de l&apos;information</option>
+                  <option value="inconnu">Indéterminé</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Logiciel de gestion ?</label>
+                <select
+                  value={logicielM}
+                  onChange={(e) => setLogicielM(e.target.value as typeof logicielM)}
+                  className={inputCls}
+                >
+                  <option value="">On ne sait pas</option>
+                  <option value="oui">Oui, il en a un</option>
+                  <option value="non">Non, pas de logiciel</option>
+                </select>
+              </div>
+              {logicielM === "oui" && (
+                <div>
+                  <label className={labelCls}>Nom du logiciel (optionnel)</label>
+                  <input
+                    value={logicielNomM}
+                    onChange={(e) => setLogicielNomM(e.target.value)}
+                    placeholder="Ex : Batappli"
+                    className={inputCls}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className={labelCls}>Infos / fiche (effectif réel, organisation, notes…)</label>
+              <textarea
+                value={resumeM}
+                onChange={(e) => setResumeM(e.target.value)}
+                placeholder="Ex : 12 personnes, 8 sur le terrain. Le patron gère les devis le soir…"
+                className="w-full h-28 border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 resize-none"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm border hover:bg-gray-50 transition">
+                Annuler
+              </button>
+              <button
+                onClick={enregistrerManuel}
+                disabled={enCours}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {enCours ? "Enregistrement…" : "Enregistrer"}
               </button>
             </div>
           </>

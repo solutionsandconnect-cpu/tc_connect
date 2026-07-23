@@ -93,6 +93,13 @@ const EVT_STYLE: Record<MailingEvenement["type"], string> = {
   desinscription: "bg-red-100 text-red-700",
 };
 
+/** État « logiciel de gestion ? » d'un prospect, pour le badge et le filtre. */
+function etatLogiciel(p: Prospect): "oui" | "non" | "inconnu" {
+  if (p.aLogiciel === false) return "non";
+  if (p.aLogiciel === true || p.logicielActuel) return "oui";
+  return "inconnu";
+}
+
 /**
  * Compteurs des onglets, mémorisés d'une visite à l'autre.
  * Les listeners Firestore mettent un instant à répondre : sans ce cache, les
@@ -161,6 +168,7 @@ export default function MailingPage() {
   const [filtreEtat, setFiltreEtat] = useState<"tous" | "actives" | "cessees">("tous");
   const [filtrePriorite, setFiltrePriorite] = useState<"tous" | "manuel" | "auto">("tous");
   const [filtreEmail, setFiltreEmail] = useState<"tous" | "avec" | "sans">("tous");
+  const [filtreLogiciel, setFiltreLogiciel] = useState<"tous" | "oui" | "non" | "inconnu">("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
   const [aDesenrichir, setADesenrichir] = useState<Prospect | null>(null);
@@ -304,6 +312,7 @@ export default function MailingPage() {
     (filtreEtat !== "tous" ? 1 : 0) +
     (filtrePriorite !== "tous" ? 1 : 0) +
     (filtreEmail !== "tous" ? 1 : 0) +
+    (filtreLogiciel !== "tous" ? 1 : 0) +
     (rayon.rayon !== null ? 1 : 0) +
     (recherche.trim() ? 1 : 0);
 
@@ -316,6 +325,7 @@ export default function MailingPage() {
     setFiltreEtat("tous");
     setFiltrePriorite("tous");
     setFiltreEmail("tous");
+    setFiltreLogiciel("tous");
     setRecherche("");
     // Le rayon est remis à « partout », mais le code postal de référence et les
     // communes déjà chargées restent : les recharger n'aurait aucun intérêt.
@@ -340,6 +350,7 @@ export default function MailingPage() {
       const aEmail = !!p.email?.trim();
       if (filtreEmail === "avec" && !aEmail) return false;
       if (filtreEmail === "sans" && aEmail) return false;
+      if (filtreLogiciel !== "tous" && etatLogiciel(p) !== filtreLogiciel) return false;
       if (!rayon.dansRayon(p)) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
@@ -349,7 +360,7 @@ export default function MailingPage() {
     return rayon.rayon === null
       ? liste
       : [...liste].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9));
-  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, recherche, rayon]);
+  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, filtreLogiciel, recherche, rayon]);
 
   const basculerSelection = (id: string) => {
     setSelection((s) => {
@@ -847,6 +858,41 @@ export default function MailingPage() {
             })()}
           </div>
 
+          {/* Logiciel de gestion : en a un / n'en a pas / on ne sait pas. */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(() => {
+              const oui = prospects.filter((p) => etatLogiciel(p) === "oui").length;
+              const non = prospects.filter((p) => etatLogiciel(p) === "non").length;
+              const inconnu = prospects.length - oui - non;
+              return (
+                <>
+                  <Chip actif={filtreLogiciel === "tous"} onClick={() => setFiltreLogiciel("tous")} label="Logiciel : tous" />
+                  <Chip
+                    actif={filtreLogiciel === "oui"}
+                    onClick={() => setFiltreLogiciel("oui")}
+                    label="A un logiciel"
+                    nombre={oui}
+                    attenue={oui === 0}
+                  />
+                  <Chip
+                    actif={filtreLogiciel === "non"}
+                    onClick={() => setFiltreLogiciel("non")}
+                    label="Sans logiciel"
+                    nombre={non}
+                    attenue={non === 0}
+                  />
+                  <Chip
+                    actif={filtreLogiciel === "inconnu"}
+                    onClick={() => setFiltreLogiciel("inconnu")}
+                    label="Logiciel inconnu"
+                    nombre={inconnu}
+                    attenue={inconnu === 0}
+                  />
+                </>
+              );
+            })()}
+          </div>
+
           {/* Barre d'actions groupées : n'apparaît qu'une fois une sélection
               faite, pour ne pas encombrer la vue de lecture. */}
           {selectionnes.length > 0 && (
@@ -1011,25 +1057,58 @@ export default function MailingPage() {
                             {libelleEffectif(p.effectifCode)}
                           </span>
                         )}
-                        {p.logicielActuel && (
-                          <span
-                            className="px-2 py-0.5 rounded-full text-[11px] bg-purple-50 text-purple-700"
-                            title="Logiciel déjà en place"
-                          >
-                            {p.logicielActuel}
-                          </span>
-                        )}
+                        {(() => {
+                          const aLog = p.aLogiciel === true || (p.aLogiciel === undefined && !!p.logicielActuel);
+                          const sansLog = p.aLogiciel === false;
+                          if (aLog) return (
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[11px] bg-purple-50 text-purple-700"
+                              title="Logiciel de gestion déjà en place"
+                            >
+                              🧩 {p.logicielActuel || "a un logiciel"}
+                            </span>
+                          );
+                          if (sansLog) return (
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[11px] bg-teal-50 text-teal-700"
+                              title="Aucun logiciel de gestion — pas de concurrent en place"
+                            >
+                              sans logiciel
+                            </span>
+                          );
+                          return null;
+                        })()}
                         {estCessee(p.etatEntreprise) && (
                           <span className="px-2 py-0.5 rounded-full text-[11px] bg-red-100 text-red-700">
                             société cessée
                           </span>
                         )}
-                        {p.promptLanceAt && !(p.etudeAt || p.dirigeant || p.personnalisation || p.etudeResume) && (
+                        {(() => {
+                          const etudie = !!(p.etudeAt || p.dirigeant || p.personnalisation || p.etudeResume);
+                          if (etudie) return (
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[11px] bg-violet-100 text-violet-700 font-medium"
+                              title={`Entreprise étudiée${p.etudeAt ? ` le ${p.etudeAt.toDate().toLocaleDateString("fr-FR")}` : ""} — infos récupérées`}
+                            >
+                              ✨ étudié
+                            </span>
+                          );
+                          if (p.promptLanceAt) return (
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700"
+                              title={`Prompt lancé le ${p.promptLanceAt.toDate().toLocaleDateString("fr-FR")} — résultat pas encore collé`}
+                            >
+                              prompt lancé
+                            </span>
+                          );
+                          return null;
+                        })()}
+                        {p.dirigeant && (
                           <span
-                            className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700"
-                            title={`Prompt lancé le ${p.promptLanceAt.toDate().toLocaleDateString("fr-FR")} — résultat pas encore collé`}
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-fuchsia-50 text-fuchsia-700 font-medium"
+                            title="Dirigeant — à qui écrire"
                           >
-                            prompt lancé
+                            👤 {p.dirigeant}
                           </span>
                         )}
                         {isEmailGenerique(p.email) && (

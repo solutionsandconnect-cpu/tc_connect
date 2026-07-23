@@ -110,9 +110,10 @@ export const SEUIL_PROXIMITE_KM = 30
  * contacter n'est jamais « à contacter en priorité » — score 0.
  *
  * `distanceKm` est optionnel car le calcul de distance est ASYNCHRONE (coordonnées
- * chargées côté UI) : quand elle est CONNUE, la proximité ajoute un 5ᵉ critère
- * (max = 5) qui BOOSTE le local ; quand elle est inconnue, le score reste sur 4 et
- * rien ne change. Être loin ne pénalise pas — l'absence de bonus suffit.
+ * chargées côté UI). Quand elle est CONNUE, la proximité joue en BONUS/MALUS :
+ * proche (≤ rayon) = +1, loin (> rayon) = −1 (max = 5). Ça favorise le local sans
+ * l'exclure absolument — l'exclusion fine se fait à la main avec le filtre par
+ * distance. Quand elle est inconnue, le score reste sur 4 et rien ne change.
  *
  * Les critères visent le profil le plus rentable pour de la prospection locale :
  * une petite entreprise vivante, proche, à taille où le patron décide encore vite,
@@ -149,14 +150,18 @@ export function evaluerPrioriteAuto(p: Prospect, distanceKm?: number | null): Ev
   score += crit(g === 'micro' || g === 'petite', 'taille cible (1 à 19 salariés)', 'taille hors cible ou inconnue')
   score += crit((p.nbEnvois ?? 0) === 0, 'jamais contacté', 'déjà contacté')
 
-  // 5ᵉ critère seulement si la distance est connue (coordonnées chargées).
+  // 5ᵉ critère seulement si la distance est connue (coordonnées chargées) :
+  // BONUS proche / MALUS loin. L'exclusion des lointains se gère à la main via le
+  // filtre par distance ; ici on ne fait que pencher la balance.
   if (typeof distanceKm === 'number' && Number.isFinite(distanceKm)) {
     max = 5
-    score += crit(
-      distanceKm <= SEUIL_PROXIMITE_KM,
-      `proche (≤ ${SEUIL_PROXIMITE_KM} km)`,
-      `éloigné (> ${SEUIL_PROXIMITE_KM} km)`,
-    )
+    if (distanceKm <= SEUIL_PROXIMITE_KM) {
+      score += 1
+      raisons.push(`proche (≤ ${SEUIL_PROXIMITE_KM} km) : +1`)
+    } else {
+      score -= 1
+      manques.push(`loin (> ${SEUIL_PROXIMITE_KM} km) : −1`)
+    }
   }
 
   return { auto: score >= SEUIL_PRIORITE_AUTO, score, max, raisons, manques }

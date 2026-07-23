@@ -615,15 +615,41 @@ export const enregistrerEtude = async (
     dirigeant?: string
     angle?: 'surcharge' | 'circulation' | 'inconnu'
     logicielActuel?: string
+    aLogiciel?: boolean
     etudeResume?: string
   },
 ): Promise<void> => {
   await updateDoc(doc(db, 'prospects', prospect.id), {
+    // cleanForFirestore garde `false` (utile pour aLogiciel) et retire les vides.
     ...cleanForFirestore(fiche as Record<string, unknown>),
     etudeAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
   })
   await journaliser(prospect, { type: 'note', observations: 'Étude IA enregistrée sur la fiche.' })
+}
+
+/**
+ * Saisie/édition MANUELLE des infos connues d'un prospect (entreprise qu'on
+ * connaît déjà). `null` ou `''` efface le champ (`deleteField`) ; pour le logiciel,
+ * `null` = « on ne sait pas », `false` = « pas de logiciel », `true` = « en a un ».
+ */
+export const majInfosProspect = async (
+  prospect: Prospect,
+  patch: {
+    dirigeant?: string | null
+    logicielActuel?: string | null
+    aLogiciel?: boolean | null
+    angle?: 'surcharge' | 'circulation' | 'inconnu' | null
+    etudeResume?: string | null
+  },
+): Promise<void> => {
+  const data: Record<string, unknown> = { etudeAt: Timestamp.now(), updatedAt: Timestamp.now() }
+  for (const [cle, v] of Object.entries(patch)) {
+    if (v === undefined) continue
+    data[cle] = v === null || v === '' ? deleteField() : v
+  }
+  await updateDoc(doc(db, 'prospects', prospect.id), data)
+  await journaliser(prospect, { type: 'note', observations: 'Infos saisies à la main sur la fiche.' })
 }
 
 /** Marque (ou retire) « prompt déjà lancé » sur un prospect. */
