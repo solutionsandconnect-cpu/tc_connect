@@ -8,7 +8,7 @@ import {
   libelleEffectif, normaliserSiret, rechercherCandidats, rechercherParSiret, siretValide,
   type Candidats, type InfoEntreprise,
 } from "@/lib/sirene";
-import type { MailingMetier, Prospect } from "@/types";
+import type { MailingMetier, Prospect, ProspectStatut } from "@/types";
 
 const inputCls = "w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition";
 const labelCls = "block text-xs font-medium text-gray-600 mb-1";
@@ -131,6 +131,11 @@ export default function ProspectModal({
               activiteNaf: info.activiteNaf,
               etatEntreprise: info.etat,
             }
+          : {}),
+        // Un prospect INSEE importé sans email garde le statut « Email à trouver » :
+        // dès qu'on lui saisit une adresse valide, il redevient contactable.
+        ...(edition && prospect?.statut === "email_manquant" && emailOk
+          ? { statut: "a_contacter" as ProspectStatut }
           : {}),
       };
       if (edition && prospect) {

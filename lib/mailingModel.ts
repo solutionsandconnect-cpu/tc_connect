@@ -373,7 +373,10 @@ export function peutContacter(
   if (estCessee(p.etatEntreprise)) {
     return { ok: false, raison: 'Société cessée selon les données INSEE.' }
   }
-  if (!p.email?.trim() || p.statut === 'email_manquant') {
+  // On se fie à l'email RÉEL, pas au statut : un prospect importé de l'INSEE garde
+  // le statut `email_manquant` même après qu'on lui a saisi une adresse — le bloquer
+  // là-dessus empêchait de l'envoyer alors que l'email est bien présent.
+  if (!p.email?.trim()) {
     return { ok: false, raison: "Pas d'adresse email : complète la fiche avant d'envoyer." }
   }
   if (!isEmailValide(p.email)) {
