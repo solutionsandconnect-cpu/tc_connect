@@ -69,5 +69,83 @@ CE QUE JE VEUX EN SORTIE
   Dis-moi donc lequel des deux angles colle à CETTE entreprise, et sur quel élément factuel tu t'appuies pour le dire. Si tu n'as pas assez d'éléments sur son organisation, dis « je ne sais pas » : je partirai sur l'angle par défaut, qui est le bon dans le doute.
 
 - Une section « PHRASE DE PERSONNALISATION » : UNE seule phrase, factuelle et vérifiable, que je pourrai mettre en tête de mon mail pour montrer que je me suis renseigné. Pas de flatterie, pas de superlatif, rien d'inventé.
-- Si rien de solide ne ressort, écris « aucune phrase fiable possible » — je préfère ça à une phrase creuse.`
+- Si rien de solide ne ressort, écris « aucune phrase fiable possible » — je préfère ça à une phrase creuse.
+
+- ENFIN, tout à la fin de ta réponse, ajoute un BLOC RÉCAPITULATIF que je vais copier-coller tel quel dans mon logiciel pour remplir la fiche automatiquement. Respecte EXACTEMENT ce format : les deux délimiteurs chacun sur leur propre ligne, une clé par ligne, et chaque valeur tenant sur UNE SEULE ligne (condense si besoin, ne va jamais à la ligne à l'intérieur d'une valeur). N'écris rien après le bloc. Si une information est inconnue, mets « inconnu » (ou « aucun » pour logiciel/site/avis). Pour "angle", n'écris qu'un seul mot : surcharge, circulation ou inconnu.
+
+===ENEZO-FICHE===
+personnalisation: <la phrase de personnalisation, ou "aucune">
+angle: <surcharge | circulation | inconnu>
+logiciel: <nom du logiciel de gestion/devis en place, ou "aucun">
+effectif: <ex: 8 personnes dont 6 sur le terrain, ou "inconnu">
+organisation: <ex: le dirigeant gère tout | assistante dédiée au planning | inconnu>
+site: <url du site, ou "aucun">
+avis: <thèmes récurrents des avis clients, ou "aucun">
+resume: <2 ou 3 phrases factuelles résumant l'entreprise, sur une seule ligne>
+===FIN-FICHE===`
+}
+
+export type FicheEtude = {
+  personnalisation?: string
+  angle?: 'surcharge' | 'circulation' | 'inconnu'
+  logicielActuel?: string
+  etudeResume?: string
+}
+
+// Valeurs que l'IA écrit quand elle n'a rien trouvé : à traiter comme « vide ».
+const VALEURS_VIDES = new Set(['', 'aucun', 'aucune', 'inconnu', 'inconnue', 'non trouvé', 'non trouve', 'n/a', 'na', '-', '—', '?'])
+
+function estVide(v: string): boolean {
+  return VALEURS_VIDES.has(v.trim().toLowerCase())
+}
+
+/**
+ * Extrait la fiche du RÉCAPITULATIF collé (réponse complète de l'IA ou juste le
+ * bloc). Tolérant : on isole le bloc `===ENEZO-FICHE=== … ===FIN-FICHE===` s'il
+ * est là, sinon on parse le texte entier ligne à ligne. Renvoie null si rien
+ * d'exploitable — l'app pourra alors prévenir plutôt que d'écrire du vide.
+ */
+export function parserFicheEtude(texte: string): FicheEtude | null {
+  if (!texte?.trim()) return null
+  const bloc = texte.match(/===\s*ENEZO-FICHE\s*===([\s\S]*?)===\s*FIN-?FICHE\s*===/i)
+  const corps = bloc ? bloc[1] : texte
+
+  const paires = new Map<string, string>()
+  for (const ligne of corps.split(/\r?\n/)) {
+    const m = ligne.match(/^\s*[-*]?\s*([A-Za-zÀ-ſ_]+)\s*:\s*(.+?)\s*$/)
+    if (!m) continue
+    const cle = m[1].toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
+    if (!paires.has(cle)) paires.set(cle, m[2].trim())
+  }
+  if (paires.size === 0) return null
+
+  const val = (k: string) => {
+    const v = paires.get(k)
+    return v && !estVide(v) ? v : undefined
+  }
+
+  const fiche: FicheEtude = {}
+  const perso = val('personnalisation')
+  if (perso) fiche.personnalisation = perso
+
+  const angleRaw = (paires.get('angle') ?? '').toLowerCase()
+  if (angleRaw.includes('surcharge')) fiche.angle = 'surcharge'
+  else if (angleRaw.includes('circulation')) fiche.angle = 'circulation'
+  else if (angleRaw.includes('inconnu')) fiche.angle = 'inconnu'
+
+  const logiciel = val('logiciel')
+  if (logiciel) fiche.logicielActuel = logiciel
+
+  const lignes: string[] = []
+  const resume = val('resume'); if (resume) lignes.push(resume)
+  const effectif = val('effectif'); if (effectif) lignes.push(`Effectif : ${effectif}`)
+  const orga = val('organisation'); if (orga) lignes.push(`Organisation : ${orga}`)
+  const site = val('site'); if (site) lignes.push(`Site : ${site}`)
+  const avis = val('avis'); if (avis) lignes.push(`Avis : ${avis}`)
+  if (lignes.length) fiche.etudeResume = lignes.join('\n')
+
+  if (!fiche.personnalisation && !fiche.angle && !fiche.logicielActuel && !fiche.etudeResume) {
+    return null
+  }
+  return fiche
 }

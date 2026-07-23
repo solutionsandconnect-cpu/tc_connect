@@ -603,6 +603,36 @@ export const definirPrioriteManuelle = async (
   })
 }
 
+/**
+ * Enregistre le résultat de l'étude IA sur la fiche prospect. Ne touche QUE les
+ * champs fournis (cleanForFirestore écarte vides et undefined) : une étude qui ne
+ * ramène rien de neuf n'efface pas ce qui était déjà là.
+ */
+export const enregistrerEtude = async (
+  prospect: Prospect,
+  fiche: {
+    personnalisation?: string
+    angle?: 'surcharge' | 'circulation' | 'inconnu'
+    logicielActuel?: string
+    etudeResume?: string
+  },
+): Promise<void> => {
+  await updateDoc(doc(db, 'prospects', prospect.id), {
+    ...cleanForFirestore(fiche as Record<string, unknown>),
+    etudeAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  })
+  await journaliser(prospect, { type: 'note', observations: 'Étude IA enregistrée sur la fiche.' })
+}
+
+/** Marque (ou retire) « prompt déjà lancé » sur un prospect. */
+export const definirPromptLance = async (id: string, lance: boolean): Promise<void> => {
+  await updateDoc(doc(db, 'prospects', id), {
+    promptLanceAt: lance ? Timestamp.now() : deleteField(),
+    updatedAt: Timestamp.now(),
+  })
+}
+
 /** Rattache le prospect à une fiche client CHOISIE, sans rien créer. */
 export const rattacherAClient = async (prospect: Prospect, clientId: string): Promise<void> => {
   await journaliser(prospect, {

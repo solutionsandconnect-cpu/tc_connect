@@ -1326,6 +1326,25 @@ export interface Prospect {
   // Enrichissement SIRET (API publique « Recherche d'entreprises »)
   /** Nom du logiciel déjà en place — renseigné avec le statut 'a_un_logiciel'. */
   logicielActuel?: string
+  // ── Étude préalable (résultat du prompt IA, collé dans l'app) ──────────────
+  /** Phrase de personnalisation issue de l'étude — pré-remplit le composeur. */
+  personnalisation?: string
+  /**
+   * Angle de message recommandé par l'étude : 'surcharge' (le dirigeant fait tout,
+   * angle par défaut) ou 'circulation' (bureau + planificateur dédié → problème de
+   * circulation de l'info), 'inconnu' si l'étude n'a pas tranché.
+   */
+  angle?: 'surcharge' | 'circulation' | 'inconnu'
+  /** Fiche factuelle compilée depuis l'étude (effectif réel, organisation, site, avis…). */
+  etudeResume?: string
+  /** Date de la dernière étude enregistrée sur la fiche. */
+  etudeAt?: Timestamp
+  /**
+   * Un prompt de recherche a déjà été LANCÉ sur ce prospect (copié pour l'IA),
+   * même si le résultat n'a pas encore été collé. Distinct de `etudeAt` (résultat
+   * enregistré) : sert à ne pas relancer deux fois la même recherche.
+   */
+  promptLanceAt?: Timestamp
   siret?: string
   siren?: string
   /** Code INSEE de tranche d'effectif — jamais un nombre exact (cf. lib/sirene.ts). */

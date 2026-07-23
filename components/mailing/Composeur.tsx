@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import AutoTextarea from "@/components/ui/AutoTextarea";
 import { copyText } from "@/lib/clipboard";
 import { enregistrerEnvoi } from "@/lib/mailingService";
@@ -148,6 +148,15 @@ export default function Composeur({
 
   const enFile = file.length > 0;
   const prospect = enFile ? prospects.find((p) => p.id === file[index]) ?? null : null;
+
+  // À chaque nouveau prospect de la file, pré-remplir la personnalisation avec la
+  // phrase issue de son étude (si elle existe) — sinon champ vide, à saisir.
+  useEffect(() => {
+    setPerso(prospect?.personnalisation ?? "");
+    // Clé = l'identité du prospect courant ; ne pas dépendre de l'objet entier
+    // (il change de référence à chaque snapshot Firestore et écraserait la saisie).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prospect?.id]);
 
   const blocage = prospect ? peutContacter(prospect, optouts) : null;
   const doublon = prospect ? doublonSociete(prospect, prospects) : null;

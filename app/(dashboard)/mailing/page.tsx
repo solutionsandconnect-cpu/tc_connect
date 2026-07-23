@@ -1024,6 +1024,14 @@ export default function MailingPage() {
                             société cessée
                           </span>
                         )}
+                        {p.promptLanceAt && !(p.etudeAt || p.personnalisation || p.etudeResume) && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700"
+                            title={`Prompt lancé le ${p.promptLanceAt.toDate().toLocaleDateString("fr-FR")} — résultat pas encore collé`}
+                          >
+                            prompt lancé
+                          </span>
+                        )}
                         {isEmailGenerique(p.email) && (
                           <span
                             className="px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-500"
@@ -1097,13 +1105,29 @@ export default function MailingPage() {
                         <ArrowUturnLeftIcon className="w-4 h-4" />
                       </button>
                     )}
-                    <button
-                      onClick={() => setAEtudier(p)}
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition"
-                      title="Étudier cette entreprise (prompt de recherche IA)"
-                    >
-                      <SparklesIcon className="w-4 h-4" />
-                    </button>
+                    {(() => {
+                      const etudie = !!(p.etudeAt || p.personnalisation || p.etudeResume);
+                      const lance = !!p.promptLanceAt;
+                      const cls = etudie
+                        ? "text-violet-600 bg-violet-50 hover:bg-violet-100"
+                        : lance
+                          ? "text-amber-600 bg-amber-50 hover:bg-amber-100"
+                          : "text-gray-400 hover:text-violet-600 hover:bg-violet-50";
+                      const titre = etudie
+                        ? "Entreprise déjà étudiée — voir / mettre à jour"
+                        : lance
+                          ? "Prompt déjà lancé (résultat pas encore collé)"
+                          : "Étudier cette entreprise (prompt de recherche IA)";
+                      return (
+                        <button
+                          onClick={() => setAEtudier(p)}
+                          className={`p-1.5 rounded-lg transition ${cls}`}
+                          title={titre}
+                        >
+                          <SparklesIcon className="w-4 h-4" />
+                        </button>
+                      );
+                    })()}
                     <button
                       onClick={() => setStatutEnCours({ prospect: p })}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition"
@@ -1155,6 +1179,30 @@ export default function MailingPage() {
                             <span className="text-gray-400"> · jamais contacté</span>
                           )}
                         </div>
+
+                        {/* Étude IA enregistrée sur la fiche. */}
+                        {(p.personnalisation || p.angle || p.etudeResume) && (
+                          <div className="text-[11px] rounded-lg bg-violet-50 border border-violet-100 px-2.5 py-1.5 space-y-0.5">
+                            <span className="text-violet-700 font-medium">Étude</span>
+                            {p.etudeAt && <span className="text-gray-400"> · {fmtDateHeure(p.etudeAt)}</span>}
+                            {p.personnalisation && (
+                              <div className="text-gray-700">✍ {p.personnalisation}</div>
+                            )}
+                            {p.angle && (
+                              <div className="text-gray-600">
+                                🎯 Angle :{" "}
+                                {p.angle === "surcharge"
+                                  ? "surcharge du dirigeant"
+                                  : p.angle === "circulation"
+                                    ? "circulation de l'information"
+                                    : "indéterminé"}
+                              </div>
+                            )}
+                            {p.etudeResume && (
+                              <div className="text-gray-600 whitespace-pre-wrap">{p.etudeResume}</div>
+                            )}
+                          </div>
+                        )}
                         {/* Note saisie sur la fiche avant que les notes ne passent
                             au journal : affichée ici pour ne pas la perdre. */}
                         {p.notes?.trim() && (
