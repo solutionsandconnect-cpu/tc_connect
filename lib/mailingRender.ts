@@ -260,7 +260,8 @@ export function renderMailHtml(ctx: RenderContexte): string {
 
         ${corps}
 
-        ${signatureHtml(exp, origin)}
+        ${/* Pas de bloc signature ici : le mail est collé dans la boîte de Teddy,
+             qui ajoute déjà sa propre signature. En remettre une ferait doublon. */ ''}
 
         <tr>
           <td style="padding-top:22px;border-top:1px solid #e5e7eb;color:#8b95a1;font-size:11px;line-height:17px;">
@@ -277,61 +278,6 @@ export function renderMailHtml(ctx: RenderContexte): string {
 </table>
 </body>
 </html>`
-}
-
-/**
- * Signature : logo, filet petrol, identité, puis une ligne de contacts séparés
- * par des points médians. Tout en `<table>` et sans icônes en images — chaque
- * image distante est un risque de blocage, et une signature à moitié affichée
- * fait plus de tort que pas d'icônes du tout.
- */
-function signatureHtml(exp: Expediteur, origin: string): string {
-  const base = origin.replace(/\/+$/, '')
-  const logo = exp.logoUrl ?? `${base}${LOGO_ENEZO}`
-  const tel = exp.telephone
-  const contacts = [
-    exp.lieu ? esc(exp.lieu) : '',
-    tel
-      ? `<a href="tel:${esc(tel.replace(/[^\d+]/g, ''))}" style="color:#6b7280;text-decoration:none;">${esc(tel)}</a>`
-      : '',
-    `<a href="mailto:${esc(exp.email)}" style="color:#6b7280;text-decoration:none;">${esc(exp.email)}</a>`,
-  ]
-    .filter(Boolean)
-    .join(' <span style="color:#d1d5db;">&#183;</span> ')
-
-  // `align="center"` sur la cellule EN PLUS de `text-align` : Outlook ignore
-  // fréquemment `margin:auto`, l'attribut reste le seul centrage fiable.
-  return `
-        <tr>
-          <td align="center" style="padding-top:14px;text-align:center;">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
-              <tr>
-                <td align="center" style="padding-bottom:12px;text-align:center;">
-                  <img src="${esc(logo)}" width="150" alt="${esc(exp.societe)}"
-                       style="display:block;border:0;width:150px;max-width:150px;height:auto;margin:0 auto;">
-                </td>
-              </tr>
-              <tr>
-                <td align="center" style="border-top:2px solid ${PETROL};padding-top:11px;text-align:center;">
-                  <div style="font-size:15px;font-weight:700;color:#1f2937;line-height:20px;">
-                    ${esc(exp.nom)}
-                  </div>
-                  ${exp.accroche
-                    ? `<div style="font-size:13px;color:${PETROL};line-height:19px;">${esc(exp.accroche)}</div>`
-                    : ''}
-                  <div style="font-size:13px;color:#6b7280;line-height:20px;padding-top:7px;">
-                    ${contacts}
-                  </div>
-                  ${exp.siteUrl
-                    ? `<div style="font-size:13px;line-height:20px;padding-top:2px;">
-                         <a href="${esc(exp.siteUrl)}" style="color:${PETROL};text-decoration:none;font-weight:600;">${esc(exp.siteUrl.replace(/^https?:\/\//, ''))}</a>
-                       </div>`
-                    : ''}
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>`
 }
 
 /**
@@ -372,12 +318,7 @@ export function renderMailTexte(ctx: RenderContexte): string {
       exp.siteUrl ? `Vous pouvez voir ce que je fais sur ${exp.siteUrl}` : null,
       exp.siteUrl ? '' : null,
       metier.mailQuestion?.trim() ?? '',
-      '',
-      exp.nom,
-      `${exp.societe}${exp.lieu ? ` — ${exp.lieu}` : ''}`,
-      exp.telephone ?? '',
-      exp.email,
-      exp.siteUrl ?? '',
+      // Pas de signature (nom/société/contacts) : la boîte de Teddy ajoute la sienne.
       ...pied,
     ]
       .filter((l) => l !== null)
@@ -403,11 +344,7 @@ export function renderMailTexte(ctx: RenderContexte): string {
     "Nous serions ravis d'en discuter avec vous de vive voix, et restons disponibles pour toute information complémentaire.",
     '',
     'Cordialement,',
-    exp.nom,
-    `${exp.societe}${exp.accroche ? ` — ${exp.accroche}` : ''}`,
-    exp.lieu ?? '',
-    exp.telephone ?? '',
-    exp.email,
+    // Pas de signature (nom/société/contacts) : la boîte de Teddy ajoute la sienne.
     '',
     '---',
     prospect.origine?.trim()
