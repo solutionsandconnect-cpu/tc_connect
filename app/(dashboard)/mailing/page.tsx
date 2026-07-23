@@ -160,6 +160,7 @@ export default function MailingPage() {
   const [filtreEffectif, setFiltreEffectif] = useState<GroupeEffectif | "tous">("tous");
   const [filtreEtat, setFiltreEtat] = useState<"tous" | "actives" | "cessees">("tous");
   const [filtrePriorite, setFiltrePriorite] = useState<"tous" | "manuel" | "auto">("tous");
+  const [filtreEmail, setFiltreEmail] = useState<"tous" | "avec" | "sans">("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
   const [aDesenrichir, setADesenrichir] = useState<Prospect | null>(null);
@@ -302,6 +303,7 @@ export default function MailingPage() {
     (filtreEffectif !== "tous" ? 1 : 0) +
     (filtreEtat !== "tous" ? 1 : 0) +
     (filtrePriorite !== "tous" ? 1 : 0) +
+    (filtreEmail !== "tous" ? 1 : 0) +
     (rayon.rayon !== null ? 1 : 0) +
     (recherche.trim() ? 1 : 0);
 
@@ -313,6 +315,7 @@ export default function MailingPage() {
     setFiltreEffectif("tous");
     setFiltreEtat("tous");
     setFiltrePriorite("tous");
+    setFiltreEmail("tous");
     setRecherche("");
     // Le rayon est remis à « partout », mais le code postal de référence et les
     // communes déjà chargées restent : les recharger n'aurait aucun intérêt.
@@ -334,6 +337,9 @@ export default function MailingPage() {
       if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
       if (filtrePriorite === "manuel" && !estPrioritaireManuel(p)) return false;
       if (filtrePriorite === "auto" && !estPrioritaireAuto(p)) return false;
+      const aEmail = !!p.email?.trim();
+      if (filtreEmail === "avec" && !aEmail) return false;
+      if (filtreEmail === "sans" && aEmail) return false;
       if (!rayon.dansRayon(p)) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
@@ -343,7 +349,7 @@ export default function MailingPage() {
     return rayon.rayon === null
       ? liste
       : [...liste].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9));
-  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, recherche, rayon]);
+  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, recherche, rayon]);
 
   const basculerSelection = (id: string) => {
     setSelection((s) => {
@@ -807,6 +813,34 @@ export default function MailingPage() {
                     label="Suggérées (auto)"
                     nombre={nAuto}
                     attenue={nAuto === 0}
+                  />
+                </>
+              );
+            })()}
+          </div>
+
+          {/* Email rattaché ou non — les prospects INSEE arrivent souvent sans
+              adresse (statut « Email à trouver »), on veut pouvoir les isoler. */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(() => {
+              const avec = prospects.filter((p) => !!p.email?.trim()).length;
+              const sans = prospects.length - avec;
+              return (
+                <>
+                  <Chip actif={filtreEmail === "tous"} onClick={() => setFiltreEmail("tous")} label="Email : tous" />
+                  <Chip
+                    actif={filtreEmail === "avec"}
+                    onClick={() => setFiltreEmail("avec")}
+                    label="Avec email"
+                    nombre={avec}
+                    attenue={avec === 0}
+                  />
+                  <Chip
+                    actif={filtreEmail === "sans"}
+                    onClick={() => setFiltreEmail("sans")}
+                    label="Sans email"
+                    nombre={sans}
+                    attenue={sans === 0}
                   />
                 </>
               );
