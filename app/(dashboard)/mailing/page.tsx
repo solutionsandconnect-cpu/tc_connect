@@ -169,6 +169,10 @@ export default function MailingPage() {
   const [filtrePriorite, setFiltrePriorite] = useState<"tous" | "manuel" | "auto">("tous");
   const [filtreEmail, setFiltreEmail] = useState<"tous" | "avec" | "sans">("tous");
   const [filtreLogiciel, setFiltreLogiciel] = useState<"tous" | "oui" | "non" | "inconnu">("tous");
+  const [filtreAdmin, setFiltreAdmin] = useState<"tous" | "oui" | "non">("tous");
+  const [filtreDev, setFiltreDev] = useState<"tous" | "oui" | "non">("tous");
+  const [filtreSite, setFiltreSite] = useState<"tous" | "pro" | "bancal" | "aucun">("tous");
+  const [filtreAngle, setFiltreAngle] = useState<"tous" | "surcharge" | "circulation">("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
   const [aDesenrichir, setADesenrichir] = useState<Prospect | null>(null);
@@ -176,8 +180,10 @@ export default function MailingPage() {
   // chaque ligne ajoutent du bruit et invitent au clic accidentel.
   const [modeSelection, setModeSelection] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
-  const [actionLot, setActionLot] = useState<"statut" | "insee" | "supprimer" | null>(null);
+  const [actionLot, setActionLot] = useState<"statut" | "insee" | "supprimer" | "metier" | "groupe" | null>(null);
   const [statutLot, setStatutLot] = useState<ProspectStatut>("cessee");
+  const [metierLot, setMetierLot] = useState<string>("");
+  const [groupeLot, setGroupeLot] = useState<string>("");
   const [lotEnCours, setLotEnCours] = useState<{ fait: number; total: number } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -313,6 +319,10 @@ export default function MailingPage() {
     (filtrePriorite !== "tous" ? 1 : 0) +
     (filtreEmail !== "tous" ? 1 : 0) +
     (filtreLogiciel !== "tous" ? 1 : 0) +
+    (filtreAdmin !== "tous" ? 1 : 0) +
+    (filtreDev !== "tous" ? 1 : 0) +
+    (filtreSite !== "tous" ? 1 : 0) +
+    (filtreAngle !== "tous" ? 1 : 0) +
     (rayon.rayon !== null ? 1 : 0) +
     (recherche.trim() ? 1 : 0);
 
@@ -326,6 +336,10 @@ export default function MailingPage() {
     setFiltrePriorite("tous");
     setFiltreEmail("tous");
     setFiltreLogiciel("tous");
+    setFiltreAdmin("tous");
+    setFiltreDev("tous");
+    setFiltreSite("tous");
+    setFiltreAngle("tous");
     setRecherche("");
     // Le rayon est remis à « partout », mais le code postal de référence et les
     // communes déjà chargées restent : les recharger n'aurait aucun intérêt.
@@ -351,6 +365,12 @@ export default function MailingPage() {
       if (filtreEmail === "avec" && !aEmail) return false;
       if (filtreEmail === "sans" && aEmail) return false;
       if (filtreLogiciel !== "tous" && etatLogiciel(p) !== filtreLogiciel) return false;
+      if (filtreAdmin === "oui" && p.responsableAdmin !== true) return false;
+      if (filtreAdmin === "non" && p.responsableAdmin !== false) return false;
+      if (filtreDev === "oui" && p.enDeveloppement !== true) return false;
+      if (filtreDev === "non" && p.enDeveloppement !== false) return false;
+      if (filtreSite !== "tous" && p.siteEtat !== filtreSite) return false;
+      if (filtreAngle !== "tous" && p.angle !== filtreAngle) return false;
       if (!rayon.dansRayon(p)) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
@@ -360,7 +380,7 @@ export default function MailingPage() {
     return rayon.rayon === null
       ? liste
       : [...liste].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9));
-  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, filtreLogiciel, recherche, rayon]);
+  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, filtreLogiciel, filtreAdmin, filtreDev, filtreSite, filtreAngle, recherche, rayon]);
 
   // Prospects LIÉS : même dirigeant OU même groupe/holding (souvent sur des kits
   // métier différents) → inutile de contacter les deux. id → sociétés liées.
@@ -428,6 +448,13 @@ export default function MailingPage() {
           await annulerEnrichissement(p);
         } else if (actionLot === "supprimer") {
           await deleteProspect(p.id);
+        } else if (actionLot === "metier") {
+          const m = metiers.find((k) => k.id === metierLot);
+          await updateProspect(p.id, { metierId: metierLot, metier: m?.metier ?? "" });
+        } else if (actionLot === "groupe") {
+          // Groupe commun : le nom saisi, sinon dérivé de la 1re société sélectionnée.
+          const nom = groupeLot.trim() || `Groupe ${cibles[0]?.societe ?? ""}`.trim();
+          await updateProspect(p.id, { groupe: nom });
         }
       } catch {
         /* prospect ignoré : le lot continue */
@@ -920,6 +947,75 @@ export default function MailingPage() {
             })()}
           </div>
 
+          {/* Signaux de l'étude : admin dédié, développement, site, angle. */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(() => {
+              const adminOui = prospects.filter((p) => p.responsableAdmin === true).length;
+              const dev = prospects.filter((p) => p.enDeveloppement === true).length;
+              const siteBancal = prospects.filter((p) => p.siteEtat === "bancal").length;
+              const siteAucun = prospects.filter((p) => p.siteEtat === "aucun").length;
+              return (
+                <>
+                  <Chip
+                    actif={filtreAdmin === "oui"}
+                    onClick={() => setFiltreAdmin(filtreAdmin === "oui" ? "tous" : "oui")}
+                    label="💼 Admin dédié"
+                    nombre={adminOui}
+                    attenue={adminOui === 0}
+                  />
+                  <Chip
+                    actif={filtreDev === "oui"}
+                    onClick={() => setFiltreDev(filtreDev === "oui" ? "tous" : "oui")}
+                    label="📈 En développement"
+                    nombre={dev}
+                    attenue={dev === 0}
+                  />
+                  <Chip
+                    actif={filtreSite === "bancal"}
+                    onClick={() => setFiltreSite(filtreSite === "bancal" ? "tous" : "bancal")}
+                    label="🌐 Site à refaire"
+                    nombre={siteBancal}
+                    attenue={siteBancal === 0}
+                  />
+                  <Chip
+                    actif={filtreSite === "aucun"}
+                    onClick={() => setFiltreSite(filtreSite === "aucun" ? "tous" : "aucun")}
+                    label="🌐 Sans site"
+                    nombre={siteAucun}
+                    attenue={siteAucun === 0}
+                  />
+                </>
+              );
+            })()}
+          </div>
+
+          {/* Angle recommandé par l'étude. */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(() => {
+              const surch = prospects.filter((p) => p.angle === "surcharge").length;
+              const circ = prospects.filter((p) => p.angle === "circulation").length;
+              return (
+                <>
+                  <Chip actif={filtreAngle === "tous"} onClick={() => setFiltreAngle("tous")} label="Angle : tous" />
+                  <Chip
+                    actif={filtreAngle === "surcharge"}
+                    onClick={() => setFiltreAngle("surcharge")}
+                    label="🎯 Surcharge"
+                    nombre={surch}
+                    attenue={surch === 0}
+                  />
+                  <Chip
+                    actif={filtreAngle === "circulation"}
+                    onClick={() => setFiltreAngle("circulation")}
+                    label="🎯 Circulation"
+                    nombre={circ}
+                    attenue={circ === 0}
+                  />
+                </>
+              );
+            })()}
+          </div>
+
           {/* Barre d'actions groupées : n'apparaît qu'une fois une sélection
               faite, pour ne pas encombrer la vue de lecture. */}
           {selectionnes.length > 0 && (
@@ -942,6 +1038,36 @@ export default function MailingPage() {
                   className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition"
                 >
                   Appliquer l&apos;état
+                </button>
+                <select
+                  value={metierLot}
+                  onChange={(e) => setMetierLot(e.target.value)}
+                  className="border rounded-lg px-2 py-1.5 text-xs bg-white"
+                >
+                  <option value="">— Métier —</option>
+                  {metiers.map((m) => (
+                    <option key={m.id} value={m.id}>{m.metier}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => setActionLot("metier")}
+                  disabled={!metierLot}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Changer le métier
+                </button>
+                <input
+                  value={groupeLot}
+                  onChange={(e) => setGroupeLot(e.target.value)}
+                  placeholder="Nom du groupe"
+                  className="border rounded-lg px-2 py-1.5 text-xs bg-white w-32"
+                />
+                <button
+                  onClick={() => setActionLot("groupe")}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-white text-gray-700 hover:bg-gray-50 transition"
+                  title="Marquer les sélectionnés comme appartenant au même groupe"
+                >
+                  Même groupe
                 </button>
                 <button
                   onClick={() => setActionLot("insee")}
@@ -1107,10 +1233,50 @@ export default function MailingPage() {
                         })()}
                         {p.responsableAdmin === true && (
                           <span
-                            className="px-2 py-0.5 rounded-full text-[11px] bg-indigo-100 text-indigo-700 font-medium"
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-indigo-100 text-indigo-800 font-medium border border-indigo-200"
                             title="Une personne dédiée à l'administratif/gestion — signal fort"
                           >
-                            🗂️ admin dédié
+                            💼 Admin dédié
+                          </span>
+                        )}
+                        {p.enDeveloppement === true && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700 font-medium"
+                            title="En développement — recrutement, CA en hausse, rachat récent…"
+                          >
+                            📈 en dév.
+                          </span>
+                        )}
+                        {p.siteEtat === "bancal" && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700 font-medium"
+                            title="Site bancal / à moitié fait / à l'abandon — opportunité de refonte"
+                          >
+                            🌐 site à refaire
+                          </span>
+                        )}
+                        {p.siteEtat === "aucun" && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-teal-50 text-teal-700"
+                            title="Pas de site web — opportunité"
+                          >
+                            🌐 sans site
+                          </span>
+                        )}
+                        {p.effectifReel && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-700"
+                            title="Effectif réel trouvé par l'étude"
+                          >
+                            👷 {p.effectifReel}
+                          </span>
+                        )}
+                        {p.angle && p.angle !== "inconnu" && (
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[11px] bg-blue-50 text-blue-700"
+                            title="Angle de message recommandé par l'étude"
+                          >
+                            🎯 {p.angle === "surcharge" ? "surcharge" : "circulation info"}
                           </span>
                         )}
                         {estCessee(p.etatEntreprise) && (
@@ -1451,7 +1617,11 @@ export default function MailingPage() {
             ? "Changer l'état de la sélection"
             : actionLot === "insee"
               ? "Effacer les données INSEE"
-              : "Supprimer la sélection"
+              : actionLot === "metier"
+                ? "Changer le métier de la sélection"
+                : actionLot === "groupe"
+                  ? "Marquer comme même groupe"
+                  : "Supprimer la sélection"
         }
         size="sm"
       >
@@ -1467,6 +1637,20 @@ export default function MailingPage() {
               <strong>{selectionnes.length}</strong> prospect(s) perdront SIRET, effectif,
               activité, état — ainsi que le code postal et la ville, qui viennent de
               l&apos;enrichissement.
+            </>
+          )}
+          {actionLot === "metier" && (
+            <>
+              <strong>{selectionnes.length}</strong> prospect(s) passeront au métier
+              {" « "}<strong>{metiers.find((m) => m.id === metierLot)?.metier ?? "—"}</strong>{" »"}.
+            </>
+          )}
+          {actionLot === "groupe" && (
+            <>
+              <strong>{selectionnes.length}</strong> prospect(s) seront marqués comme appartenant au
+              même groupe {" « "}
+              <strong>{groupeLot.trim() || `Groupe ${selectionnes[0]?.societe ?? ""}`}</strong>
+              {" » "} — le badge 👥 lié apparaîtra sur chacun.
             </>
           )}
           {actionLot === "supprimer" && (

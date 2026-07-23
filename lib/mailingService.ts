@@ -618,6 +618,9 @@ export const enregistrerEtude = async (
     logicielActuel?: string
     aLogiciel?: boolean
     responsableAdmin?: boolean
+    effectifReel?: string
+    enDeveloppement?: boolean
+    siteEtat?: 'pro' | 'bancal' | 'aucun'
     etudeResume?: string
   },
 ): Promise<void> => {
@@ -643,6 +646,9 @@ export const majInfosProspect = async (
     logicielActuel?: string | null
     aLogiciel?: boolean | null
     responsableAdmin?: boolean | null
+    effectifReel?: string | null
+    enDeveloppement?: boolean | null
+    siteEtat?: 'pro' | 'bancal' | 'aucun' | null
     angle?: 'surcharge' | 'circulation' | 'inconnu' | null
     etudeResume?: string | null
   },

@@ -75,6 +75,9 @@ dirigeant: <nom de la personne à qui écrire, ou "inconnu">
 groupe: <nom du groupe/holding si l'entreprise en fait partie (avec d'AUTRES sociétés), sinon "aucun">
 angle: <surcharge | circulation | inconnu>
 effectif: <ex: 8 personnes dont 6 sur le terrain, ou "inconnu">
+effectif_reel: <le NOMBRE de salariés seul si tu l'as trouvé, ex "8" ou "~12", sinon "inconnu">
+developpement: <oui s'il y a des signes NETS de croissance (recrutement en cours, CA en hausse, rachat/reprise récente, nouveaux locaux/agence) ; non sinon ; inconnu>
+site_etat: <"pro" si le site est propre et professionnel ; "bancal" s'il est à moitié fait, à l'abandon, daté ou peu pro ; "aucun" s'il n'y a pas de site ; "inconnu">
 organisation: <ex: le dirigeant gère tout | bureau d'études + conduite de travaux + terrain, ou "inconnu">
 admin_dedie: <oui si une personne fait SURTOUT de l'administratif/gestion/planning (assistante, conjoint(e) qui gère, responsable exploitation) ; non si le dirigeant gère tout lui-même ; inconnu>
 anciennete: <année de création et/ou ancienneté, ou "inconnu">
@@ -99,6 +102,9 @@ export type FicheEtude = {
   logicielActuel?: string
   aLogiciel?: boolean
   responsableAdmin?: boolean
+  effectifReel?: string
+  enDeveloppement?: boolean
+  siteEtat?: 'pro' | 'bancal' | 'aucun'
   etudeResume?: string
 }
 
@@ -168,6 +174,21 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   if (adminBrut.startsWith('oui')) fiche.responsableAdmin = true
   else if (adminBrut.startsWith('non')) fiche.responsableAdmin = false
 
+  // Effectif réel (nombre seul).
+  const effReel = val('effectif_reel')
+  if (effReel) fiche.effectifReel = effReel
+
+  // En développement : oui / non / (inconnu = rien).
+  const devBrut = (paires.get('developpement') ?? '').trim().toLowerCase()
+  if (devBrut.startsWith('oui')) fiche.enDeveloppement = true
+  else if (devBrut.startsWith('non')) fiche.enDeveloppement = false
+
+  // État du site : pro / bancal / aucun.
+  const siteBrut = (paires.get('site_etat') ?? '').trim().toLowerCase()
+  if (/bancal|stand|abandon|dat|moiti|amateur|peu pro/.test(siteBrut)) fiche.siteEtat = 'bancal'
+  else if (/aucun|pas de site|sans site|absent/.test(siteBrut)) fiche.siteEtat = 'aucun'
+  else if (/pro|propre|soign|correct|ok/.test(siteBrut)) fiche.siteEtat = 'pro'
+
   // Fiche compilée : le résumé d'abord, puis chaque rubrique renseignée. Tout ce
   // que le bloc ramène est conservé — c'est ce qui manquait avant.
   const lignes: string[] = []
@@ -192,7 +213,8 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   if (
     !fiche.personnalisation && !fiche.dirigeant && !fiche.groupe && !fiche.angle &&
     !fiche.logicielActuel && fiche.aLogiciel === undefined &&
-    fiche.responsableAdmin === undefined && !fiche.etudeResume
+    fiche.responsableAdmin === undefined && !fiche.effectifReel &&
+    fiche.enDeveloppement === undefined && !fiche.siteEtat && !fiche.etudeResume
   ) {
     return null
   }

@@ -27,6 +27,12 @@ function adminTexte(r: boolean | undefined): string | null {
   return null;
 }
 
+const SITE_LABEL: Record<"pro" | "bancal" | "aucun", string> = {
+  pro: "Site propre et pro",
+  bancal: "Site bancal / à refaire",
+  aucun: "Pas de site",
+};
+
 const inputCls =
   "w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 transition";
 const labelCls = "block text-xs font-medium text-gray-600 mb-1";
@@ -61,6 +67,11 @@ export default function EtudeModal({
     prospect.responsableAdmin === true ? "oui" : prospect.responsableAdmin === false ? "non" : "",
   );
   const [angleM, setAngleM] = useState<"" | "surcharge" | "circulation" | "inconnu">(prospect.angle ?? "");
+  const [effectifReelM, setEffectifReelM] = useState(prospect.effectifReel ?? "");
+  const [devM, setDevM] = useState<"" | "oui" | "non">(
+    prospect.enDeveloppement === true ? "oui" : prospect.enDeveloppement === false ? "non" : "",
+  );
+  const [siteM, setSiteM] = useState<"" | "pro" | "bancal" | "aucun">(prospect.siteEtat ?? "");
   const [resumeM, setResumeM] = useState(prospect.etudeResume ?? "");
 
   const prompt = construirePromptRecherche(prospect);
@@ -116,6 +127,9 @@ export default function EtudeModal({
         aLogiciel: logicielM === "oui" ? true : logicielM === "non" ? false : null,
         logicielActuel: logicielM === "oui" ? logicielNomM.trim() || null : null,
         responsableAdmin: adminM === "oui" ? true : adminM === "non" ? false : null,
+        effectifReel: effectifReelM.trim() || null,
+        enDeveloppement: devM === "oui" ? true : devM === "non" ? false : null,
+        siteEtat: siteM || null,
       });
       onToast("Infos enregistrées sur la fiche.");
       onClose();
@@ -170,6 +184,9 @@ export default function EtudeModal({
             {prospect.angle && <div>🎯 Angle : {ANGLE_LABEL[prospect.angle]}</div>}
             {logDeja && <div>🧩 {logDeja}</div>}
             {adminDeja && <div>🗂️ {adminDeja}</div>}
+            {prospect.effectifReel && <div>👷 {prospect.effectifReel} salariés (réel)</div>}
+            {prospect.enDeveloppement === true && <div>📈 En développement</div>}
+            {prospect.siteEtat && <div>🌐 {SITE_LABEL[prospect.siteEtat]}</div>}
             {prospect.etudeResume && (
               <div className="whitespace-pre-wrap text-emerald-700">{prospect.etudeResume}</div>
             )}
@@ -243,6 +260,15 @@ export default function EtudeModal({
                 )}
                 {adminFiche && (
                   <div><span className="text-gray-400">Admin :</span> {adminFiche}</div>
+                )}
+                {fiche.effectifReel && (
+                  <div><span className="text-gray-400">Effectif réel :</span> {fiche.effectifReel}</div>
+                )}
+                {fiche.enDeveloppement === true && (
+                  <div><span className="text-gray-400">Développement :</span> en croissance</div>
+                )}
+                {fiche.siteEtat && (
+                  <div><span className="text-gray-400">Site :</span> {SITE_LABEL[fiche.siteEtat]}</div>
                 )}
                 {fiche.etudeResume && (
                   <div className="whitespace-pre-wrap">
@@ -330,13 +356,44 @@ export default function EtudeModal({
               )}
             </div>
 
-            <div className="sm:w-1/2 sm:pr-1.5">
-              <label className={labelCls}>Responsable administratif dédié ?</label>
-              <select value={adminM} onChange={(e) => setAdminM(e.target.value as typeof adminM)} className={inputCls}>
-                <option value="">On ne sait pas</option>
-                <option value="oui">Oui, une personne dédiée</option>
-                <option value="non">Non, le dirigeant gère tout</option>
-              </select>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Responsable administratif dédié ?</label>
+                <select value={adminM} onChange={(e) => setAdminM(e.target.value as typeof adminM)} className={inputCls}>
+                  <option value="">On ne sait pas</option>
+                  <option value="oui">Oui, une personne dédiée</option>
+                  <option value="non">Non, le dirigeant gère tout</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>En développement ?</label>
+                <select value={devM} onChange={(e) => setDevM(e.target.value as typeof devM)} className={inputCls}>
+                  <option value="">On ne sait pas</option>
+                  <option value="oui">Oui (recrutement, CA↑, rachat récent…)</option>
+                  <option value="non">Non, rien de notable</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Nombre de salariés réel</label>
+                <input
+                  value={effectifReelM}
+                  onChange={(e) => setEffectifReelM(e.target.value)}
+                  placeholder="Ex : 8"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>État du site web</label>
+                <select value={siteM} onChange={(e) => setSiteM(e.target.value as typeof siteM)} className={inputCls}>
+                  <option value="">On ne sait pas</option>
+                  <option value="pro">Propre et pro</option>
+                  <option value="bancal">Bancal / à refaire</option>
+                  <option value="aucun">Pas de site</option>
+                </select>
+              </div>
             </div>
 
             <div>

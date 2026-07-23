@@ -1356,6 +1356,12 @@ export interface Prospect {
    * différents) — inutile de contacter les deux. Recoupé aussi par le `dirigeant`.
    */
   groupe?: string
+  /** Nombre de salariés RÉEL trouvé par l'étude (texte libre : « 8 », « ~12 »…). */
+  effectifReel?: string
+  /** En plein développement (recrutement, CA en hausse, rachat/reprise récente…) — signal fort. */
+  enDeveloppement?: boolean
+  /** État du site web selon l'étude : 'pro' (propre), 'bancal' (à moitié fait/à l'abandon), 'aucun'. */
+  siteEtat?: 'pro' | 'bancal' | 'aucun'
   /** Fiche factuelle compilée depuis l'étude (effectif réel, organisation, site, avis…). */
   etudeResume?: string
   /** Date de la dernière étude enregistrée sur la fiche. */
