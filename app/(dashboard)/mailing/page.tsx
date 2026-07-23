@@ -100,6 +100,17 @@ function etatLogiciel(p: Prospect): "oui" | "non" | "inconnu" {
   return "inconnu";
 }
 
+/** Où en est la recherche/étude d'un prospect (prioritaire : étudié > lancé > rien). */
+function etatEtude(p: Prospect): "etudie" | "lance" | "rien" {
+  if (
+    p.etudeAt || p.dirigeant || p.personnalisation || p.etudeResume ||
+    p.aLogiciel !== undefined || p.responsableAdmin !== undefined ||
+    p.enDeveloppement !== undefined || p.siteEtat || p.effectifReel || p.angle || p.groupe
+  ) return "etudie";
+  if (p.promptLanceAt) return "lance";
+  return "rien";
+}
+
 /**
  * Compteurs des onglets, mémorisés d'une visite à l'autre.
  * Les listeners Firestore mettent un instant à répondre : sans ce cache, les
@@ -173,6 +184,8 @@ export default function MailingPage() {
   const [filtreDev, setFiltreDev] = useState<"tous" | "oui" | "non">("tous");
   const [filtreSite, setFiltreSite] = useState<"tous" | "pro" | "bancal" | "aucun">("tous");
   const [filtreAngle, setFiltreAngle] = useState<"tous" | "surcharge" | "circulation">("tous");
+  const [filtreLie, setFiltreLie] = useState(false);
+  const [filtreEtude, setFiltreEtude] = useState<"tous" | "etudie" | "lance" | "rien">("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
   const [aDesenrichir, setADesenrichir] = useState<Prospect | null>(null);
@@ -323,6 +336,8 @@ export default function MailingPage() {
     (filtreDev !== "tous" ? 1 : 0) +
     (filtreSite !== "tous" ? 1 : 0) +
     (filtreAngle !== "tous" ? 1 : 0) +
+    (filtreLie ? 1 : 0) +
+    (filtreEtude !== "tous" ? 1 : 0) +
     (rayon.rayon !== null ? 1 : 0) +
     (recherche.trim() ? 1 : 0);
 
@@ -340,11 +355,41 @@ export default function MailingPage() {
     setFiltreDev("tous");
     setFiltreSite("tous");
     setFiltreAngle("tous");
+    setFiltreLie(false);
+    setFiltreEtude("tous");
     setRecherche("");
     // Le rayon est remis à « partout », mais le code postal de référence et les
     // communes déjà chargées restent : les recharger n'aurait aucun intérêt.
     rayon.setRayon(null);
   };
+
+  // Prospects LIÉS : même dirigeant OU même groupe/holding (souvent sur des kits
+  // métier différents) → inutile de contacter les deux. id → sociétés liées.
+  // Calculé AVANT `listeFiltree` car le filtre « liés » s'appuie dessus.
+  const liensGroupe = useMemo(() => {
+    const norm = (s?: string) => (s ?? "").trim().toLowerCase();
+    const parCle = new Map<string, Prospect[]>();
+    const push = (cle: string, p: Prospect) => {
+      const arr = parCle.get(cle);
+      if (arr) arr.push(p); else parCle.set(cle, [p]);
+    };
+    for (const p of prospects) {
+      const d = norm(p.dirigeant);
+      if (d) push("d:" + d, p);
+      const g = norm(p.groupe);
+      if (g && g !== "aucun") push("g:" + g, p);
+    }
+    const rel = new Map<string, Set<string>>();
+    for (const arr of parCle.values()) {
+      if (arr.length < 2) continue;
+      for (const p of arr) {
+        const set = rel.get(p.id) ?? new Set<string>();
+        for (const o of arr) if (o.id !== p.id) set.add(o.societe);
+        rel.set(p.id, set);
+      }
+    }
+    return rel;
+  }, [prospects]);
 
   const listeFiltree = useMemo(() => {
     const q = recherche.trim().toLowerCase();
@@ -371,6 +416,8 @@ export default function MailingPage() {
       if (filtreDev === "non" && p.enDeveloppement !== false) return false;
       if (filtreSite !== "tous" && p.siteEtat !== filtreSite) return false;
       if (filtreAngle !== "tous" && p.angle !== filtreAngle) return false;
+      if (filtreLie && !liensGroupe.has(p.id)) return false;
+      if (filtreEtude !== "tous" && etatEtude(p) !== filtreEtude) return false;
       if (!rayon.dansRayon(p)) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
@@ -380,34 +427,7 @@ export default function MailingPage() {
     return rayon.rayon === null
       ? liste
       : [...liste].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9));
-  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, filtreLogiciel, filtreAdmin, filtreDev, filtreSite, filtreAngle, recherche, rayon]);
-
-  // Prospects LIÉS : même dirigeant OU même groupe/holding (souvent sur des kits
-  // métier différents) → inutile de contacter les deux. id → sociétés liées.
-  const liensGroupe = useMemo(() => {
-    const norm = (s?: string) => (s ?? "").trim().toLowerCase();
-    const parCle = new Map<string, Prospect[]>();
-    const push = (cle: string, p: Prospect) => {
-      const arr = parCle.get(cle);
-      if (arr) arr.push(p); else parCle.set(cle, [p]);
-    };
-    for (const p of prospects) {
-      const d = norm(p.dirigeant);
-      if (d) push("d:" + d, p);
-      const g = norm(p.groupe);
-      if (g && g !== "aucun") push("g:" + g, p);
-    }
-    const rel = new Map<string, Set<string>>();
-    for (const arr of parCle.values()) {
-      if (arr.length < 2) continue;
-      for (const p of arr) {
-        const set = rel.get(p.id) ?? new Set<string>();
-        for (const o of arr) if (o.id !== p.id) set.add(o.societe);
-        rel.set(p.id, set);
-      }
-    }
-    return rel;
-  }, [prospects]);
+  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, filtreEmail, filtreLogiciel, filtreAdmin, filtreDev, filtreSite, filtreAngle, filtreLie, filtreEtude, liensGroupe, recherche, rayon]);
 
   const basculerSelection = (id: string) => {
     setSelection((s) => {
@@ -959,7 +979,7 @@ export default function MailingPage() {
                   <Chip
                     actif={filtreAdmin === "oui"}
                     onClick={() => setFiltreAdmin(filtreAdmin === "oui" ? "tous" : "oui")}
-                    label="💼 Admin dédié"
+                    label="💼 Resp Admin dédié"
                     nombre={adminOui}
                     attenue={adminOui === 0}
                   />
@@ -1010,6 +1030,48 @@ export default function MailingPage() {
                     label="🎯 Circulation"
                     nombre={circ}
                     attenue={circ === 0}
+                  />
+                  <Chip
+                    actif={filtreLie}
+                    onClick={() => setFiltreLie((v) => !v)}
+                    label="👥 Liés (groupe)"
+                    nombre={liensGroupe.size}
+                    attenue={liensGroupe.size === 0}
+                  />
+                </>
+              );
+            })()}
+          </div>
+
+          {/* État de la recherche : rien fait / prompt lancé / infos récupérées. */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(() => {
+              const etudie = prospects.filter((p) => etatEtude(p) === "etudie").length;
+              const lance = prospects.filter((p) => etatEtude(p) === "lance").length;
+              const rien = prospects.filter((p) => etatEtude(p) === "rien").length;
+              return (
+                <>
+                  <Chip actif={filtreEtude === "tous"} onClick={() => setFiltreEtude("tous")} label="Recherche : toutes" />
+                  <Chip
+                    actif={filtreEtude === "etudie"}
+                    onClick={() => setFiltreEtude("etudie")}
+                    label="✨ Infos récupérées"
+                    nombre={etudie}
+                    attenue={etudie === 0}
+                  />
+                  <Chip
+                    actif={filtreEtude === "lance"}
+                    onClick={() => setFiltreEtude("lance")}
+                    label="Prompt lancé"
+                    nombre={lance}
+                    attenue={lance === 0}
+                  />
+                  <Chip
+                    actif={filtreEtude === "rien"}
+                    onClick={() => setFiltreEtude("rien")}
+                    label="Rien fait"
+                    nombre={rien}
+                    attenue={rien === 0}
                   />
                 </>
               );
@@ -1236,7 +1298,7 @@ export default function MailingPage() {
                             className="px-2 py-0.5 rounded-full text-[11px] bg-indigo-100 text-indigo-800 font-medium border border-indigo-200"
                             title="Une personne dédiée à l'administratif/gestion — signal fort"
                           >
-                            💼 Admin dédié
+                            💼 Resp Admin dédié
                           </span>
                         )}
                         {p.enDeveloppement === true && (
@@ -1318,10 +1380,10 @@ export default function MailingPage() {
                           const liste = [...lies];
                           return (
                             <span
-                              className="px-2 py-0.5 rounded-full text-[11px] bg-orange-100 text-orange-700 font-medium"
+                              className="px-2 py-0.5 rounded-full text-[11px] bg-orange-100 text-orange-700 font-medium max-w-[16rem] truncate"
                               title={`Même groupe/dirigeant que : ${liste.join(", ")} — inutile de contacter les deux`}
                             >
-                              👥 lié{liste.length > 1 ? ` ×${liste.length}` : ""}
+                              👥 lié à {liste[0]}{liste.length > 1 ? ` +${liste.length - 1}` : ""}
                             </span>
                           );
                         })()}
@@ -1472,6 +1534,19 @@ export default function MailingPage() {
                             <span className="text-gray-400"> · jamais contacté</span>
                           )}
                         </div>
+
+                        {/* Sociétés liées (même dirigeant / même groupe). */}
+                        {(() => {
+                          const lies = liensGroupe.get(p.id);
+                          if (!lies || lies.size === 0) return null;
+                          return (
+                            <div className="text-[11px] rounded-lg bg-orange-50 border border-orange-100 px-2.5 py-1.5">
+                              <span className="text-orange-700 font-medium">👥 Lié à</span>{" "}
+                              <span className="text-gray-700">{[...lies].join(", ")}</span>
+                              <span className="text-gray-400"> — inutile de contacter les deux</span>
+                            </div>
+                          );
+                        })()}
 
                         {/* Étude IA enregistrée sur la fiche. */}
                         {(p.dirigeant || p.personnalisation || p.angle || p.etudeResume) && (
