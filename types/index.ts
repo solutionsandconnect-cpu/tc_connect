@@ -1327,6 +1327,8 @@ export interface Prospect {
   /** Nom du logiciel déjà en place — renseigné avec le statut 'a_un_logiciel'. */
   logicielActuel?: string
   // ── Étude préalable (résultat du prompt IA, collé dans l'app) ──────────────
+  /** Nom du dirigeant à qui écrire, issu de l'étude. */
+  dirigeant?: string
   /** Phrase de personnalisation issue de l'étude — pré-remplit le composeur. */
   personnalisation?: string
   /**

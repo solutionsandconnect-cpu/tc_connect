@@ -612,6 +612,7 @@ export const enregistrerEtude = async (
   prospect: Prospect,
   fiche: {
     personnalisation?: string
+    dirigeant?: string
     angle?: 'surcharge' | 'circulation' | 'inconnu'
     logicielActuel?: string
     etudeResume?: string

@@ -1024,7 +1024,7 @@ export default function MailingPage() {
                             société cessée
                           </span>
                         )}
-                        {p.promptLanceAt && !(p.etudeAt || p.personnalisation || p.etudeResume) && (
+                        {p.promptLanceAt && !(p.etudeAt || p.dirigeant || p.personnalisation || p.etudeResume) && (
                           <span
                             className="px-2 py-0.5 rounded-full text-[11px] bg-amber-100 text-amber-700"
                             title={`Prompt lancé le ${p.promptLanceAt.toDate().toLocaleDateString("fr-FR")} — résultat pas encore collé`}
@@ -1106,7 +1106,7 @@ export default function MailingPage() {
                       </button>
                     )}
                     {(() => {
-                      const etudie = !!(p.etudeAt || p.personnalisation || p.etudeResume);
+                      const etudie = !!(p.etudeAt || p.dirigeant || p.personnalisation || p.etudeResume);
                       const lance = !!p.promptLanceAt;
                       const cls = etudie
                         ? "text-violet-600 bg-violet-50 hover:bg-violet-100"
@@ -1181,10 +1181,13 @@ export default function MailingPage() {
                         </div>
 
                         {/* Étude IA enregistrée sur la fiche. */}
-                        {(p.personnalisation || p.angle || p.etudeResume) && (
+                        {(p.dirigeant || p.personnalisation || p.angle || p.etudeResume) && (
                           <div className="text-[11px] rounded-lg bg-violet-50 border border-violet-100 px-2.5 py-1.5 space-y-0.5">
                             <span className="text-violet-700 font-medium">Étude</span>
                             {p.etudeAt && <span className="text-gray-400"> · {fmtDateHeure(p.etudeAt)}</span>}
+                            {p.dirigeant && (
+                              <div className="text-gray-700">👤 {p.dirigeant}</div>
+                            )}
                             {p.personnalisation && (
                               <div className="text-gray-700">✍ {p.personnalisation}</div>
                             )}

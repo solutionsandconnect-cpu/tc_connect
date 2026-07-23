@@ -32,7 +32,7 @@ export default function EtudeModal({
 
   const prompt = construirePromptRecherche(prospect);
   const fiche = useMemo(() => parserFicheEtude(texte), [texte]);
-  const dejaEtudie = !!(prospect.etudeAt || prospect.personnalisation || prospect.etudeResume);
+  const dejaEtudie = !!(prospect.etudeAt || prospect.dirigeant || prospect.personnalisation || prospect.etudeResume);
 
   // Marquer « prompt lancé » — optimiste côté UI, best-effort côté base.
   const marquerLance = async (lance: boolean) => {
@@ -105,6 +105,7 @@ export default function EtudeModal({
         {dejaEtudie && (
           <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2 text-xs text-emerald-800 space-y-0.5">
             <div className="font-medium">Déjà étudié — ce qui est enregistré :</div>
+            {prospect.dirigeant && <div>👤 Dirigeant : {prospect.dirigeant}</div>}
             {prospect.personnalisation && <div>✍ {prospect.personnalisation}</div>}
             {prospect.angle && <div>🎯 Angle : {ANGLE_LABEL[prospect.angle]}</div>}
             {prospect.logicielActuel && <div>🧩 Logiciel : {prospect.logicielActuel}</div>}
@@ -162,6 +163,9 @@ export default function EtudeModal({
             {fiche && (
               <div className="rounded-lg border px-3 py-2 text-xs space-y-1 bg-gray-50">
                 <div className="font-medium text-gray-700">Aperçu — sera enregistré sur la fiche :</div>
+                {fiche.dirigeant && (
+                  <div><span className="text-gray-400">Dirigeant :</span> {fiche.dirigeant}</div>
+                )}
                 {fiche.personnalisation && (
                   <div><span className="text-gray-400">Personnalisation :</span> {fiche.personnalisation}</div>
                 )}

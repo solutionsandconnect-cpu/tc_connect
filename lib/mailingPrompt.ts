@@ -68,25 +68,30 @@ CE QUE JE VEUX EN SORTIE
   Mais dès qu'il y a un bureau et quelqu'un dont c'est le métier de planifier, cet angle tombe à plat : cette entreprise a déjà réglé le problème de la surcharge, elle a un problème de CIRCULATION DE L'INFORMATION — le planning fait au bureau que le chantier ne voit pas, les heures reconstituées en fin de mois sur des feuilles papier, le coût réel d'un chantier connu une fois qu'il est terminé.
   Dis-moi donc lequel des deux angles colle à CETTE entreprise, et sur quel élément factuel tu t'appuies pour le dire. Si tu n'as pas assez d'éléments sur son organisation, dis « je ne sais pas » : je partirai sur l'angle par défaut, qui est le bon dans le doute.
 
-- Une section « PHRASE DE PERSONNALISATION » : UNE seule phrase, factuelle et vérifiable, que je pourrai mettre en tête de mon mail pour montrer que je me suis renseigné. Pas de flatterie, pas de superlatif, rien d'inventé.
-- Si rien de solide ne ressort, écris « aucune phrase fiable possible » — je préfère ça à une phrase creuse.
-
-- ENFIN, tout à la fin de ta réponse, ajoute un BLOC RÉCAPITULATIF que je vais copier-coller tel quel dans mon logiciel pour remplir la fiche automatiquement. Respecte EXACTEMENT ce format : les deux délimiteurs chacun sur leur propre ligne, une clé par ligne, et chaque valeur tenant sur UNE SEULE ligne (condense si besoin, ne va jamais à la ligne à l'intérieur d'une valeur). N'écris rien après le bloc. Si une information est inconnue, mets « inconnu » (ou « aucun » pour logiciel/site/avis). Pour "angle", n'écris qu'un seul mot : surcharge, circulation ou inconnu.
+- ENFIN, tout à la fin de ta réponse, ajoute un BLOC RÉCAPITULATIF que je vais copier-coller tel quel dans mon logiciel pour remplir la fiche automatiquement. Respecte EXACTEMENT ce format : les deux délimiteurs chacun sur leur propre ligne, une clé par ligne, et chaque valeur tenant sur UNE SEULE ligne (condense si besoin, ne va JAMAIS à la ligne à l'intérieur d'une valeur — ni tableau, ni puce, ni saut de ligne). N'écris rien après le bloc. Ne reprends dans ce bloc QUE ce que ta fiche a établi plus haut. Si une information est inconnue, mets « inconnu » (ou « aucun » pour logiciel/site/réseaux/certifications). Pour "angle", un seul mot : surcharge, circulation ou inconnu.
 
 ===ENEZO-FICHE===
-personnalisation: <la phrase de personnalisation, ou "aucune">
+dirigeant: <nom de la personne à qui écrire, ou "inconnu">
 angle: <surcharge | circulation | inconnu>
-logiciel: <nom du logiciel de gestion/devis en place, ou "aucun">
 effectif: <ex: 8 personnes dont 6 sur le terrain, ou "inconnu">
-organisation: <ex: le dirigeant gère tout | assistante dédiée au planning | inconnu>
-site: <url du site, ou "aucun">
-avis: <thèmes récurrents des avis clients, ou "aucun">
+organisation: <ex: le dirigeant gère tout | bureau d'études + conduite de travaux + terrain, ou "inconnu">
+anciennete: <année de création et/ou ancienneté, ou "inconnu">
+zone: <zone géographique d'intervention, ou "inconnu">
+specialites: <spécialités et types de chantiers, ou "inconnu">
+croissance: <signes de croissance ou trajectoire récente, ou "inconnu">
+sante: <santé économique SI les comptes sont publiés, sinon "comptes non publiés">
+logiciel: <logiciel de gestion/devis/chantier en place, ou "aucun">
+site: <url du site principal, ou "aucun">
+reseaux: <réseaux sociaux et plateformes d'avis, ou "aucun">
+certifications: <RGE, Qualibat, labels, agréments, ou "aucun">
+avis: <thèmes récurrents des avis clients (surtout délais / devis / communication), ou "aucun">
 resume: <2 ou 3 phrases factuelles résumant l'entreprise, sur une seule ligne>
 ===FIN-FICHE===`
 }
 
 export type FicheEtude = {
   personnalisation?: string
+  dirigeant?: string
   angle?: 'surcharge' | 'circulation' | 'inconnu'
   logicielActuel?: string
   etudeResume?: string
@@ -128,6 +133,9 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   const perso = val('personnalisation')
   if (perso) fiche.personnalisation = perso
 
+  const dirigeant = val('dirigeant')
+  if (dirigeant) fiche.dirigeant = dirigeant
+
   const angleRaw = (paires.get('angle') ?? '').toLowerCase()
   if (angleRaw.includes('surcharge')) fiche.angle = 'surcharge'
   else if (angleRaw.includes('circulation')) fiche.angle = 'circulation'
@@ -136,15 +144,31 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   const logiciel = val('logiciel')
   if (logiciel) fiche.logicielActuel = logiciel
 
+  // Fiche compilée : le résumé d'abord, puis chaque rubrique renseignée. Tout ce
+  // que le bloc ramène est conservé — c'est ce qui manquait avant.
   const lignes: string[] = []
-  const resume = val('resume'); if (resume) lignes.push(resume)
-  const effectif = val('effectif'); if (effectif) lignes.push(`Effectif : ${effectif}`)
-  const orga = val('organisation'); if (orga) lignes.push(`Organisation : ${orga}`)
-  const site = val('site'); if (site) lignes.push(`Site : ${site}`)
-  const avis = val('avis'); if (avis) lignes.push(`Avis : ${avis}`)
+  const ajoute = (cle: string, prefixe: string) => {
+    const v = val(cle)
+    if (v) lignes.push(prefixe ? `${prefixe} : ${v}` : v)
+  }
+  ajoute('resume', '')
+  ajoute('effectif', 'Effectif')
+  ajoute('organisation', 'Organisation')
+  ajoute('anciennete', 'Ancienneté')
+  ajoute('zone', 'Zone')
+  ajoute('specialites', 'Spécialités')
+  ajoute('croissance', 'Croissance')
+  ajoute('sante', 'Santé éco')
+  ajoute('site', 'Site')
+  ajoute('reseaux', 'Réseaux')
+  ajoute('certifications', 'Certifications')
+  ajoute('avis', 'Avis')
   if (lignes.length) fiche.etudeResume = lignes.join('\n')
 
-  if (!fiche.personnalisation && !fiche.angle && !fiche.logicielActuel && !fiche.etudeResume) {
+  if (
+    !fiche.personnalisation && !fiche.dirigeant && !fiche.angle &&
+    !fiche.logicielActuel && !fiche.etudeResume
+  ) {
     return null
   }
   return fiche
