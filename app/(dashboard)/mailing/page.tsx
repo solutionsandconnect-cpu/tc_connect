@@ -1063,9 +1063,9 @@ export default function MailingPage() {
                           if (aLog) return (
                             <span
                               className="px-2 py-0.5 rounded-full text-[11px] bg-purple-50 text-purple-700"
-                              title="Logiciel de gestion déjà en place"
+                              title={p.logicielActuel ? `Logiciel en place : ${p.logicielActuel}` : "A déjà un logiciel de gestion"}
                             >
-                              🧩 {p.logicielActuel || "a un logiciel"}
+                              🧩 {p.logicielActuel || "Logiciel"}
                             </span>
                           );
                           if (sansLog) return (
