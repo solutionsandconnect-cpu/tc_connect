@@ -6,8 +6,9 @@ import { copyText } from "@/lib/clipboard";
 import { enregistrerEnvoi } from "@/lib/mailingService";
 import {
   DELAI_RELANCE_JOURS, MIN_PERSONNALISATION, QUOTA_JOUR, STATUT_LABEL, STATUT_STYLE,
-  doublonSociete, peutContacter,
+  doublonSociete, peutContacter, estPrioritaire,
 } from "@/lib/mailingModel";
+import { StarIcon as StarSolid } from "@heroicons/react/24/solid";
 import { estMailCourt } from "@/lib/mailingRender";
 import { renderMailHtml, renderMailTexte, sujetMail } from "@/lib/mailingRender";
 import { construirePromptRecherche } from "@/lib/mailingPrompt";
@@ -70,6 +71,7 @@ export default function Composeur({
   const [promptCopie, setPromptCopie] = useState(false);
   const [brochureEnCours, setBrochureEnCours] = useState(false);
   const [filtre, setFiltre] = useState<"tous" | "jamais" | "relance">("tous");
+  const [priorosOnly, setPriorosOnly] = useState(false);
   const [filtreEffectif, setFiltreEffectif] = useState<GroupeEffectif | "tous">("tous");
   const [filtreDept, setFiltreDept] = useState<string>("tous");
   const rayon = useRayon(prospects);
@@ -99,6 +101,7 @@ export default function Composeur({
         const dejaContacte = (p.nbEnvois ?? 0) > 0;
         if (filtre === "jamais" && dejaContacte) return false;
         if (filtre === "relance" && !dejaContacte) return false;
+        if (priorosOnly && !estPrioritaire(p)) return false;
         if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
         if (filtreDept !== "tous" && departementDuCp(p.codePostal)?.code !== filtreDept) return false;
         if (!rayon.dansRayon(p)) return false;
@@ -106,7 +109,7 @@ export default function Composeur({
         if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
         return true;
       }),
-    [eligibles, filtre, filtreEffectif, filtreDept, recherche, rayon],
+    [eligibles, filtre, priorosOnly, filtreEffectif, filtreDept, recherche, rayon],
   );
 
   // Rayon actif : les plus proches en tête, pour les traiter en priorité.
@@ -342,6 +345,24 @@ export default function Composeur({
                     {f.l}
                   </button>
                 ))}
+                {(() => {
+                  const nPrio = eligibles.filter(estPrioritaire).length;
+                  return (
+                    <button
+                      onClick={() => setPriorosOnly((v) => !v)}
+                      title="N'afficher que les sociétés à contacter en priorité"
+                      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                        priorosOnly
+                          ? "bg-amber-500 text-white"
+                          : "border hover:bg-amber-50 text-gray-600"
+                      }`}
+                    >
+                      <StarSolid className={`w-3.5 h-3.5 ${priorosOnly ? "text-white" : "text-amber-500"}`} />
+                      Prioritaires
+                      <span className={priorosOnly ? "text-amber-100" : "text-gray-400"}>{nPrio}</span>
+                    </button>
+                  );
+                })()}
               </div>
 
               {/* Ciblage fin dans le kit choisi. Les compteurs portent sur les
@@ -412,6 +433,9 @@ export default function Composeur({
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
+                          {estPrioritaire(p) && (
+                            <StarSolid className="w-3.5 h-3.5 shrink-0 text-amber-500" title="À contacter en priorité" />
+                          )}
                           <span className="text-sm font-medium truncate">{p.societe}</span>
                           <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${STATUT_STYLE[p.statut]}`}>
                             {STATUT_LABEL[p.statut]}

@@ -1349,6 +1349,12 @@ export interface Prospect {
   dernierEnvoiAt?: Timestamp | null
   prochaineRelanceAt?: Timestamp | null
   clientId?: string              // rempli à la promotion vers le CRM
+  /**
+   * Priorité de contact posée À LA MAIN, qui SURCHARGE le score automatique :
+   * 'forcee' = toujours prioritaire, 'exclue' = jamais prioritaire, absent = on
+   * suit le score auto (cf. `evaluerPrioriteAuto`). Voir `estPrioritaire`.
+   */
+  prioriteManuelle?: 'forcee' | 'exclue'
   /** Fiches écartées à la main comme « pas la même société » — ne plus les proposer. */
   doublonsIgnores?: string[]
   notes?: string
@@ -1403,7 +1409,7 @@ export interface MailingEvenement {
   prospectId: string
   societe: string
   metier?: string
-  type: 'statut' | 'envoi' | 'note' | 'promotion' | 'annulation'
+  type: 'statut' | 'envoi' | 'note' | 'promotion' | 'annulation' | 'desinscription'
   statutAvant?: ProspectStatut
   statutApres?: ProspectStatut
   observations?: string

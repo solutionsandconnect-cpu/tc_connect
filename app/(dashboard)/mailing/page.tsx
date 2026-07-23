@@ -7,13 +7,14 @@ import {
   listenMetiers, listenProspects, listenOptouts, listenEvenements, listenLogiciels,
   updateProspect, deleteProspect, ajouterOptout, journaliser,
   modifierNote, supprimerNote, ajouterLogiciel, supprimerLogiciel, detacherDuClient,
-  annulerDernierEnvoi, annulerEnrichissement,
+  annulerDernierEnvoi, annulerEnrichissement, definirPrioriteManuelle,
 } from "@/lib/mailingService";
 import PromotionModal from "@/components/mailing/PromotionModal";
+import EtudeModal from "@/components/mailing/EtudeModal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
 import {
   QUOTA_JOUR, peutContacter, isEmailGenerique, STATUT_LABEL, STATUT_STYLE,
-  aRepondu, contacteDepuis,
+  aRepondu, contacteDepuis, estPrioritaire, evaluerPrioriteAuto,
 } from "@/lib/mailingModel";
 import Modal from "@/components/ui/Modal";
 import {
@@ -37,9 +38,10 @@ import type {
 import {
   ArrowUpTrayIcon, PaperAirplaneIcon, RectangleStackIcon, UsersIcon, TrashIcon, PlusIcon,
   PencilIcon, ClockIcon, ChartBarIcon, ChatBubbleLeftEllipsisIcon, BuildingOffice2Icon,
-  ArrowUturnLeftIcon, Square2StackIcon,
+  ArrowUturnLeftIcon, Square2StackIcon, StarIcon, SparklesIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/24/outline";
+import { StarIcon as StarSolid } from "@heroicons/react/24/solid";
 
 type Onglet = "prospects" | "kits" | "composer" | "suivi";
 
@@ -50,6 +52,7 @@ const EVT_LABEL: Record<MailingEvenement["type"], string> = {
   note: "NOTE",
   promotion: "CLIENT",
   annulation: "ANNULÉ",
+  desinscription: "DÉSINSCRIT",
 };
 
 function Chip({
@@ -87,6 +90,7 @@ const EVT_STYLE: Record<MailingEvenement["type"], string> = {
   note: "bg-amber-100 text-amber-800",
   promotion: "bg-green-100 text-green-700",
   annulation: "bg-gray-200 text-gray-600",
+  desinscription: "bg-red-100 text-red-700",
 };
 
 /**
@@ -139,6 +143,7 @@ export default function MailingPage() {
   /** Les listeners ont-ils répondu ? Distingue « vide » de « pas encore chargé ». */
   const [charge, setCharge] = useState(false);
   const [aEditer, setAEditer] = useState<Prospect | null>(null);
+  const [aEtudier, setAEtudier] = useState<Prospect | null>(null);
   const [evenements, setEvenements] = useState<MailingEvenement[]>([]);
   const [logiciels, setLogiciels] = useState<MailingLogiciel[]>([]);
   const [statutEnCours, setStatutEnCours] = useState<
@@ -154,6 +159,8 @@ export default function MailingPage() {
   const [filtreDept, setFiltreDept] = useState<string>("tous");
   const [filtreEffectif, setFiltreEffectif] = useState<GroupeEffectif | "tous">("tous");
   const [filtreEtat, setFiltreEtat] = useState<"tous" | "actives" | "cessees">("tous");
+  const [filtrePriorite, setFiltrePriorite] =
+    useState<"tous" | "prio" | "auto" | "manuel" | "exclu">("tous");
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [aDesenvoyer, setADesenvoyer] = useState<Prospect | null>(null);
   const [aDesenrichir, setADesenrichir] = useState<Prospect | null>(null);
@@ -295,6 +302,7 @@ export default function MailingPage() {
     (filtreDept !== "tous" ? 1 : 0) +
     (filtreEffectif !== "tous" ? 1 : 0) +
     (filtreEtat !== "tous" ? 1 : 0) +
+    (filtrePriorite !== "tous" ? 1 : 0) +
     (rayon.rayon !== null ? 1 : 0) +
     (recherche.trim() ? 1 : 0);
 
@@ -305,6 +313,7 @@ export default function MailingPage() {
     setFiltreDept("tous");
     setFiltreEffectif("tous");
     setFiltreEtat("tous");
+    setFiltrePriorite("tous");
     setRecherche("");
     // Le rayon est remis à « partout », mais le code postal de référence et les
     // communes déjà chargées restent : les recharger n'aurait aucun intérêt.
@@ -324,6 +333,13 @@ export default function MailingPage() {
       if (filtreRegion !== "tous" && d?.region !== filtreRegion) return false;
       if (filtreDept !== "tous" && d?.code !== filtreDept) return false;
       if (filtreEffectif !== "tous" && groupeEffectif(p.effectifCode) !== filtreEffectif) return false;
+      if (filtrePriorite !== "tous") {
+        const prio = estPrioritaire(p);
+        if (filtrePriorite === "prio" && !prio) return false;
+        if (filtrePriorite === "auto" && !(prio && !p.prioriteManuelle)) return false;
+        if (filtrePriorite === "manuel" && p.prioriteManuelle !== "forcee") return false;
+        if (filtrePriorite === "exclu" && p.prioriteManuelle !== "exclue") return false;
+      }
       if (!rayon.dansRayon(p)) return false;
       if (q && !`${p.societe} ${p.email} ${p.ville ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
@@ -333,7 +349,7 @@ export default function MailingPage() {
     return rayon.rayon === null
       ? liste
       : [...liste].sort((a, b) => (rayon.distance(a) ?? 1e9) - (rayon.distance(b) ?? 1e9));
-  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, recherche, rayon]);
+  }, [prospects, filtreStatut, filtreMetier, filtreRegion, filtreDept, filtreEffectif, filtreEtat, filtrePriorite, recherche, rayon]);
 
   const basculerSelection = (id: string) => {
     setSelection((s) => {
@@ -341,6 +357,20 @@ export default function MailingPage() {
       if (n.has(id)) n.delete(id); else n.add(id);
       return n;
     });
+  };
+
+  // Étoile de priorité : un clic bascule la priorité EFFECTIVE. Si la cible
+  // rejoint ce que dit déjà l'auto, on efface la surcharge (retour à l'automatique)
+  // plutôt que de figer une valeur redondante.
+  const basculerPriorite = async (p: Prospect) => {
+    const auto = evaluerPrioriteAuto(p).auto;
+    const cible = !estPrioritaire(p);
+    const valeur = cible === auto ? null : cible ? "forcee" : "exclue";
+    try {
+      await definirPrioriteManuelle(p.id, valeur);
+    } catch {
+      notifier("La priorité n'a pas pu être enregistrée.");
+    }
   };
 
   const selectionnes = listeFiltree.filter((p) => selection.has(p.id));
@@ -765,6 +795,49 @@ export default function MailingPage() {
             })}
           </div>
 
+          {/* Priorité : effective, puis par source (auto / forcée / exclue). */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(() => {
+              const prios = prospects.filter((p) => estPrioritaire(p));
+              const nAuto = prios.filter((p) => !p.prioriteManuelle).length;
+              const nManuel = prospects.filter((p) => p.prioriteManuelle === "forcee").length;
+              const nExclu = prospects.filter((p) => p.prioriteManuelle === "exclue").length;
+              return (
+                <>
+                  <Chip actif={filtrePriorite === "tous"} onClick={() => setFiltrePriorite("tous")} label="Toutes priorités" />
+                  <Chip
+                    actif={filtrePriorite === "prio"}
+                    onClick={() => setFiltrePriorite("prio")}
+                    label="★ Prioritaires"
+                    nombre={prios.length}
+                    attenue={prios.length === 0}
+                  />
+                  <Chip
+                    actif={filtrePriorite === "auto"}
+                    onClick={() => setFiltrePriorite("auto")}
+                    label="Auto"
+                    nombre={nAuto}
+                    attenue={nAuto === 0}
+                  />
+                  <Chip
+                    actif={filtrePriorite === "manuel"}
+                    onClick={() => setFiltrePriorite("manuel")}
+                    label="Forcées (manuel)"
+                    nombre={nManuel}
+                    attenue={nManuel === 0}
+                  />
+                  <Chip
+                    actif={filtrePriorite === "exclu"}
+                    onClick={() => setFiltrePriorite("exclu")}
+                    label="Exclues (manuel)"
+                    nombre={nExclu}
+                    attenue={nExclu === 0}
+                  />
+                </>
+              );
+            })()}
+          </div>
+
           {/* Barre d'actions groupées : n'apparaît qu'une fois une sélection
               faite, pour ne pas encombrer la vue de lecture. */}
           {selectionnes.length > 0 && (
@@ -879,6 +952,52 @@ export default function MailingPage() {
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {(() => {
+                          const prio = estPrioritaire(p);
+                          const ev = evaluerPrioriteAuto(p);
+                          const forced = p.prioriteManuelle === "forcee";
+                          const excluded = p.prioriteManuelle === "exclue";
+                          const source = forced
+                            ? "forcé à la main"
+                            : excluded
+                              ? "exclu à la main"
+                              : `auto ${ev.score}/${ev.max}`;
+                          const detail = prio
+                            ? ev.raisons.length ? ` — ${ev.raisons.join(", ")}` : ""
+                            : ev.manques.length ? ` — manque : ${ev.manques.join(", ")}` : "";
+                          // Pastille de SOURCE : d'où vient la priorité effective.
+                          const pastille = forced
+                            ? { txt: "manuel", cls: "bg-amber-200 text-amber-900" }
+                            : excluded
+                              ? { txt: "exclu", cls: "bg-gray-200 text-gray-600" }
+                              : prio
+                                ? { txt: "auto", cls: "bg-amber-100 text-amber-700" }
+                                : null;
+                          return (
+                            <>
+                              <button
+                                onClick={() => basculerPriorite(p)}
+                                className={`shrink-0 p-0.5 rounded transition ${
+                                  prio
+                                    ? "text-amber-500 hover:bg-amber-50"
+                                    : "text-gray-300 hover:text-amber-500 hover:bg-amber-50"
+                                }`}
+                                title={`${prio ? "Prioritaire" : "Non prioritaire"} (${source})${detail}. Cliquer pour ${prio ? "retirer" : "mettre"} la priorité.`}
+                                aria-label={prio ? "Retirer la priorité" : "Mettre en priorité"}
+                              >
+                                {prio ? <StarSolid className="w-4 h-4" /> : <StarIcon className="w-4 h-4" />}
+                              </button>
+                              {pastille && (
+                                <span
+                                  className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${pastille.cls}`}
+                                  title={`Priorité : ${source}${detail}`}
+                                >
+                                  {pastille.txt}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                         <span className="font-medium text-sm truncate">{p.societe}</span>
                         <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUT_STYLE[p.statut]}`}>
                           {STATUT_LABEL[p.statut]}
@@ -979,6 +1098,13 @@ export default function MailingPage() {
                         <ArrowUturnLeftIcon className="w-4 h-4" />
                       </button>
                     )}
+                    <button
+                      onClick={() => setAEtudier(p)}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition"
+                      title="Étudier cette entreprise (prompt de recherche IA)"
+                    >
+                      <SparklesIcon className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => setStatutEnCours({ prospect: p })}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition"
@@ -1508,6 +1634,14 @@ export default function MailingPage() {
           existants={prospects}
           optouts={optouts}
           onClose={() => setImportOuvert(false)}
+          onToast={notifier}
+        />
+      )}
+
+      {aEtudier && (
+        <EtudeModal
+          prospect={aEtudier}
+          onClose={() => setAEtudier(null)}
           onToast={notifier}
         />
       )}

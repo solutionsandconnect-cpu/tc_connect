@@ -22,6 +22,7 @@ const TYPE_LABEL: Record<MailingEvenement["type"], string> = {
   note: "Note",
   promotion: "Promotion",
   annulation: "Envoi annulé",
+  desinscription: "Désinscription",
 };
 
 function fmtDate(ts?: { toDate: () => Date }): string {

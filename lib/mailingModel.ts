@@ -1,7 +1,7 @@
 // Mailing — règles métier pures (aucune dépendance Firestore/React).
 // Partagé entre le client (import, composeur) et le serveur (désinscription).
 
-import { estCessee } from '@/lib/sirene'
+import { estCessee, groupeEffectif } from '@/lib/sirene'
 import type { MailingMetier, MailingSection, Prospect, ProspectStatut } from '@/types'
 
 /* ------------------------------------------------------------------ */
@@ -66,13 +66,94 @@ export const STATUT_STYLE: Record<ProspectStatut, string> = {
  * c'est sa capacité à faire réagir, pas le taux de vente. C'est aussi ce qui
  * distingue un message ignoré d'un message lu et refusé, deux problèmes très
  * différents à corriger.
+ *
+ * `oppose` (désinscription) en fait partie AUSSI : cliquer « me retirer de la
+ * liste » est la preuve la plus forte que le mail a été ouvert, lu, et qu'il a
+ * fait réagir — négativement, mais réagir. La cohorte étant filtrée sur les
+ * prospects RÉELLEMENT contactés (`nbEnvois > 0`), une opposition posée à la
+ * main sur un contact jamais démarché ne fausse pas la mesure.
  */
 export const STATUTS_AVEC_REPONSE: ProspectStatut[] = [
-  'repondu', 'interesse', 'converti', 'pas_interesse', 'a_un_logiciel',
+  'repondu', 'interesse', 'converti', 'pas_interesse', 'a_un_logiciel', 'oppose',
 ]
 
 export function aRepondu(p: Prospect): boolean {
   return STATUTS_AVEC_REPONSE.includes(p.statut)
+}
+
+/* ------------------------------------------------------------------ */
+/* Priorité de contact                                                 */
+/* ------------------------------------------------------------------ */
+
+export type EvalPriorite = {
+  /** Prioritaire selon le SEUL score automatique (avant surcharge manuelle). */
+  auto: boolean
+  score: number
+  max: number
+  /** Critères REMPLIS, en clair — pour l'infobulle. */
+  raisons: string[]
+  /** Critères manquants, en clair — pour expliquer pourquoi ce n'est pas prioritaire. */
+  manques: string[]
+}
+
+/** Au-delà de ce score (sur `max`), un prospect est jugé prioritaire par l'auto. */
+export const SEUIL_PRIORITE_AUTO = 3
+
+/**
+ * Score AUTOMATIQUE de priorité de contact — volontairement TRANSPARENT et
+ * ajustable (chaque critère est une ligne, pas un poids caché). Il ne s'appuie
+ * que sur des données SYNCHRONES de la fiche (pas de calcul de distance, qui est
+ * asynchrone et vit côté UI).
+ *
+ * Prérequis dur : être JOIGNABLE (email valide). Un prospect qu'on ne peut pas
+ * contacter n'est jamais « à contacter en priorité » — score 0.
+ *
+ * Les critères visent le profil le plus rentable pour de la prospection locale :
+ * une petite entreprise vivante, à taille où le patron décide encore vite, jamais
+ * contactée, joignable sur une adresse nominative. À faire évoluer avec le retour
+ * terrain — c'est une PREMIÈRE grille, pas une vérité.
+ */
+export function evaluerPrioriteAuto(p: Prospect): EvalPriorite {
+  const raisons: string[] = []
+  const manques: string[] = []
+  const norm = normalizeEmail(p.email ?? '')
+  const joignable = !!norm && isEmailValide(norm)
+
+  // Chaque critère : +1, et on trace pourquoi (rempli ou manquant).
+  const crit = (ok: boolean, siOui: string, siNon: string) => {
+    if (ok) raisons.push(siOui)
+    else manques.push(siNon)
+    return ok ? 1 : 0
+  }
+
+  const max = 4
+  if (!joignable) {
+    manques.push('pas d’adresse email valide (injoignable)')
+    return { auto: false, score: 0, max, raisons, manques }
+  }
+
+  let score = 0
+  score += crit(!isEmailGenerique(norm), 'adresse nominative', 'adresse générique (contact@, info@…)')
+  score += crit(
+    !!p.siret && !estCessee(p.etatEntreprise),
+    'entreprise enrichie et active',
+    'entreprise non enrichie ou cessée',
+  )
+  const g = groupeEffectif(p.effectifCode)
+  score += crit(g === 'micro' || g === 'petite', 'taille cible (1 à 19 salariés)', 'taille hors cible ou inconnue')
+  score += crit((p.nbEnvois ?? 0) === 0, 'jamais contacté', 'déjà contacté')
+
+  return { auto: score >= SEUIL_PRIORITE_AUTO, score, max, raisons, manques }
+}
+
+/**
+ * Priorité EFFECTIVE = surcharge manuelle si présente, sinon score auto.
+ * C'est elle que lit le filtre « Prioritaires » du composeur.
+ */
+export function estPrioritaire(p: Prospect): boolean {
+  if (p.prioriteManuelle === 'forcee') return true
+  if (p.prioriteManuelle === 'exclue') return false
+  return evaluerPrioriteAuto(p).auto
 }
 
 /**

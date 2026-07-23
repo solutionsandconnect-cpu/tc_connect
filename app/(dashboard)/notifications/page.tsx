@@ -74,6 +74,8 @@ export default function NotificationsPage() {
     SEANCES: 'Séances',
     ACTIVITE: 'Activité',
     ABONNEMENT: 'Abonnement',
+    // Prospection (mailing Enezo)
+    MAILING_DESINSCRIPTION: 'Prospection',
     // Divers
     NOUVEAU_COMPTE: 'Nouveau compte',
     MESSAGERIE: 'Messagerie',
