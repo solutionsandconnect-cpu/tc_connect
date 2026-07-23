@@ -14,6 +14,7 @@
 
 import type { MailingMetier, Prospect } from '@/types'
 import { sectionsPourBrochure, sectionsPourMail } from '@/lib/mailingModel'
+import { publicLinkOrigin } from '@/lib/brand'
 
 const PETROL = '#377587'
 const OR = '#D2A244'
@@ -73,7 +74,11 @@ export function esc(s: unknown): string {
 }
 
 export function lienDesinscription(origin: string, token: string): string {
-  return `${origin.replace(/\/+$/, '')}/desinscription/${token}`
+  // Prospection Enezo : le lien de désinscription part chez de vrais destinataires,
+  // il doit TOUJOURS pointer vers le domaine public de l'app Enezo (`app.enezo.fr`),
+  // jamais vers `localhost` ni le domaine coaching selon d'où le mail a été copié.
+  const base = publicLinkOrigin('enezo', origin)
+  return `${base.replace(/\/+$/, '')}/desinscription/${token}`
 }
 
 /**
