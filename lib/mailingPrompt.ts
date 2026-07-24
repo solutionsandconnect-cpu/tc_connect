@@ -11,6 +11,7 @@
 // fausse est pire que pas de personnalisation du tout.
 
 import { libelleEffectif } from '@/lib/sirene'
+import { ANGLES, ANGLE_IDS } from '@/lib/mailingModel'
 import type { Prospect } from '@/types'
 
 export function construirePromptRecherche(p: Prospect): string {
@@ -64,11 +65,11 @@ RÈGLES STRICTES
 CE QUE JE VEUX EN SORTIE
 - Une fiche courte et factuelle, point par point.
 
-- Une section « ANGLE À PRIVILÉGIER ». Mon message par défaut parle de la SURCHARGE DU DIRIGEANT : le planning refait le soir, le téléphone qui sonne toute la journée depuis les chantiers, le temps qui se perd entre les chantiers plutôt que sur les chantiers. Cet angle porte tant que le patron fait tout lui-même — c'est le cas de la grande majorité des artisans.
-  Mais dès qu'il y a un bureau et quelqu'un dont c'est le métier de planifier, cet angle tombe à plat : cette entreprise a déjà réglé le problème de la surcharge, elle a un problème de CIRCULATION DE L'INFORMATION — le planning fait au bureau que le chantier ne voit pas, les heures reconstituées en fin de mois sur des feuilles papier, le coût réel d'un chantier connu une fois qu'il est terminé.
-  Dis-moi donc lequel des deux angles colle à CETTE entreprise, et sur quel élément factuel tu t'appuies pour le dire. Si tu n'as pas assez d'éléments sur son organisation, dis « je ne sais pas » : je partirai sur l'angle par défaut, qui est le bon dans le doute.
+- Une section « ANGLES À PRIVILÉGIER ». Voici les angles d'accroche dont je dispose. Dis-moi TOUS CEUX QUI COLLENT à cette entreprise — pas un seul : chacun est une cartouche, pour le premier mail ou pour une relance. Classe-les du plus au moins pertinent, et pour CHACUN cite l'élément factuel précis qui te le fait retenir. Écarte explicitement ceux qui ne collent pas, en disant pourquoi (c'est aussi utile).
+${ANGLES.map((a) => `  · ${a.id} — ${a.label} : ${a.quoi}. On le retient quand ${a.indice}.`).join('\n')}
+  Deux angles peuvent parfaitement coexister. Si tu n'as pas assez d'éléments sur son organisation, ne retiens que « surcharge » : c'est le bon dans le doute, la grande majorité des artisans étant des patrons qui font tout eux-mêmes.
 
-- ENFIN, tout à la fin de ta réponse, ajoute un BLOC RÉCAPITULATIF que je vais copier-coller tel quel dans mon logiciel pour remplir la fiche automatiquement. Respecte EXACTEMENT ce format : les deux délimiteurs chacun sur leur propre ligne, une clé par ligne, et chaque valeur tenant sur UNE SEULE ligne (condense si besoin, ne va JAMAIS à la ligne à l'intérieur d'une valeur — ni tableau, ni puce, ni saut de ligne). N'écris rien après le bloc. Ne reprends dans ce bloc QUE ce que ta fiche a établi plus haut. Si une information est inconnue, mets « inconnu » (ou « aucun » pour logiciel/site/réseaux/certifications). Pour "angle", un seul mot : surcharge, circulation ou inconnu.
+- ENFIN, tout à la fin de ta réponse, ajoute un BLOC RÉCAPITULATIF que je vais copier-coller tel quel dans mon logiciel pour remplir la fiche automatiquement. Respecte EXACTEMENT ce format : les deux délimiteurs chacun sur leur propre ligne, une clé par ligne, et chaque valeur tenant sur UNE SEULE ligne (condense si besoin, ne va JAMAIS à la ligne à l'intérieur d'une valeur — ni tableau, ni puce, ni saut de ligne). N'écris rien après le bloc. Ne reprends dans ce bloc QUE ce que ta fiche a établi plus haut. Si une information est inconnue, mets « inconnu » (ou « aucun » pour logiciel/site/réseaux/certifications). Pour "angles", reprends les identifiants retenus SÉPARÉS PAR DES VIRGULES, du plus au moins pertinent (ex : "surcharge, coordination"), ou "inconnu".
 
 ===ENEZO-FICHE===
 dirigeant: <nom de la personne à qui écrire, ou "inconnu">
@@ -76,7 +77,7 @@ email: <adresse email de contact TROUVÉE, idéalement nominative (prenom.nom@�
 dirigeant_age: <âge ou année de naissance du dirigeant si trouvé, ex "43 ans" ou "1981", sinon "inconnu">
 dirigeant_profil: <"jeune" si le dirigeant a moins de ~45 ans (a priori plus réceptif au numérique) ; "senior" s'il a plus de ~55 ans (souvent fin de carrière, moins outillé) ; "inconnu">
 groupe: <nom du groupe/holding si l'entreprise en fait partie (avec d'AUTRES sociétés), sinon "aucun">
-angle: <surcharge | circulation | inconnu>
+angles: <identifiants d'angles retenus, séparés par des virgules, du plus au moins pertinent — parmi : ${ANGLE_IDS.join(', ')} — ou "inconnu">
 effectif: <ex: 8 personnes dont 6 sur le terrain, ou "inconnu">
 effectif_reel: <le NOMBRE de salariés seul si tu l'as trouvé, ex "8" ou "~12", sinon "inconnu">
 developpement: <oui s'il y a des signes NETS de croissance (recrutement en cours, CA en hausse, rachat/reprise récente, nouveaux locaux/agence) ; non sinon ; inconnu>
@@ -104,7 +105,10 @@ export type FicheEtude = {
   dirigeantAge?: string
   dirigeantJeune?: boolean
   groupe?: string
+  /** (legacy) Angle unique — encore renseigné pour les fiches déjà en base */
   angle?: 'surcharge' | 'circulation' | 'inconnu'
+  /** Tous les angles qui collent, du plus au moins pertinent */
+  angles?: string[]
   logicielActuel?: string
   aLogiciel?: boolean
   responsableAdmin?: boolean
@@ -169,10 +173,22 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
   const groupe = val('groupe')
   if (groupe) fiche.groupe = groupe
 
-  const angleRaw = (paires.get('angle') ?? '').toLowerCase()
-  if (angleRaw.includes('surcharge')) fiche.angle = 'surcharge'
-  else if (angleRaw.includes('circulation')) fiche.angle = 'circulation'
-  else if (angleRaw.includes('inconnu')) fiche.angle = 'inconnu'
+  // Angles : liste séparée par des virgules, filtrée sur le catalogue connu (une
+  // valeur inventée par le modèle n'aurait ni libellé ni filtre côté app).
+  // `angle` (mono-valeur) reste renseigné avec le premier, pour les écrans qui
+  // n'ont pas encore basculé et pour les fiches anciennes.
+  const anglesRaw = (paires.get('angles') ?? paires.get('angle') ?? '').toLowerCase()
+  const anglesTrouves = anglesRaw
+    .split(/[,;/]+/)
+    .map((s) => s.trim())
+    .filter((s) => ANGLE_IDS.includes(s))
+  if (anglesTrouves.length) {
+    fiche.angles = Array.from(new Set(anglesTrouves))
+    const premier = fiche.angles[0]
+    if (premier === 'surcharge' || premier === 'circulation') fiche.angle = premier
+  } else if (anglesRaw.includes('inconnu')) {
+    fiche.angle = 'inconnu'
+  }
 
   // Logiciel : trois cas distincts.
   //  - un NOM  → il en a un (aLogiciel = true) + on retient le nom ;
@@ -231,7 +247,7 @@ export function parserFicheEtude(texte: string): FicheEtude | null {
 
   if (
     !fiche.personnalisation && !fiche.email && !fiche.dirigeant && !fiche.dirigeantAge &&
-    fiche.dirigeantJeune === undefined && !fiche.groupe && !fiche.angle &&
+    fiche.dirigeantJeune === undefined && !fiche.groupe && !fiche.angle && !fiche.angles?.length &&
     !fiche.logicielActuel && fiche.aLogiciel === undefined &&
     fiche.responsableAdmin === undefined && !fiche.effectifReel &&
     fiche.enDeveloppement === undefined && !fiche.siteEtat && !fiche.etudeResume

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Modal from "@/components/ui/Modal";
 import AutoTextarea from "@/components/ui/AutoTextarea";
 import { definirMailPerso } from "@/lib/mailingService";
+import { ANGLES, anglesDe, angleLabel } from "@/lib/mailingModel";
 import type { MailingMetier, MailPerso, Prospect } from "@/types";
 
 /**
@@ -76,10 +77,8 @@ export default function AdapterMailModal({
     prospect.groupe ? `Groupe : ${prospect.groupe}` : "",
   ].filter(Boolean);
 
-  const angleLabel =
-    prospect.angle === "surcharge" ? "Surcharge du dirigeant"
-    : prospect.angle === "circulation" ? "Circulation de l'information"
-    : null;
+  // Tous les angles retenus par l'étude : autant de prises pour ce mail et les relances
+  const angles = anglesDe(prospect);
 
   return (
     <Modal isOpen onClose={onClose} title={`Adapter le mail — ${prospect.societe}`} size="lg">
@@ -90,13 +89,26 @@ export default function AdapterMailModal({
         </p>
 
         {/* Ce que l'étude a appris */}
-        {(signaux.length > 0 || angleLabel || prospect.etudeResume) && (
+        {(signaux.length > 0 || angles.length > 0 || prospect.etudeResume) && (
           <div className="border rounded-lg bg-gray-50/70 p-3 space-y-2">
             <p className="text-xs font-semibold text-gray-700">Ce que tu sais d&apos;eux</p>
-            {angleLabel && (
-              <p className="text-xs text-gray-700">
-                Angle suggéré : <strong>{angleLabel}</strong>
-              </p>
+            {angles.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs text-gray-700">
+                  Angles retenus, du plus fort au moins fort — garde les autres pour les relances :
+                </p>
+                <ul className="text-xs text-gray-600 space-y-0.5">
+                  {angles.map((id) => {
+                    const def = ANGLES.find((a) => a.id === id);
+                    return (
+                      <li key={id}>
+                        <strong>{angleLabel(id)}</strong>
+                        {def && <span className="text-gray-500"> — {def.quoi}</span>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             )}
             {signaux.length > 0 && (
               <div className="flex flex-wrap gap-1.5">

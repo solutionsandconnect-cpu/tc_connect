@@ -4,13 +4,8 @@ import { useMemo, useState } from "react";
 import Modal from "@/components/ui/Modal";
 import { construirePromptRecherche, parserFicheEtude } from "@/lib/mailingPrompt";
 import { enregistrerEtude, majInfosProspect, definirPromptLance } from "@/lib/mailingService";
+import { ANGLES, anglesDe, angleLabel } from "@/lib/mailingModel";
 import type { Prospect } from "@/types";
-
-const ANGLE_LABEL: Record<"surcharge" | "circulation" | "inconnu", string> = {
-  surcharge: "Surcharge du dirigeant",
-  circulation: "Circulation de l'information",
-  inconnu: "Indéterminé",
-};
 
 /** Libellé lisible de l'état « a un logiciel ? » (true / false / inconnu). */
 function logicielTexte(aLogiciel: boolean | undefined, nom?: string): string | null {
@@ -70,7 +65,9 @@ export default function EtudeModal({
   const [adminM, setAdminM] = useState<"" | "oui" | "non">(
     prospect.responsableAdmin === true ? "oui" : prospect.responsableAdmin === false ? "non" : "",
   );
-  const [angleM, setAngleM] = useState<"" | "surcharge" | "circulation" | "inconnu">(prospect.angle ?? "");
+  // Plusieurs angles peuvent coexister : chacun est une cartouche pour un mail
+  // ou une relance. On coche, on ne choisit plus.
+  const [anglesM, setAnglesM] = useState<string[]>(anglesDe(prospect));
   const [effectifReelM, setEffectifReelM] = useState(prospect.effectifReel ?? "");
   const [devM, setDevM] = useState<"" | "oui" | "non">(
     prospect.enDeveloppement === true ? "oui" : prospect.enDeveloppement === false ? "non" : "",
@@ -128,7 +125,7 @@ export default function EtudeModal({
         dirigeantAge: ageM.trim() || null,
         dirigeantJeune: profilM === "jeune" ? true : profilM === "senior" ? false : null,
         groupe: groupeM.trim() || null,
-        angle: angleM || null,
+        angles: anglesM.length ? anglesM : null,
         etudeResume: resumeM.trim() || null,
         aLogiciel: logicielM === "oui" ? true : logicielM === "non" ? false : null,
         logicielActuel: logicielM === "oui" ? logicielNomM.trim() || null : null,
@@ -200,7 +197,9 @@ export default function EtudeModal({
             )}
             {prospect.groupe && <div>👥 Groupe : {prospect.groupe}</div>}
             {prospect.personnalisation && <div>✍ {prospect.personnalisation}</div>}
-            {prospect.angle && <div>🎯 Angle : {ANGLE_LABEL[prospect.angle]}</div>}
+            {anglesDe(prospect).length > 0 && (
+              <div>🎯 Angles : {anglesDe(prospect).map(angleLabel).join(" · ")}</div>
+            )}
             {logDeja && <div>🧩 {logDeja}</div>}
             {adminDeja && <div>🗂️ {adminDeja}</div>}
             {prospect.effectifReel && <div>👷 {prospect.effectifReel} salariés (réel)</div>}
@@ -289,8 +288,8 @@ export default function EtudeModal({
                 {fiche.personnalisation && (
                   <div><span className="text-gray-400">Personnalisation :</span> {fiche.personnalisation}</div>
                 )}
-                {fiche.angle && (
-                  <div><span className="text-gray-400">Angle :</span> {ANGLE_LABEL[fiche.angle]}</div>
+                {fiche.angles && fiche.angles.length > 0 && (
+                  <div><span className="text-gray-400">Angles :</span> {fiche.angles.map(angleLabel).join(" · ")}</div>
                 )}
                 {logFiche && (
                   <div><span className="text-gray-400">Logiciel :</span> {logFiche}</div>
@@ -373,15 +372,39 @@ export default function EtudeModal({
                   className={inputCls}
                 />
               </div>
-              <div>
-                <label className={labelCls}>Angle du message</label>
-                <select value={angleM} onChange={(e) => setAngleM(e.target.value as typeof angleM)} className={inputCls}>
-                  <option value="">— Non défini —</option>
-                  <option value="surcharge">Surcharge du dirigeant</option>
-                  <option value="circulation">Circulation de l&apos;information</option>
-                  <option value="inconnu">Indéterminé</option>
-                </select>
+            </div>
+
+            <div>
+              <label className={labelCls}>
+                Angles qui collent <span className="text-gray-400">(plusieurs possibles)</span>
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {ANGLES.map((a) => {
+                  const actif = anglesM.includes(a.id);
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      title={a.quoi}
+                      onClick={() =>
+                        setAnglesM((prev) =>
+                          prev.includes(a.id) ? prev.filter((x) => x !== a.id) : [...prev, a.id],
+                        )
+                      }
+                      className={`px-2.5 py-1 rounded-full text-xs border transition ${
+                        actif
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "border-gray-200 text-gray-600 hover:border-blue-300"
+                      }`}
+                    >
+                      {a.label}
+                    </button>
+                  );
+                })}
               </div>
+              <p className="text-[11px] text-gray-400 mt-1">
+                Chaque angle retenu est une cartouche : premier mail, puis relance sous un autre angle.
+              </p>
             </div>
 
             <div className="grid sm:grid-cols-2 gap-3">

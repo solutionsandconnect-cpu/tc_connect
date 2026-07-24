@@ -653,6 +653,7 @@ export const enregistrerEtude = async (
     dirigeantJeune?: boolean
     groupe?: string
     angle?: 'surcharge' | 'circulation' | 'inconnu'
+    angles?: string[]
     logicielActuel?: string
     aLogiciel?: boolean
     responsableAdmin?: boolean
@@ -713,13 +714,16 @@ export const majInfosProspect = async (
     enDeveloppement?: boolean | null
     siteEtat?: 'pro' | 'bancal' | 'aucun' | null
     angle?: 'surcharge' | 'circulation' | 'inconnu' | null
+    angles?: string[] | null
     etudeResume?: string | null
   },
 ): Promise<void> => {
   const data: Record<string, unknown> = { etudeAt: Timestamp.now(), updatedAt: Timestamp.now() }
   for (const [cle, v] of Object.entries(patch)) {
     if (v === undefined) continue
-    data[cle] = v === null || v === '' ? deleteField() : v
+    // Un tableau vide vaut « plus aucun angle » → on efface le champ.
+    const vide = v === null || v === '' || (Array.isArray(v) && v.length === 0)
+    data[cle] = vide ? deleteField() : v
   }
   await updateDoc(doc(db, 'prospects', prospect.id), data)
   await journaliser(prospect, { type: 'note', observations: 'Infos saisies à la main sur la fiche.' })

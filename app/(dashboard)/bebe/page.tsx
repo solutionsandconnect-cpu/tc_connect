@@ -6,7 +6,7 @@ import { useBebe } from '@/hooks/useBebe'
 import { useBebeEvents } from '@/hooks/useBebeEvents'
 import { StoreGate } from '@/components/ui/StoreGate'
 import Modal from '@/components/ui/Modal'
-import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play, Gift, Users, TrendingUp, Droplets, Thermometer, Syringe, HeartPulse } from 'lucide-react'
+import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play, Gift, Users, TrendingUp, Droplets, Droplet, Thermometer, Syringe, HeartPulse, BarChart3 } from 'lucide-react'
 import { Milk, Pill, Baby } from 'lucide-react'
 import AutoTextarea from '@/components/ui/AutoTextarea'
 import { GrowthChart, type GrowthPoint } from '@/components/bebe/GrowthChart'
@@ -40,6 +40,7 @@ const EVENT_ICONS: Record<BebeEventType, React.ElementType> = {
   bath:    Droplets,
   temp:    Thermometer,
   vaccine: Syringe,
+  pump:    Droplet,
 }
 
 const EVENT_LABELS: Record<BebeEventType, string> = {
@@ -52,6 +53,7 @@ const EVENT_LABELS: Record<BebeEventType, string> = {
   bath:    'Bain',
   temp:    'Température',
   vaccine: 'Vaccin',
+  pump:    'Tirage',
 }
 
 const EVENT_COLORS: Record<BebeEventType, { bg: string; text: string }> = {
@@ -63,6 +65,7 @@ const EVENT_COLORS: Record<BebeEventType, { bg: string; text: string }> = {
   bath:    { bg: 'bg-cyan-100',    text: 'text-cyan-600'    },
   temp:    { bg: 'bg-orange-100',  text: 'text-orange-600'  },
   vaccine: { bg: 'bg-emerald-100', text: 'text-emerald-600' },
+  pump:    { bg: 'bg-pink-100',    text: 'text-pink-600'    },
 }
 
 /**
@@ -100,6 +103,7 @@ const NOTE_PLACEHOLDERS: Record<BebeEventType, string> = {
   bath:    'a adoré, eau trop chaude, premier bain…',
   temp:    'prise en rectal, au réveil, après le biberon…',
   vaccine: 'bien supporté, cuisse gauche, fièvre le soir…',
+  pump:    'peu de lait ce matin, tire-lait manuel…',
 }
 
 /** Couleurs des deux courbes (valeurs CSS : le SVG ne lit pas les classes Tailwind) */
@@ -108,18 +112,30 @@ const COURBE_TAILLE = '#0d9488' // teal-600
 const COURBE_PC     = '#d97706' // amber-600
 
 // Listes partagées entre les modales de saisie ET le réglage des valeurs par défaut
+// Ce que le bébé REÇOIT. Le tire-lait n'est pas listé ici comme un acte : le lait
+// tiré est donné au biberon → « Biberon de lait maternel ». Le tirage lui-même est
+// un événement à part (type `pump`), sinon on compterait deux fois le même lait.
 const BOTTLE_KINDS: { v: BebeBottleKind; l: string }[] = [
-  { v: 'biberon',   l: 'Biberon'     },
-  { v: 'sein_g',    l: 'Sein gauche' },
-  { v: 'sein_d',    l: 'Sein droit'  },
-  { v: 'tire_lait', l: 'Tire-lait'   },
+  { v: 'biberon',   l: 'Biberon'                 },
+  { v: 'sein_g',    l: 'Sein gauche'             },
+  { v: 'sein_d',    l: 'Sein droit'              },
+  { v: 'tire_lait', l: 'Biberon de lait maternel' },
 ]
 
+/** Côté tiré lors d'une séance de tire-lait */
+const PUMP_KINDS: { v: string; l: string }[] = [
+  { v: 'les_deux', l: 'Les deux' },
+  { v: 'sein_g',   l: 'Sein gauche' },
+  { v: 'sein_d',   l: 'Sein droit' },
+]
+
+// Les clés stockées ne changent pas (`urine`, `selles`) : seuls les libellés
+// affichés passent au langage courant, sans toucher aux fiches déjà en base.
 const DIAPER_KINDS: { v: BebeDiaperKind; l: string }[] = [
-  { v: 'seche',  l: 'Sèche'  },
-  { v: 'urine',  l: 'Urine'  },
-  { v: 'selles', l: 'Selles' },
-  { v: 'mixte',  l: 'Mixte'  },
+  { v: 'seche',  l: 'Sèche' },
+  { v: 'urine',  l: 'Pipi'  },
+  { v: 'selles', l: 'Caca'  },
+  { v: 'mixte',  l: 'Mixte' },
 ]
 
 const BOTTLE_AMOUNTS = [60, 90, 120, 150, 180, 210]
@@ -248,7 +264,7 @@ function eventDescription(type: BebeEventType, data: Record<string, any>, journe
       return [mesure, data.kind ? k[data.kind] ?? data.kind : null].filter(Boolean).join(' · ') || 'Repas'
     }
     case 'diaper': {
-      const k: Record<string, string> = { seche: 'Sèche', urine: 'Urine', selles: 'Selles', mixte: 'Mixte' }
+      const k: Record<string, string> = { seche: 'Sèche', urine: 'Pipi', selles: 'Caca', mixte: 'Mixte' }
       return k[data.kind] ?? 'Couche'
     }
     case 'sleep': {
@@ -276,6 +292,14 @@ function eventDescription(type: BebeEventType, data: Record<string, any>, journe
     }
     case 'vaccine':
       return data.name ?? ''
+    case 'pump': {
+      const k: Record<string, string> = { les_deux: 'Les deux', sein_g: 'Sein G.', sein_d: 'Sein D.' }
+      return [
+        data.amount ? `${data.amount} ml` : null,
+        data.durationMin ? formatDuration(data.durationMin) : null,
+        data.kind ? k[data.kind] ?? data.kind : null,
+      ].filter(Boolean).join(' · ') || 'Tirage'
+    }
   }
 }
 
@@ -294,19 +318,6 @@ function kgToGrams(s: string): number | undefined {
 function hhmmToMin(s: string): number {
   const [h, m] = s.split(':').map(Number)
   return (h || 0) * 60 + (m || 0)
-}
-
-/**
- * Début de la JOURNÉE LOGIQUE contenant `d`.
- * Avec une journée qui démarre à 7 h, un événement de 6 h 30 appartient encore
- * à la veille — c'est ce qui rattache une nuit au bon jour.
- */
-function debutJourLogique(d: Date, debut: string): Date {
-  const j = new Date(d)
-  const [h, m] = debut.split(':').map(Number)
-  j.setHours(h || 0, m || 0, 0, 0)
-  if (d.getTime() < j.getTime()) j.setDate(j.getDate() - 1)
-  return j
 }
 
 /**
@@ -339,14 +350,15 @@ function dateInputStr(d: Date): string {
 function StatCard({ icon: Icon, label, value, sub, bg, tc }: {
   icon: React.ElementType; label: string; value: string; sub?: string; bg: string; tc: string
 }) {
+  // Le libellé n'est pas réaffiché : l'icône suffit à identifier l'indicateur.
+  // Il reste en `title` pour le survol et les lecteurs d'écran.
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 text-center">
+    <div title={label} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 text-center">
       <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2 ${bg}`}>
         <Icon size={18} className={tc} />
       </div>
       <p className="text-xl font-bold text-gray-800 leading-tight">{value}</p>
       {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
-      <p className="text-xs text-gray-400 mt-0.5">{label}</p>
     </div>
   )
 }
@@ -377,6 +389,31 @@ function NoteField({ value, onChange, type }: {
       <AutoTextarea value={value} onChange={onChange} minRows={2}
         placeholder={`Facultatif — ${NOTE_PLACEHOLDERS[type]}`}
         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+    </div>
+  )
+}
+
+/** Bloc de statistiques : un thème, plusieurs lignes libellé / valeur */
+function StatBloc({ icon: Icon, bg, tc, titre, lignes }: {
+  icon: React.ElementType; bg: string; tc: string
+  titre: string; lignes: { l: string; v: string }[]
+}) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${bg}`}>
+          <Icon size={15} className={tc} />
+        </div>
+        <p className="text-sm font-semibold text-gray-800">{titre}</p>
+      </div>
+      <div className="space-y-1.5">
+        {lignes.map((li, i) => (
+          <div key={i} className="flex items-baseline justify-between gap-3">
+            <span className="text-xs text-gray-500">{li.l}</span>
+            <span className="text-sm font-semibold text-gray-800 text-right">{li.v}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -461,7 +498,7 @@ export default function BebePage() {
   }
 
   // ── Vue ───────────────────────────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState<'dashboard' | 'planning' | 'growth' | 'arrival'>('dashboard')
+  const [viewMode, setViewMode] = useState<'dashboard' | 'planning' | 'stats' | 'growth' | 'arrival'>('dashboard')
   const [planningRange, setPlanningRange] = useState<'7j' | '30j'>('7j')
 
   // ── Timer sommeil actif ───────────────────────────────────────────────────
@@ -636,6 +673,7 @@ export default function BebePage() {
   const [whenForm, setWhenForm] = useState({ date: '', time: '' })
   // Vaccin : porte une date (souvent saisi le soir, après le rendez-vous)
   const [vaccineForm, setVaccineForm] = useState({ name: '', date: '' })
+  const [pumpForm, setPumpForm] = useState({ amount: '100', duration: '20', kind: 'les_deux' })
 
   const openNewModal = (type: BebeEventType) => {
     setEditingEvent(null)
@@ -653,6 +691,7 @@ export default function BebePage() {
     if (type === 'growth') setGrowthForm({ weight: '', height: '', head: '', date: dateInputStr(new Date()) })
     if (type === 'temp')    setTempForm('')
     if (type === 'vaccine') setVaccineForm({ name: '', date: dateInputStr(new Date()) })
+    if (type === 'pump')    setPumpForm({ amount: '100', duration: '20', kind: 'les_deux' })
     setWhenForm({ date: dateInputStr(new Date()), time: nowTimeStr() })
     setNoteForm('')
     setModalType(type)
@@ -683,6 +722,13 @@ export default function BebePage() {
       })
     }
     if (event.type === 'temp') setTempForm(event.data?.tempC ? String(event.data.tempC) : '')
+    if (event.type === 'pump') {
+      setPumpForm({
+        amount: String(event.data?.amount ?? 100),
+        duration: String(event.data?.durationMin ?? 20),
+        kind: event.data?.kind ?? 'les_deux',
+      })
+    }
     if (event.type === 'vaccine') {
       setVaccineForm({
         name: event.data?.name ?? '',
@@ -741,6 +787,12 @@ export default function BebePage() {
         // Midi : évite qu'un décalage de fuseau fasse basculer la mesure de un jour
         const [gy, gm, gd] = growthForm.date.split('-').map(Number)
         ts = Timestamp.fromDate(new Date(gy, gm - 1, gd, 12, 0, 0))
+      } else if (modalType === 'pump') {
+        data = {
+          amount: Number(pumpForm.amount) || 0,
+          durationMin: Number(pumpForm.duration) || 0,
+          kind: pumpForm.kind,
+        }
       } else if (modalType === 'bath') {
         data = {}
       } else if (modalType === 'temp') {
@@ -753,7 +805,7 @@ export default function BebePage() {
 
       // Saisies « instantanées » : l'horodatage vient des champs date + heure
       // (le sommeil pose le sien depuis ses bornes, mesure et vaccin depuis leur date).
-      if ((['bottle', 'diaper', 'meds', 'bath', 'temp'] as BebeEventType[]).includes(modalType)
+      if ((['bottle', 'diaper', 'meds', 'bath', 'temp', 'pump'] as BebeEventType[]).includes(modalType)
           && whenForm.date && whenForm.time) {
         ts = timeStrToTs(whenForm.time, whenForm.date)
       }
@@ -779,15 +831,19 @@ export default function BebePage() {
     fin:   selectedBaby?.journee?.fin   || JOURNEE_FALLBACK.fin,
   }), [selectedBaby])
 
-  // « Aujourd'hui » = la journée LOGIQUE en cours, pas la date civile : avant
-  // l'heure de réveil on est encore sur la journée de la veille (nuit en cours).
+  // Journée CIVILE (minuit), volontairement : rattacher un biberon de 6 h 30 à la
+  // veille sous prétexte que la journée du bébé commence à 7 h est incompréhensible
+  // — l'événement est daté d'aujourd'hui, il doit compter aujourd'hui.
+  // Ce qui reste corrigé : un sommeil compte au jour où il a COMMENCÉ
+  // (cf. dateRattachement), donc une nuit à cheval sur minuit n'est plus coupée en deux.
+  // Les bornes de journée servent au classement sieste / nuit, pas au découpage.
   const todayEvents = useMemo(() => {
-    const debutJour = debutJourLogique(new Date(), journee.debut)
+    const debutJour = new Date(); debutJour.setHours(0, 0, 0, 0)
     return events.filter(e => {
       const d = dateRattachement(e)
       return d && d >= debutJour
     })
-  }, [events, journee])
+  }, [events])
 
   const todayStats = useMemo(() => {
     const b = todayEvents.filter(e => e.type === 'bottle')
@@ -830,6 +886,55 @@ export default function BebePage() {
     const predictedMs = (b[0].timestamp?.seconds ?? 0) * 1000 + avgMin * 60_000
     return { predictedAt: new Date(predictedMs), avgIntervalMin: avgMin, lastBottle: b[0], diffMin: Math.floor((predictedMs - Date.now()) / 60_000) }
   }, [events])
+
+  // ── Statistiques sur une période ───────────────────────────────────────────
+  const [statsRange, setStatsRange] = useState<'7j' | '30j' | 'tout'>('7j')
+
+  const stats = useMemo(() => {
+    const cutoff = new Date()
+    if (statsRange !== 'tout') {
+      cutoff.setDate(cutoff.getDate() - (statsRange === '7j' ? 7 : 30))
+      cutoff.setHours(0, 0, 0, 0)
+    } else {
+      cutoff.setTime(0)
+    }
+    const dans = events.filter(e => { const d = dateRattachement(e); return d && d >= cutoff })
+    const par = (t: BebeEventType) => dans.filter(e => e.type === t)
+    const somme = (list: BebeEvent[], cle: string) =>
+      list.reduce((n, e) => n + ((e.data?.[cle] as number) ?? 0), 0)
+
+    // Nombre de jours RÉELLEMENT couverts : diviser par 7 alors qu'on n'a que
+    // 2 jours de saisie donnerait des moyennes trois fois trop basses.
+    const jours = new Set(dans.map(e => { const d = dateRattachement(e)!; return dayKey(d) })).size || 1
+
+    const repas = par('bottle')
+    const biberons = repas.filter(e => !estSein(e.data?.kind))
+    const tetees = repas.filter(e => estSein(e.data?.kind))
+    const couches = par('diaper')
+    const sommeils = par('sleep')
+    const nuits = sommeils.filter(e => { const d = dateRattachement(e); return d && estNuit(d, journee) })
+    const siestes = sommeils.filter(e => !nuits.includes(e))
+
+    return {
+      jours,
+      repas: repas.length,
+      biberonMl: somme(biberons, 'amount'),
+      teteeMin: somme(tetees, 'durationMin'),
+      teteeCount: tetees.length,
+      couches: couches.length,
+      couchesParType: DIAPER_KINDS.map(k => ({ ...k, n: couches.filter(e => e.data?.kind === k.v).length })),
+      sommeilMin: somme(sommeils, 'durationMin'),
+      siesteMin: somme(siestes, 'durationMin'),
+      siesteCount: siestes.length,
+      nuitMin: somme(nuits, 'durationMin'),
+      bains: par('bath').length,
+      tirages: par('pump').length,
+      tirageMl: somme(par('pump'), 'amount'),
+      meds: par('meds').length,
+      temps: par('temp').length,
+      fievres: par('temp').filter(e => Number(e.data?.tempC) >= SEUIL_FIEVRE).length,
+    }
+  }, [events, statsRange, journee])
 
   // ── Croissance ─────────────────────────────────────────────────────────────
   // Les infos de naissance servent de PREMIER point : la courbe démarre à la
@@ -891,18 +996,18 @@ export default function BebePage() {
   const planningDays = useMemo(() => {
     const days = planningRange === '7j' ? 7 : 30
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days); cutoff.setHours(0,0,0,0)
-    // Regroupement sur la journée LOGIQUE : une nuit à cheval sur minuit reste
-    // entière dans la journée où elle a commencé.
+    // Regroupement par jour civil de la date de RATTACHEMENT : un sommeil compte
+    // au jour de son coucher, donc une nuit à cheval sur minuit reste entière.
     const groups: Record<string, { label: string; date: Date; events: BebeEvent[] }> = {}
     events.forEach(e => {
       const d = dateRattachement(e); if (!d || d < cutoff) return
-      const jour = debutJourLogique(d, journee.debut)
+      const jour = new Date(d); jour.setHours(0, 0, 0, 0)
       const k = dayKey(jour)
       if (!groups[k]) groups[k] = { label: dayLabel(jour), date: jour, events: [] }
       groups[k].events.push(e)
     })
     return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime())
-  }, [events, planningRange, journee])
+  }, [events, planningRange])
 
   const filteredMeds = MEDS_SUGGESTIONS.filter(m => !medsSearch.trim() || m.name.toLowerCase().includes(medsSearch.toLowerCase()))
 
@@ -1022,7 +1127,7 @@ export default function BebePage() {
 
         {/* Onglets vue */}
         <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-          {[{ key: 'dashboard', icon: LayoutList, label: "Aujourd'hui" }, { key: 'planning', icon: CalendarDays, label: 'Planning' }, { key: 'growth', icon: HeartPulse, label: 'Santé' }, { key: 'arrival', icon: Gift, label: 'Arrivée' }].map(v => {
+          {[{ key: 'dashboard', icon: LayoutList, label: "Aujourd'hui" }, { key: 'planning', icon: CalendarDays, label: 'Planning' }, { key: 'stats', icon: BarChart3, label: 'Stats' }, { key: 'growth', icon: HeartPulse, label: 'Santé' }, { key: 'arrival', icon: Gift, label: 'Arrivée' }].map(v => {
             const Icon = v.icon
             return (
               <button key={v.key} onClick={() => setViewMode(v.key as any)}
@@ -1151,8 +1256,8 @@ export default function BebePage() {
             {/* 4 boutons rapides + Start sommeil */}
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Ajouter</p>
-              <div className="grid grid-cols-4 gap-2">
-                {(['bottle', 'diaper', 'sleep', 'meds', 'bath', 'temp', 'growth', 'vaccine'] as BebeEventType[]).map(type => {
+              <div className="grid grid-cols-3 gap-2">
+                {(['bottle', 'pump', 'diaper', 'sleep', 'bath', 'temp', 'meds', 'growth', 'vaccine'] as BebeEventType[]).map(type => {
                   const Icon = EVENT_ICONS[type]
                   const c    = EVENT_COLORS[type]
                   return (
@@ -1337,6 +1442,78 @@ export default function BebePage() {
                   )
                 })}
               </div>
+            )}
+          </>
+        )}
+
+        {/* ═══ VUE STATS ═══ */}
+        {viewMode === 'stats' && (
+          <>
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+              {([{ k: '7j', l: '7 jours' }, { k: '30j', l: '30 jours' }, { k: 'tout', l: 'Tout' }] as const).map(r => (
+                <button key={r.k} onClick={() => setStatsRange(r.k)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${statsRange === r.k ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+                  {r.l}
+                </button>
+              ))}
+            </div>
+
+            {stats.repas + stats.couches + stats.sommeilMin === 0 ? (
+              <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
+                <BarChart3 size={32} className="text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-400">Aucune donnée sur cette période.</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-gray-400">
+                  Moyennes calculées sur les <strong>{stats.jours} jour{stats.jours > 1 ? 's' : ''}</strong> où
+                  quelque chose a été noté — pas sur la période entière, sinon les jours sans saisie
+                  tireraient les moyennes vers le bas.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <StatBloc icon={Milk} bg="bg-sky-100" tc="text-sky-600" titre="Repas"
+                    lignes={[
+                      { l: 'Total', v: String(stats.repas) },
+                      { l: 'Par jour', v: (stats.repas / stats.jours).toFixed(1).replace('.', ',') },
+                      ...(stats.biberonMl > 0 ? [
+                        { l: 'Lait au biberon', v: `${stats.biberonMl} ml` },
+                        { l: 'Par jour', v: `${Math.round(stats.biberonMl / stats.jours)} ml` },
+                      ] : []),
+                      ...(stats.teteeCount > 0 ? [
+                        { l: 'Tétées', v: `${stats.teteeCount} · ${formatDuration(stats.teteeMin)}` },
+                        { l: 'Durée moyenne', v: formatDuration(Math.round(stats.teteeMin / stats.teteeCount)) },
+                      ] : []),
+                    ]} />
+
+                  <StatBloc icon={DiaperIcon} bg="bg-teal-100" tc="text-teal-600" titre="Couches"
+                    lignes={[
+                      { l: 'Total', v: String(stats.couches) },
+                      { l: 'Par jour', v: (stats.couches / stats.jours).toFixed(1).replace('.', ',') },
+                      ...stats.couchesParType.filter(t => t.n > 0).map(t => ({ l: t.l, v: String(t.n) })),
+                    ]} />
+
+                  <StatBloc icon={Moon} bg="bg-indigo-100" tc="text-indigo-600" titre="Sommeil"
+                    lignes={[
+                      { l: 'Total', v: formatDuration(stats.sommeilMin) },
+                      { l: 'Par jour', v: formatDuration(Math.round(stats.sommeilMin / stats.jours)) },
+                      { l: 'Dont nuit', v: formatDuration(stats.nuitMin) },
+                      { l: 'Dont siestes', v: `${stats.siesteCount} · ${formatDuration(stats.siesteMin)}` },
+                      ...(stats.siesteCount > 0 ? [{ l: 'Sieste moyenne', v: formatDuration(Math.round(stats.siesteMin / stats.siesteCount)) }] : []),
+                    ]} />
+
+                  <StatBloc icon={HeartPulse} bg="bg-rose-100" tc="text-rose-600" titre="Soins et divers"
+                    lignes={[
+                      { l: 'Bains', v: String(stats.bains) },
+                      { l: 'Médicaments', v: String(stats.meds) },
+                      { l: 'Températures', v: stats.temps > 0 ? `${stats.temps}${stats.fievres > 0 ? ` · ${stats.fievres} au-dessus de ${SEUIL_FIEVRE} °C` : ''}` : '0' },
+                      ...(stats.tirages > 0 ? [
+                        { l: 'Tirages', v: String(stats.tirages) },
+                        { l: 'Lait tiré', v: `${stats.tirageMl} ml` },
+                      ] : []),
+                    ]} />
+                </div>
+              </>
             )}
           </>
         )}
@@ -1721,6 +1898,41 @@ export default function BebePage() {
         </div>
       </Modal>
 
+      {/* ── Modale Tirage (tire-lait) ───────────────────────────────────────── */}
+      <Modal isOpen={modalType === 'pump'} onClose={closeModal} title={editingEvent ? 'Modifier — Tirage' : 'Tirage'}>
+        <div className="space-y-4">
+          <WhenField date={whenForm.date} time={whenForm.time}
+            onDate={v => setWhenForm(f => ({ ...f, date: v }))} onTime={v => setWhenForm(f => ({ ...f, time: v }))} />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Lait recueilli (ml)</label>
+            <input type="number" min={0} step={5} value={pumpForm.amount}
+              onChange={e => setPumpForm(f => ({ ...f, amount: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Durée (minutes)</label>
+              <input type="number" min={0} step={1} value={pumpForm.duration}
+                onChange={e => setPumpForm(f => ({ ...f, duration: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Côté</label>
+              <select value={pumpForm.kind} onChange={e => setPumpForm(f => ({ ...f, kind: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                {PUMP_KINDS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+              </select>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400">
+            Le tirage n&apos;est pas un repas : il n&apos;entre pas dans le compte du jour. Le lait
+            recueilli se note ensuite comme « Biberon de lait maternel » au moment où il est donné.
+          </p>
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
+          <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent} label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
+        </div>
+      </Modal>
+
       {/* ── Modale Bain ─────────────────────────────────────────────────────── */}
       <Modal isOpen={modalType === 'bath'} onClose={closeModal} title={editingEvent ? 'Modifier — Bain' : 'Bain'}>
         <div className="space-y-4">
@@ -1883,8 +2095,9 @@ export default function BebePage() {
             <div>
               <p className="text-sm font-medium text-gray-700">Journée du bébé</p>
               <p className="text-xs text-gray-500 mt-0.5">
-                Sert à distinguer les siestes de la nuit et à rattacher une nuit à la bonne
-                journée — sans ça, un sommeil à cheval sur minuit est compté sur deux jours.
+                Sert à distinguer les siestes de la nuit : un sommeil commencé après l&apos;heure
+                de coucher (ou avant celle du réveil) est compté comme une nuit. Le découpage
+                des journées, lui, reste à minuit.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">

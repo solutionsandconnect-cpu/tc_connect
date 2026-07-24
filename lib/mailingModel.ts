@@ -196,6 +196,96 @@ export function contacteDepuis(p: Prospect, depuis: Date | null): boolean {
 }
 
 /* ------------------------------------------------------------------ */
+/* Angles de discours                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Catalogue des angles d'accroche.
+ *
+ * L'étude en renvoie AUTANT QUE PERTINENT pour une entreprise donnée, classés du
+ * plus au moins fort : chaque angle est une cartouche pour le premier mail ou une
+ * relance. Ils ne pilotent aucun rendu automatique — c'est en adaptant le mail
+ * (`Prospect.mailPerso`) qu'on s'en sert, donc en ajouter un ici ne casse rien.
+ *
+ * `indice` = ce qui, dans les faits recueillis, permet de le retenir. Ce texte
+ * part tel quel dans le prompt : le modifier change ce que l'étude cherche.
+ */
+export interface AngleDef {
+  id: string
+  label: string
+  /** Ce que le mail raconterait sous cet angle */
+  quoi: string
+  /** À quoi on voit que l'angle colle */
+  indice: string
+}
+
+export const ANGLES: AngleDef[] = [
+  {
+    id: 'surcharge',
+    label: 'Surcharge du dirigeant',
+    quoi: "le planning refait le soir, le téléphone qui sonne depuis les chantiers, le temps perdu entre les chantiers plutôt que sur les chantiers",
+    indice: "le dirigeant fait tout lui-même : pas de bureau, pas de personne dédiée à la planification",
+  },
+  {
+    id: 'circulation',
+    label: "Circulation de l'information",
+    quoi: "le planning fait au bureau que le chantier ne voit pas, les heures reconstituées en fin de mois sur des feuilles papier",
+    indice: "il y a un bureau et quelqu'un dont c'est le métier de planifier : la surcharge est déjà réglée, l'info ne redescend pas",
+  },
+  {
+    id: 'coordination',
+    label: 'Coordination multi-chantiers',
+    quoi: "plusieurs équipes ou sous-traitants à faire tenir ensemble, qui est passé où, qui attend quoi",
+    indice: "plusieurs équipes, des chantiers en parallèle, de la sous-traitance, ou un métier qui enchaîne les sites dans la journée",
+  },
+  {
+    id: 'tracabilite',
+    label: 'Traçabilité et preuve',
+    quoi: "prouver un passage, une réserve levée, un accord client — quand la parole du client contredit la vôtre",
+    indice: "contrats d'entretien, interventions récurrentes, réserves et litiges, avis clients faisant état de désaccords",
+  },
+  {
+    id: 'rentabilite',
+    label: 'Rentabilité réelle du chantier',
+    quoi: "le coût réel d'un chantier connu une fois qu'il est terminé, les heures qui dérapent sans qu'on le voie",
+    indice: "des chantiers longs ou au forfait, un devis serré, une entreprise qui parle marges ou qui a grossi vite",
+  },
+  {
+    id: 'croissance',
+    label: 'Structuration d\'une entreprise qui grandit',
+    quoi: "ce qui tenait à 5 ne tient plus à 15 : les méthodes de la petite équipe qui craquent",
+    indice: "recrutement en cours, CA en hausse, rachat ou nouvelle agence, effectif qui a nettement augmenté",
+  },
+  {
+    id: 'administratif',
+    label: 'Charge administrative',
+    quoi: "la double saisie, les mêmes informations recopiées du chantier au devis puis à la facture",
+    indice: "une personne dédiée à l'administratif, ou un logiciel de compta sans lien avec le terrain",
+  },
+  {
+    id: 'reprise_outil',
+    label: 'Outil en place mal adapté',
+    quoi: "un logiciel payé mais contourné, que les équipes n'utilisent pas sur le terrain",
+    indice: "un logiciel de gestion identifié, surtout généraliste ou ancien",
+  },
+]
+
+export const ANGLE_IDS = ANGLES.map((a) => a.id)
+
+export const angleLabel = (id: string): string =>
+  ANGLES.find((a) => a.id === id)?.label ?? id
+
+/**
+ * Angles retenus pour un prospect, avec repli sur l'ancien champ mono-valeur
+ * `angle` (fiches étudiées avant le passage au multi-angles).
+ */
+export const anglesDe = (p: { angles?: string[]; angle?: string }): string[] => {
+  if (p.angles?.length) return p.angles
+  if (p.angle && p.angle !== 'inconnu') return [p.angle]
+  return []
+}
+
+/* ------------------------------------------------------------------ */
 /* Garde-fous anti-spam                                                */
 /* ------------------------------------------------------------------ */
 

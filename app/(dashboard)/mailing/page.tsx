@@ -16,6 +16,7 @@ import AutoTextarea from "@/components/ui/AutoTextarea";
 import {
   QUOTA_JOUR, peutContacter, isEmailGenerique, STATUT_LABEL, STATUT_STYLE,
   aRepondu, contacteDepuis, estPrioritaireManuel, estPrioritaireAuto, evaluerPrioriteAuto,
+  ANGLES, anglesDe, angleLabel,
 } from "@/lib/mailingModel";
 import Modal from "@/components/ui/Modal";
 import {
@@ -106,7 +107,7 @@ function etatEtude(p: Prospect): "etudie" | "lance" | "rien" {
   if (
     p.etudeAt || p.dirigeant || p.personnalisation || p.etudeResume ||
     p.aLogiciel !== undefined || p.responsableAdmin !== undefined ||
-    p.enDeveloppement !== undefined || p.siteEtat || p.effectifReel || p.angle || p.groupe
+    p.enDeveloppement !== undefined || p.siteEtat || p.effectifReel || anglesDe(p).length > 0 || p.groupe
   ) return "etudie";
   if (p.promptLanceAt) return "lance";
   return "rien";
@@ -185,7 +186,8 @@ export default function MailingPage() {
   const [filtreAdmin, setFiltreAdmin] = useState<"tous" | "oui" | "non">("tous");
   const [filtreDev, setFiltreDev] = useState<"tous" | "oui" | "non">("tous");
   const [filtreSite, setFiltreSite] = useState<"tous" | "pro" | "bancal" | "aucun">("tous");
-  const [filtreAngle, setFiltreAngle] = useState<"tous" | "surcharge" | "circulation">("tous");
+  // « tous » ou l'identifiant d'un angle du catalogue (ANGLES)
+  const [filtreAngle, setFiltreAngle] = useState<string>("tous");
   const [filtreLie, setFiltreLie] = useState(false);
   const [filtreEtude, setFiltreEtude] = useState<"tous" | "etudie" | "lance" | "rien">("tous");
   const [filtreGerant, setFiltreGerant] = useState<"tous" | "jeune" | "senior">("tous");
@@ -422,7 +424,7 @@ export default function MailingPage() {
       if (filtreDev === "oui" && p.enDeveloppement !== true) return false;
       if (filtreDev === "non" && p.enDeveloppement !== false) return false;
       if (filtreSite !== "tous" && p.siteEtat !== filtreSite) return false;
-      if (filtreAngle !== "tous" && p.angle !== filtreAngle) return false;
+      if (filtreAngle !== "tous" && !anglesDe(p).includes(filtreAngle)) return false;
       if (filtreLie && !liensGroupe.has(p.id)) return false;
       if (filtreEtude !== "tous" && etatEtude(p) !== filtreEtude) return false;
       if (filtreGerant === "jeune" && p.dirigeantJeune !== true) return false;
@@ -1036,25 +1038,24 @@ export default function MailingPage() {
           {/* Angle recommandé par l'étude. */}
           <div className="flex flex-wrap gap-1.5 mb-3">
             {(() => {
-              const surch = prospects.filter((p) => p.angle === "surcharge").length;
-              const circ = prospects.filter((p) => p.angle === "circulation").length;
+              // Un prospect peut porter PLUSIEURS angles : les compteurs se recoupent,
+              // c'est voulu (chaque angle est une cartouche indépendante).
               return (
                 <>
                   <Chip actif={filtreAngle === "tous"} onClick={() => setFiltreAngle("tous")} label="Angle : tous" />
-                  <Chip
-                    actif={filtreAngle === "surcharge"}
-                    onClick={() => setFiltreAngle("surcharge")}
-                    label="🎯 Surcharge"
-                    nombre={surch}
-                    attenue={surch === 0}
-                  />
-                  <Chip
-                    actif={filtreAngle === "circulation"}
-                    onClick={() => setFiltreAngle("circulation")}
-                    label="🎯 Circulation"
-                    nombre={circ}
-                    attenue={circ === 0}
-                  />
+                  {ANGLES.map((a) => {
+                    const n = prospects.filter((p) => anglesDe(p).includes(a.id)).length;
+                    return (
+                      <Chip
+                        key={a.id}
+                        actif={filtreAngle === a.id}
+                        onClick={() => setFiltreAngle(a.id)}
+                        label={`🎯 ${a.label}`}
+                        nombre={n}
+                        attenue={n === 0}
+                      />
+                    );
+                  })}
                   <Chip
                     actif={filtreLie}
                     onClick={() => setFiltreLie((v) => !v)}
@@ -1384,14 +1385,15 @@ export default function MailingPage() {
                             👷 {p.effectifReel}
                           </span>
                         )}
-                        {p.angle && p.angle !== "inconnu" && (
+                        {anglesDe(p).map((a) => (
                           <span
+                            key={a}
                             className="px-2 py-0.5 rounded-full text-[11px] bg-blue-50 text-blue-700"
-                            title="Angle de message recommandé par l'étude"
+                            title="Angle d'accroche retenu par l'étude"
                           >
-                            🎯 {p.angle === "surcharge" ? "surcharge" : "circulation info"}
+                            🎯 {angleLabel(a)}
                           </span>
-                        )}
+                        ))}
                         {estCessee(p.etatEntreprise) && (
                           <span className="px-2 py-0.5 rounded-full text-[11px] bg-red-100 text-red-700">
                             société cessée
@@ -1635,14 +1637,9 @@ export default function MailingPage() {
                             {p.personnalisation && (
                               <div className="text-gray-700">✍ {p.personnalisation}</div>
                             )}
-                            {p.angle && (
+                            {anglesDe(p).length > 0 && (
                               <div className="text-gray-600">
-                                🎯 Angle :{" "}
-                                {p.angle === "surcharge"
-                                  ? "surcharge du dirigeant"
-                                  : p.angle === "circulation"
-                                    ? "circulation de l'information"
-                                    : "indéterminé"}
+                                🎯 Angles : {anglesDe(p).map(angleLabel).join(" · ")}
                               </div>
                             )}
                             {p.etudeResume && (

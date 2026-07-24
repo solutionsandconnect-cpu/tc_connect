@@ -1158,9 +1158,13 @@ export interface BebeContact {
 /**
  * `growth` = une mesure (poids / taille / périmètre crânien) relevée à une date, alimente les courbes.
  * `bath` = un bain. `temp` = une prise de température. `vaccine` = un vaccin administré.
+ * `pump` = une séance de TIRAGE au tire-lait : c'est un acte de la mère, distinct
+ * du repas — le lait recueilli est donné plus tard au biberon, et compter les
+ * deux comme des repas doublerait les volumes.
  * Tous les types acceptent en plus une observation libre dans `data.note`.
  */
-export type BebeEventType = 'bottle' | 'diaper' | 'sleep' | 'meds' | 'growth' | 'bath' | 'temp' | 'vaccine'
+export type BebeEventType =
+  | 'bottle' | 'diaper' | 'sleep' | 'meds' | 'growth' | 'bath' | 'temp' | 'vaccine' | 'pump'
 
 /** Document Firestore : babies/{babyId}/events/{eventId} */
 export interface BebeEvent {
@@ -1427,6 +1431,13 @@ export interface Prospect {
    * circulation de l'info), 'inconnu' si l'étude n'a pas tranché.
    */
   angle?: 'surcharge' | 'circulation' | 'inconnu'
+  /**
+   * TOUS les angles qui collent à cette entreprise, du plus au moins pertinent
+   * (identifiants du catalogue `ANGLES`, lib/mailingModel). Remplace `angle` :
+   * une entreprise a souvent plusieurs prises, et chacune est une cartouche pour
+   * le premier mail ou une relance. `anglesDe()` gère le repli sur `angle`.
+   */
+  angles?: string[]
   /**
    * Nom du groupe / holding auquel appartient l'entreprise, si l'étude en révèle un.
    * Sert à repérer deux prospects du MÊME groupe (souvent sur des kits métier
