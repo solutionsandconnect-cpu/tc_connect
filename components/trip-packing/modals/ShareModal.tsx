@@ -6,6 +6,7 @@ import { useUsers } from '@/hooks/useUsers'
 import { useAuth } from '@/context/AuthContext'
 import { shareTrip, removeMember, createInviteLink, revokeInviteLink, updateInviteLink, listenInviteLinks, updateMemberPermission, addGuestParticipant } from '@/lib/tripsService'
 import { useUserPhotoMap } from '@/hooks/useUserPhotoMap'
+import { boutiqueLinkOrigin } from '@/lib/brand'
 import type { Trip, InviteLink, TripPermission, TripMemberPermission } from '@/types'
 import { MagnifyingGlassIcon, XMarkIcon, LinkIcon, TrashIcon, ClipboardDocumentIcon, EnvelopeIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
 
@@ -23,9 +24,13 @@ const PERMISSION_LABELS: Record<TripPermission, { label: string; desc: string; i
   edit:  { label: 'Peut modifier', desc: 'Ajouter / éditer items & sections', icon: '✏️' },
 }
 
+/**
+ * Origine des liens d'invitation PARTAGEABLES : toujours le domaine Enezo
+ * (la boutique — donc CheckConnect — est rattachée à Enezo), quel que soit le
+ * domaine depuis lequel on génère le lien. Cf. `boutiqueLinkOrigin`.
+ */
 function getBaseUrl(): string {
-  if (typeof window !== 'undefined') return window.location.origin
-  return ''
+  return boutiqueLinkOrigin()
 }
 
 export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: Props) {
@@ -97,7 +102,8 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
         nom.trim().toUpperCase(),
         prenom.trim(),
       )
-      const url = `${getBaseUrl()}/c/${token}`
+      const path = `/c/${token}`
+      const url = `${getBaseUrl()}${path}` // lien envoyé à la personne (domaine Enezo)
 
       // La personne a-t-elle un compte TC Connect ? (lookup par email exact)
       const invited = users.find(u => u.email?.toLowerCase() === emailLower)
@@ -112,7 +118,9 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
             userId: invited.uid ?? invited.id,
             title: '✅ Invitation à une CheckConnect',
             body: `${userProfile?.prenom ?? 'Quelqu\'un'} vous a partagé la CheckConnect « ${trip.name} ».`,
-            url,
+            // Navigation INTERNE (la personne a déjà un compte) → chemin relatif,
+            // pour ne pas la faire sortir de son propre domaine.
+            url: path,
             persist: true,
             type: 'CheckConnect_Invitation',
           }),
@@ -441,7 +449,7 @@ export default function ShareModal({ isOpen, onClose, trip, isOwner, onError }: 
                           className="flex items-center justify-center gap-1 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg py-2 transition">
                           📤 Partager
                         </button>
-                        <a href={`mailto:${emailSent.email}?subject=${encodeURIComponent(`CheckConnect « ${trip.name} »`)}&body=${encodeURIComponent(`Bonjour ${emailSent.name},\n\nJe te partage la CheckConnect « ${trip.name} » sur TC Connect :\n${emailSent.url}\n`)}`}
+                        <a href={`mailto:${emailSent.email}?subject=${encodeURIComponent(`CheckConnect « ${trip.name} »`)}&body=${encodeURIComponent(`Bonjour ${emailSent.name},\n\nJe te partage la CheckConnect « ${trip.name} » sur Enezo :\n${emailSent.url}\n`)}`}
                           className="flex items-center justify-center gap-1 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg py-2 transition">
                           ✉️ Email
                         </a>

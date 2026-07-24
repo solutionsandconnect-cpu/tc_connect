@@ -94,3 +94,19 @@ export function publicLinkOrigin(brand: Brand | null | undefined, currentOrigin:
   }
   return currentOrigin
 }
+
+/**
+ * Origine des liens PARTAGEABLES des apps de la BOUTIQUE (Bébé, CheckConnect…).
+ * La boutique est rattachée à Enezo : un lien d'invitation envoyé à quelqu'un
+ * d'extérieur doit toujours porter `app.enezo.fr`, quel que soit le domaine
+ * depuis lequel on le génère (coaching, localhost, preview Vercel).
+ *
+ * ⚠️ À réserver aux liens qui SORTENT de l'app (copie, Web Share, mailto). Pour
+ * une navigation interne (notification in-app, push d'un membre déjà connecté),
+ * garder un chemin RELATIF : un lien absolu ferait sortir l'utilisateur de son
+ * propre domaine.
+ */
+export function boutiqueLinkOrigin(currentOrigin?: string): string {
+  const origin = currentOrigin ?? (typeof window !== 'undefined' ? window.location.origin : '')
+  return publicLinkOrigin('enezo', origin)
+}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import { useAuth } from '@/context/AuthContext'
+import { boutiqueLinkOrigin } from '@/lib/brand'
 import { Copy, Check, Link2, Trash2, UserPlus, LogOut, Share2 } from 'lucide-react'
 import type { Bebe, BebeMember } from '@/types'
 
@@ -64,8 +65,10 @@ export function ShareBabyModal({ isOpen, onClose, baby, onLeft }: Props) {
     refresh()
   }, [isOpen, refresh])
 
+  // Lien destiné à l'AUTRE PARENT (hors app) → toujours sur le domaine Enezo,
+  // même généré depuis le domaine coaching ou en local. Cf. boutiqueLinkOrigin.
   const inviteUrl = invites.length
-    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/bebe-invitation/${invites[0].token}`
+    ? `${boutiqueLinkOrigin()}/bebe-invitation/${invites[0].token}`
     : ''
 
   const handleGenerate = async () => {
