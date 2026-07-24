@@ -52,18 +52,44 @@ function kgInputToGrams(s: string): number | undefined {
   return Number.isFinite(v) && v > 0 ? Math.round(v * 1000) : undefined
 }
 
+/**
+ * Le texte qui précède la variable ouvre-t-il une phrase ?
+ * (tout début du message, début de ligne, ou fin de la phrase précédente)
+ */
+function ouvrePhrase(avant: string): boolean {
+  // On écarte les blancs et les caractères ouvrants collés à la variable
+  // pour retrouver le vrai caractère qui la précède. Le \n est conservé exprès.
+  const reste = avant.replace(/[ \t"'«([]+$/, '')
+  if (reste === '') return true
+  if (reste.endsWith('\n')) return true
+  return /[.!?…:]$/.test(reste)
+}
+
+/**
+ * Remplace une variable par sa valeur, avec MAJUSCULE quand elle ouvre une phrase.
+ * Sans ça, « … arrivée de Léa ! {ne} le 12 juillet » sortait « ! né le … ».
+ */
+function remplacer(body: string, variable: RegExp, valeur: string): string {
+  return body.replace(variable, (_m, offset: number, source: string) =>
+    valeur && ouvrePhrase(source.slice(0, offset))
+      ? valeur.charAt(0).toUpperCase() + valeur.slice(1)
+      : valeur
+  )
+}
+
 function resolveMessage(body: string, baby: Bebe): string {
   const ne   = baby.sex === 'girl' ? 'née' : baby.sex === 'boy' ? 'né' : 'né(e)'
   const sexe = baby.sex === 'girl' ? 'fille' : baby.sex === 'boy' ? 'garçon' : ''
   const date = baby.birthDate?.toDate?.().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) ?? ''
-  return body
-    .replace(/\{prenom\}/gi, baby.name ?? '')
-    .replace(/\{ne\}/gi, ne)
-    .replace(/\{sexe\}/gi, sexe)
-    .replace(/\{date\}/gi, date)
-    .replace(/\{heure\}/gi, baby.birthTime ?? '')
-    .replace(/\{poids\}/gi, formatWeight(baby.birthWeightG))
-    .replace(/\{taille\}/gi, baby.birthHeightCm ? `${baby.birthHeightCm} cm` : '')
+  let out = body
+  out = remplacer(out, /\{prenom\}/gi, baby.name ?? '')
+  out = remplacer(out, /\{ne\}/gi, ne)
+  out = remplacer(out, /\{sexe\}/gi, sexe)
+  out = remplacer(out, /\{date\}/gi, date)
+  out = remplacer(out, /\{heure\}/gi, baby.birthTime ?? '')
+  out = remplacer(out, /\{poids\}/gi, formatWeight(baby.birthWeightG))
+  out = remplacer(out, /\{taille\}/gi, baby.birthHeightCm ? `${baby.birthHeightCm} cm` : '')
+  return out
 }
 
 function smsHref(indicatif: string, telephone: string, text: string): string {

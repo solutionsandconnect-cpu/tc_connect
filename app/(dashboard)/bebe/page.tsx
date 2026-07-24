@@ -12,7 +12,7 @@ import { Timestamp } from 'firebase/firestore'
 import { uploadImage } from '@/lib/uploadImage'
 import { ArrivalSection } from '@/components/bebe/ArrivalSection'
 import { ShareBabyModal } from '@/components/bebe/ShareBabyModal'
-import type { BebeEvent, BebeEventType } from '@/types'
+import type { BebeEvent, BebeEventType, BebeDefauts, BebeBottleKind, BebeDiaperKind } from '@/types'
 
 // ─── Icône couche (SVG custom rempli — aucun équivalent dans lucide) ──────────
 
@@ -47,6 +47,30 @@ const EVENT_COLORS: Record<BebeEventType, { bg: string; text: string }> = {
   diaper: { bg: 'bg-teal-100',   text: 'text-teal-600'   },
   sleep:  { bg: 'bg-indigo-100', text: 'text-indigo-600' },
   meds:   { bg: 'bg-rose-100',   text: 'text-rose-600'   },
+}
+
+// Listes partagées entre les modales de saisie ET le réglage des valeurs par défaut
+const BOTTLE_KINDS: { v: BebeBottleKind; l: string }[] = [
+  { v: 'biberon',   l: 'Biberon'     },
+  { v: 'sein_g',    l: 'Sein gauche' },
+  { v: 'sein_d',    l: 'Sein droit'  },
+  { v: 'tire_lait', l: 'Tire-lait'   },
+]
+
+const DIAPER_KINDS: { v: BebeDiaperKind; l: string }[] = [
+  { v: 'seche',  l: 'Sèche'  },
+  { v: 'urine',  l: 'Urine'  },
+  { v: 'selles', l: 'Selles' },
+  { v: 'mixte',  l: 'Mixte'  },
+]
+
+const BOTTLE_AMOUNTS = [60, 90, 120, 150, 180, 210]
+
+/** Repli quand le bébé n'a rien réglé — valeurs historiques, comportement inchangé */
+const DEFAUTS_FALLBACK: Required<BebeDefauts> = {
+  bottleKind: 'biberon',
+  bottleAmount: 120,
+  diaperKind: 'urine',
 }
 
 const MEDS_SUGGESTIONS = [
@@ -303,7 +327,12 @@ export default function BebePage() {
   }
 
   const [showEditBabyModal, setShowEditBabyModal] = useState(false)
-  const [editBabyForm, setEditBabyForm] = useState({ name: '', birthDate: '' })
+  const [editBabyForm, setEditBabyForm] = useState({
+    name: '', birthDate: '',
+    bottleKind: DEFAUTS_FALLBACK.bottleKind as BebeBottleKind,
+    bottleAmount: String(DEFAUTS_FALLBACK.bottleAmount),
+    diaperKind: DEFAUTS_FALLBACK.diaperKind as BebeDiaperKind,
+  })
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null)
   const [editPhotoPreview, setEditPhotoPreview] = useState<string>('')
   const [savingEditBaby, setSavingEditBaby] = useState(false)
@@ -311,7 +340,13 @@ export default function BebePage() {
   const openEditBaby = () => {
     if (!selectedBaby) return
     const b = selectedBaby.birthDate?.toDate?.()
-    setEditBabyForm({ name: selectedBaby.name, birthDate: b ? b.toISOString().split('T')[0] : '' })
+    setEditBabyForm({
+      name: selectedBaby.name,
+      birthDate: b ? b.toISOString().split('T')[0] : '',
+      bottleKind:   selectedBaby.defauts?.bottleKind   ?? DEFAUTS_FALLBACK.bottleKind,
+      bottleAmount: String(selectedBaby.defauts?.bottleAmount ?? DEFAUTS_FALLBACK.bottleAmount),
+      diaperKind:   selectedBaby.defauts?.diaperKind   ?? DEFAUTS_FALLBACK.diaperKind,
+    })
     setEditPhotoFile(null)
     setEditPhotoPreview(selectedBaby.photoUrl ?? '')
     setShowEditBabyModal(true)
@@ -330,6 +365,11 @@ export default function BebePage() {
         name: editBabyForm.name.trim(),
         birthDate: Timestamp.fromDate(new Date(y, m - 1, d)),
         ...(photoUrl ? { photoUrl } : {}),
+        defauts: {
+          bottleKind: editBabyForm.bottleKind,
+          bottleAmount: Number(editBabyForm.bottleAmount) || DEFAUTS_FALLBACK.bottleAmount,
+          diaperKind: editBabyForm.diaperKind,
+        },
       })
       setShowEditBabyModal(false)
       setEditPhotoFile(null); setEditPhotoPreview('')
@@ -373,6 +413,13 @@ export default function BebePage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [savingEvent,   setSavingEvent]   = useState(false)
 
+  // Valeurs par défaut du bébé sélectionné (réglées dans « Modifier »), avec repli
+  const defauts: Required<BebeDefauts> = useMemo(() => ({
+    bottleKind:   selectedBaby?.defauts?.bottleKind   ?? DEFAUTS_FALLBACK.bottleKind,
+    bottleAmount: selectedBaby?.defauts?.bottleAmount ?? DEFAUTS_FALLBACK.bottleAmount,
+    diaperKind:   selectedBaby?.defauts?.diaperKind   ?? DEFAUTS_FALLBACK.diaperKind,
+  }), [selectedBaby])
+
   const [bottleForm, setBottleForm] = useState({ amount: '120', kind: 'biberon' })
   const [diaperForm, setDiaperForm] = useState({ kind: 'urine' })
   const [sleepForm,  setSleepForm]  = useState({ startTime: nowTimeStr(), endTime: nowTimeStr() })
@@ -381,8 +428,8 @@ export default function BebePage() {
 
   const openNewModal = (type: BebeEventType) => {
     setEditingEvent(null)
-    if (type === 'bottle') setBottleForm({ amount: '120', kind: 'biberon' })
-    if (type === 'diaper') setDiaperForm({ kind: 'urine' })
+    if (type === 'bottle') setBottleForm({ amount: String(defauts.bottleAmount), kind: defauts.bottleKind })
+    if (type === 'diaper') setDiaperForm({ kind: defauts.diaperKind })
     if (type === 'sleep')  setSleepForm({ startTime: nowTimeStr(), endTime: nowTimeStr() })
     if (type === 'meds')   { setMedsForm({ name: '', dose: '' }); setMedsSearch('') }
     setModalType(type)
@@ -390,8 +437,8 @@ export default function BebePage() {
 
   const openEditModal = (event: BebeEvent) => {
     setEditingEvent(event)
-    if (event.type === 'bottle') setBottleForm({ amount: String(event.data?.amount ?? 120), kind: event.data?.kind ?? 'biberon' })
-    if (event.type === 'diaper') setDiaperForm({ kind: event.data?.kind ?? 'urine' })
+    if (event.type === 'bottle') setBottleForm({ amount: String(event.data?.amount ?? defauts.bottleAmount), kind: event.data?.kind ?? defauts.bottleKind })
+    if (event.type === 'diaper') setDiaperForm({ kind: event.data?.kind ?? defauts.diaperKind })
     if (event.type === 'sleep') {
       const startStr = event.data?.startTime ? tsToTimeStr(event.data.startTime as Timestamp) : nowTimeStr()
       const endStr   = tsToTimeStr(event.timestamp)
@@ -879,7 +926,7 @@ export default function BebePage() {
               onChange={e => setBottleForm(f => ({ ...f, amount: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             <div className="flex gap-1.5 mt-2">
-              {[60, 90, 120, 150, 180, 210].map(ml => (
+              {BOTTLE_AMOUNTS.map(ml => (
                 <button key={ml} type="button" onClick={() => setBottleForm(f => ({ ...f, amount: String(ml) }))}
                   className={`flex-1 text-xs py-1.5 rounded-lg border transition ${bottleForm.amount === String(ml) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
                   {ml}
@@ -890,7 +937,7 @@ export default function BebePage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
             <div className="grid grid-cols-2 gap-2">
-              {[{ v: 'biberon', l: 'Biberon' }, { v: 'sein_g', l: 'Sein gauche' }, { v: 'sein_d', l: 'Sein droit' }, { v: 'tire_lait', l: 'Tire-lait' }].map(o => (
+              {BOTTLE_KINDS.map(o => (
                 <button key={o.v} type="button" onClick={() => setBottleForm(f => ({ ...f, kind: o.v }))}
                   className={`px-3 py-2.5 rounded-xl text-sm border transition text-left ${bottleForm.kind === o.v ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'}`}>
                   {o.l}
@@ -906,7 +953,7 @@ export default function BebePage() {
       <Modal isOpen={modalType === 'diaper'} onClose={closeModal} title={editingEvent ? 'Modifier — Couche' : 'Couche'}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
-            {[{ v: 'seche', l: 'Sèche' }, { v: 'urine', l: 'Urine' }, { v: 'selles', l: 'Selles' }, { v: 'mixte', l: 'Mixte' }].map(o => (
+            {DIAPER_KINDS.map(o => (
               <button key={o.v} type="button" onClick={() => setDiaperForm({ kind: o.v })}
                 className={`px-3 py-3 rounded-xl text-sm border transition text-left ${diaperForm.kind === o.v ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'}`}>
                 {o.l}
@@ -1047,6 +1094,53 @@ export default function BebePage() {
             <input type="date" value={editBabyForm.birthDate} onChange={e => setEditBabyForm(f => ({ ...f, birthDate: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
+
+          {/* Valeurs par défaut — pré-cochées à chaque nouvelle saisie pour CE bébé */}
+          <div className="border-t border-dashed border-gray-200 pt-4 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Valeurs par défaut</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Ce qui sera déjà sélectionné à l&apos;ouverture d&apos;une nouvelle saisie. Modifiable à chaque fois.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Alimentation</label>
+              <div className="grid grid-cols-2 gap-2">
+                {BOTTLE_KINDS.map(o => (
+                  <button key={o.v} type="button" onClick={() => setEditBabyForm(f => ({ ...f, bottleKind: o.v }))}
+                    className={`px-3 py-2.5 rounded-xl text-sm border transition text-left ${editBabyForm.bottleKind === o.v ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'}`}>
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Quantité (ml)</label>
+              <input type="number" min={0} step={5} value={editBabyForm.bottleAmount}
+                onChange={e => setEditBabyForm(f => ({ ...f, bottleAmount: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <div className="flex gap-1.5 mt-2">
+                {BOTTLE_AMOUNTS.map(ml => (
+                  <button key={ml} type="button" onClick={() => setEditBabyForm(f => ({ ...f, bottleAmount: String(ml) }))}
+                    className={`flex-1 text-xs py-1.5 rounded-lg border transition ${editBabyForm.bottleAmount === String(ml) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
+                    {ml}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Couche</label>
+              <div className="grid grid-cols-2 gap-2">
+                {DIAPER_KINDS.map(o => (
+                  <button key={o.v} type="button" onClick={() => setEditBabyForm(f => ({ ...f, diaperKind: o.v }))}
+                    className={`px-3 py-2.5 rounded-xl text-sm border transition text-left ${editBabyForm.diaperKind === o.v ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-700 hover:border-blue-300'}`}>
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           <ModalFooter onCancel={() => setShowEditBabyModal(false)} onSave={handleSaveEditBaby} saving={savingEditBaby} disabled={!editBabyForm.name.trim() || !editBabyForm.birthDate} />
         </div>
       </Modal>

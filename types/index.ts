@@ -1087,6 +1087,27 @@ export interface Bebe {
   birthTime?: string
   /** Modèles de message d'annonce, assignables aux contacts */
   arrivalTemplates?: ArrivalTemplate[]
+
+  /** Valeurs pré-sélectionnées dans les modales de saisie (propres à ce bébé) */
+  defauts?: BebeDefauts
+}
+
+/** Type d'alimentation d'un événement « biberon » */
+export type BebeBottleKind = 'biberon' | 'sein_g' | 'sein_d' | 'tire_lait'
+/** Contenu d'une couche */
+export type BebeDiaperKind = 'seche' | 'urine' | 'selles' | 'mixte'
+
+/**
+ * Valeurs pré-cochées à l'ouverture des modales de saisie, réglées PAR BÉBÉ :
+ * un foyer au tire-lait ne saisit pas la même chose qu'un foyer au biberon, et
+ * ces gestes se répètent 8 fois par jour. Absent = repli sur les valeurs
+ * historiques (biberon / 120 ml / urine).
+ */
+export interface BebeDefauts {
+  bottleKind?: BebeBottleKind
+  /** Quantité en ml */
+  bottleAmount?: number
+  diaperKind?: BebeDiaperKind
 }
 
 /** Modèle de message d'annonce de naissance (stocké sur le doc bébé) */
