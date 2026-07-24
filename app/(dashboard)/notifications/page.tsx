@@ -62,6 +62,8 @@ export default function NotificationsPage() {
     CHECKLIST_DEADLINE: 'CheckConnect',
     CheckConnect_Invitation: 'CheckConnect',
     CHECKLIST_INVITE: 'CheckConnect',
+    // Suivi Bébé
+    BEBE_PARTAGE: 'Suivi Bébé',
     // Facturation
     FACTURE_ECHEANCE: 'Facturation',
     // Questionnaire

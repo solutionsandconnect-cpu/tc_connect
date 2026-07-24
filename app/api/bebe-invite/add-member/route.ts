@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getAdminDb } from '@/lib/firebaseAdmin'
-import { requireMember, uidFromIdToken } from '@/lib/bebeInvite'
+import { sendPushToUser } from '@/lib/webpush'
+import { displayName, requireMember, uidFromIdToken } from '@/lib/bebeInvite'
 
 /**
  * POST — rattache DIRECTEMENT un compte existant à un bébé, sans lien d'invitation.
@@ -43,5 +44,28 @@ export async function POST(req: Request) {
   }
 
   await access.ref.update({ members: FieldValue.arrayUnion(targetUid) })
+
+  // 4. Prévenir la personne : contrairement au lien d'invitation, elle n'a rien
+  //    demandé et rien cliqué — sans ce message, le bébé apparaîtrait sans explication.
+  //    Best-effort : une panne de notification ne doit jamais annuler le rattachement.
+  try {
+    const prenomBebe = access.data.name ?? 'un bébé'
+    const parQui = await displayName(uid)
+    const title = `Suivi de ${prenomBebe}`
+    const body = `${parQui} vous a ajouté comme parent : vous suivez désormais ${prenomBebe}.`
+    // URL RELATIVE : navigation interne, l'utilisateur reste sur son propre domaine.
+    await sendPushToUser(targetUid, { title, body, url: '/bebe' })
+    await db.collection('Notifications').add({
+      refUsers: db.collection('users').doc(targetUid),
+      type_notification: 'BEBE_PARTAGE',
+      notification: `${title} — ${body}`,
+      etat_notification: 'Non lu',
+      url: '/bebe',
+      date_create: FieldValue.serverTimestamp(),
+    })
+  } catch (e) {
+    console.error('[bebe-invite/add-member] notification non envoyée :', e)
+  }
+
   return NextResponse.json({ ok: true })
 }

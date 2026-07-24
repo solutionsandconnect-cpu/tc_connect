@@ -3,10 +3,11 @@
 import { useMemo, useRef, useState } from 'react'
 import {
   Plus, Pencil, Trash2, MessageSquare, Send, Weight, Ruler, Clock, Baby as BabyIcon, Tag,
-  CheckCircle2, RotateCcw,
+  CheckCircle2, RotateCcw, Copy, Check, Share2,
 } from 'lucide-react'
 import { Timestamp } from 'firebase/firestore'
 import Modal from '@/components/ui/Modal'
+import { copyText } from '@/lib/clipboard'
 import { PhoneInput, buildWhatsAppUrl } from '@/components/ui/PhoneInput'
 import { useBebeContacts } from '@/hooks/useBebeContacts'
 import type { Bebe, ArrivalTemplate, BebeContact } from '@/types'
@@ -179,6 +180,23 @@ export function ArrivalSection({
     await updateBebe(baby.id, { arrivalTemplates: templates.filter(t => t.id !== id) })
   }
 
+  // ── Copier / partager le message sans passer par un contact ────────────────
+  // (groupes Messenger, WhatsApp, réseaux… : on colle le texte à la main)
+  const [copie, setCopie] = useState<string | null>(null)
+
+  const copier = async (cle: string, texte: string) => {
+    const ok = await copyText(texte)
+    if (!ok) return
+    setCopie(cle)
+    setTimeout(() => setCopie(c => (c === cle ? null : c)), 2000)
+  }
+
+  const peutPartager = typeof navigator !== 'undefined' && 'share' in navigator
+
+  const partager = async (texte: string) => {
+    try { await navigator.share({ text: texte }) } catch { /* partage annulé */ }
+  }
+
   // ── Contacts ────────────────────────────────────────────────────────────────
   const [ctModal, setCtModal] = useState<{ open: boolean; editing: BebeContact | null }>({ open: false, editing: null })
   const [ctForm, setCtForm] = useState({ name: '', indicatif: '+33', telephone: '', templateId: '' })
@@ -227,7 +245,8 @@ export function ArrivalSection({
     if (tpl) setSendText(resolveMessage(tpl.body, baby))
   }
 
-  const markSent = (c: BebeContact, via: 'sms' | 'whatsapp') =>
+  // `via: null` = envoyé autrement (texte copié puis collé dans un groupe…)
+  const markSent = (c: BebeContact, via: 'sms' | 'whatsapp' | null) =>
     updateContact(c.id, { sentAt: Timestamp.now(), sentVia: via })
   const unmarkSent = (c: BebeContact) =>
     updateContact(c.id, { sentAt: null, sentVia: null })
@@ -292,6 +311,16 @@ export function ArrivalSection({
                   <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{resolveMessage(t.body, baby)}</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => copier(t.id, resolveMessage(t.body, baby))}
+                    title="Copier le message"
+                    className={`p-1.5 rounded-lg transition ${copie === t.id ? 'text-green-600 bg-green-50' : 'text-gray-300 hover:text-blue-500 hover:bg-blue-50'}`}>
+                    {copie === t.id ? <Check size={14} /> : <Copy size={14} />}
+                  </button>
+                  {peutPartager && (
+                    <button onClick={() => partager(resolveMessage(t.body, baby))}
+                      title="Partager le message"
+                      className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition"><Share2 size={14} /></button>
+                  )}
                   <button onClick={() => openEditTpl(t)} className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition"><Pencil size={14} /></button>
                   <button onClick={() => deleteTpl(t.id)} className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition"><Trash2 size={14} /></button>
                 </div>
@@ -529,7 +558,29 @@ export function ArrivalSection({
                 <Send size={16} /> WhatsApp
               </a>
             </div>
-            <p className="text-[11px] text-gray-400 text-center">Ouvre l&apos;app SMS / WhatsApp avec le message pré-rempli.</p>
+            <div className="flex gap-3">
+              <button onClick={() => copier('send', sendText)}
+                className={`flex-1 flex items-center justify-center gap-2 border py-2.5 rounded-xl text-sm font-medium transition ${copie === 'send' ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+                {copie === 'send' ? <><Check size={16} />Copié</> : <><Copy size={16} />Copier le texte</>}
+              </button>
+              {peutPartager && (
+                <button onClick={() => partager(sendText)}
+                  className="flex-1 flex items-center justify-center gap-2 border border-gray-300 text-gray-700 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
+                  <Share2 size={16} />Partager
+                </button>
+              )}
+            </div>
+            {!sendCt.sentAt && (
+              <button onClick={() => { markSent(sendCt, null); setSendCt(null) }}
+                className="w-full flex items-center justify-center gap-1.5 text-sm text-gray-500 hover:text-green-600 py-1.5 transition">
+                <CheckCircle2 size={15} />Marquer comme envoyé
+              </button>
+            )}
+            <p className="text-[11px] text-gray-400 text-center">
+              SMS / WhatsApp ouvrent la conversation avec le message pré-rempli.
+              « Copier » sert pour un groupe (Messenger, WhatsApp…) : l&apos;envoi n&apos;étant pas
+              détectable, marquez-le à la main.
+            </p>
           </div>
         )}
       </Modal>

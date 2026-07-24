@@ -322,8 +322,8 @@ export function ShareBabyModal({ isOpen, onClose, baby, onLeft }: Props) {
                 )}
 
                 <p className="text-xs text-gray-400 mt-2">
-                  Accès donné immédiatement, sans lien ni validation de la personne — prévenez-la.
-                  Ce bloc n&apos;apparaît que pour l&apos;administrateur.
+                  Accès donné immédiatement, sans lien ni validation de la personne — elle en est
+                  avertie par notification. Ce bloc n&apos;apparaît que pour l&apos;administrateur.
                 </p>
               </div>
             )}
