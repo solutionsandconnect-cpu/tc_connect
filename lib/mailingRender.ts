@@ -92,6 +92,26 @@ export function estMailCourt(metier: MailingMetier): boolean {
   return !!(metier.mailScene?.trim() && metier.mailExemples?.trim() && metier.mailQuestion?.trim())
 }
 
+/**
+ * Kit EFFECTIF pour un prospect donné : les blocs réécrits pour lui
+ * (`prospect.mailPerso`) prennent le pas sur ceux du métier.
+ *
+ * À appeler AVANT `renderMailHtml` / `renderMailTexte` / `sujetMail` — tout le
+ * reste du moteur continue de ne connaître qu'un kit, et la mise en forme
+ * (tableaux compatibles Outlook) reste produite par le moteur, pas saisie à la main.
+ */
+export function metierPourProspect(metier: MailingMetier, prospect: Prospect): MailingMetier {
+  const p = prospect.mailPerso
+  if (!p) return metier
+  return {
+    ...metier,
+    objet:        p.objet?.trim()    || metier.objet,
+    mailScene:    p.scene?.trim()    || metier.mailScene,
+    mailExemples: p.exemples?.trim() || metier.mailExemples,
+    mailQuestion: p.question?.trim() || metier.mailQuestion,
+  }
+}
+
 /** Paragraphes d'un texte saisi librement (une ligne vide = un paragraphe). */
 function paragraphes(texte: string, style: string): string {
   return texte

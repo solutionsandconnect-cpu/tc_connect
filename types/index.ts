@@ -1083,6 +1083,8 @@ export interface Bebe {
   birthWeightG?: number
   /** Taille de naissance en cm (ex : 50) */
   birthHeightCm?: number
+  /** Périmètre crânien de naissance en cm (ex : 35) */
+  birthHeadCm?: number
   /** Heure de naissance "HH:MM" */
   birthTime?: string
   /** Modèles de message d'annonce, assignables aux contacts */
@@ -1090,6 +1092,23 @@ export interface Bebe {
 
   /** Valeurs pré-sélectionnées dans les modales de saisie (propres à ce bébé) */
   defauts?: BebeDefauts
+  /** Bornes de la journée du bébé (sépare siestes et nuit) */
+  journee?: BebeJournee
+}
+
+/**
+ * Bornes de la journée du bébé, en « HH:MM ».
+ *
+ * Sert à deux choses que minuit ne sait pas faire :
+ *  1. classer un sommeil en SIESTE ou en NUIT selon son heure de début ;
+ *  2. rattacher une nuit à la bonne journée — une nuit finie à 6 h appartient
+ *     à la veille, alors qu'un découpage à minuit la comptait le lendemain.
+ */
+export interface BebeJournee {
+  /** Heure de réveil habituelle, ex. « 07:00 » */
+  debut: string
+  /** Heure de coucher habituelle, ex. « 20:00 » */
+  fin: string
 }
 
 /** Type d'alimentation d'un événement « biberon » */
@@ -1105,8 +1124,10 @@ export type BebeDiaperKind = 'seche' | 'urine' | 'selles' | 'mixte'
  */
 export interface BebeDefauts {
   bottleKind?: BebeBottleKind
-  /** Quantité en ml */
+  /** Quantité en ml (biberon / tire-lait) */
   bottleAmount?: number
+  /** Durée en minutes (tétée au sein) */
+  bottleDurationMin?: number
   diaperKind?: BebeDiaperKind
 }
 
@@ -1134,7 +1155,12 @@ export interface BebeContact {
   sentVia?: 'sms' | 'whatsapp' | null
 }
 
-export type BebeEventType = 'bottle' | 'diaper' | 'sleep' | 'meds'
+/**
+ * `growth` = une mesure (poids / taille / périmètre crânien) relevée à une date, alimente les courbes.
+ * `bath` = un bain. `temp` = une prise de température. `vaccine` = un vaccin administré.
+ * Tous les types acceptent en plus une observation libre dans `data.note`.
+ */
+export type BebeEventType = 'bottle' | 'diaper' | 'sleep' | 'meds' | 'growth' | 'bath' | 'temp' | 'vaccine'
 
 /** Document Firestore : babies/{babyId}/events/{eventId} */
 export interface BebeEvent {
@@ -1330,6 +1356,19 @@ export type ProspectStatut =
  * client (linkedUserId, espace client, facturation) avec des listes importées.
  * Un prospect est promu en `Client` quand il répond positivement.
  */
+/**
+ * Surcharges du mail court pour UN prospect. Mêmes blocs que le kit métier
+ * (`MailingMetier.mailScene` / `mailExemples` / `mailQuestion` / `objet`) : on
+ * réécrit le contenu, jamais la mise en forme — le HTML reste produit par le
+ * moteur, qui garantit un rendu correct sous Outlook.
+ */
+export interface MailPerso {
+  objet?: string
+  scene?: string
+  exemples?: string
+  question?: string
+}
+
 export interface Prospect {
   id: string
   userId: string
@@ -1373,6 +1412,15 @@ export interface Prospect {
   dirigeantJeune?: boolean
   /** Phrase de personnalisation issue de l'étude — pré-remplit le composeur. */
   personnalisation?: string
+  /**
+   * Mail RÉÉCRIT pour ce prospect précis : les blocs saisis ici remplacent ceux
+   * du kit métier au moment du rendu, pour lui seul. Sert à exploiter l'étude
+   * (dirigeant, effectif, logiciel en place…) au-delà de la seule ligne de
+   * personnalisation. Un bloc vide ⇒ on retombe sur le kit.
+   */
+  mailPerso?: MailPerso
+  /** Date de la dernière adaptation du mail */
+  mailPersoAt?: Timestamp
   /**
    * Angle de message recommandé par l'étude : 'surcharge' (le dirigeant fait tout,
    * angle par défaut) ou 'circulation' (bureau + planificateur dédié → problème de

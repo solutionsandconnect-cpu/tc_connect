@@ -11,7 +11,7 @@ import { emailDomain, isEmailValide, makeToken, normalizeEmail, safeId } from '@
 import type { InfoEntreprise } from '@/lib/sirene'
 import type {
   Client, MailingEnvoi, MailingEvenement, MailingLogiciel, MailingMetier, MailingOptout,
-  Prospect, ProspectStatut,
+  MailPerso, Prospect, ProspectStatut,
 } from '@/types'
 
 const prospectsCol = () => collection(db, 'prospects')
@@ -613,6 +613,27 @@ export const definirPrioriteManuelle = async (
 ): Promise<void> => {
   await updateDoc(doc(db, 'prospects', id), {
     prioritaireManuel: prioritaire ? true : deleteField(),
+    updatedAt: Timestamp.now(),
+  })
+}
+
+/**
+ * Enregistre (ou supprime) le mail adapté à ce prospect.
+ *
+ * `null` efface la surcharge via `deleteField()` : le prospect repart sur le
+ * mail du kit métier. Les blocs vides sont retirés de l'objet enregistré, pour
+ * qu'un bloc laissé vide retombe sur le kit plutôt que de vider le mail.
+ */
+export const definirMailPerso = async (
+  id: string, perso: MailPerso | null,
+): Promise<void> => {
+  const nettoye = perso
+    ? Object.fromEntries(Object.entries(perso).map(([k, v]) => [k, (v ?? '').trim()]).filter(([, v]) => v))
+    : {}
+  const vide = Object.keys(nettoye).length === 0
+  await updateDoc(doc(db, 'prospects', id), {
+    mailPerso: vide ? deleteField() : nettoye,
+    mailPersoAt: vide ? deleteField() : Timestamp.now(),
     updatedAt: Timestamp.now(),
   })
 }

@@ -11,7 +11,8 @@ import {
 import { StarIcon as StarSolid } from "@heroicons/react/24/solid";
 import { SparklesIcon } from "@heroicons/react/24/outline";
 import { estMailCourt } from "@/lib/mailingRender";
-import { renderMailHtml, renderMailTexte, sujetMail } from "@/lib/mailingRender";
+import { renderMailHtml, renderMailTexte, sujetMail, metierPourProspect } from "@/lib/mailingRender";
+import AdapterMailModal from "@/components/mailing/AdapterMailModal";
 import { construirePromptRecherche } from "@/lib/mailingPrompt";
 import { GROUPES_EFFECTIF, groupeEffectif, type GroupeEffectif } from "@/lib/sirene";
 import { departementDuCp } from "@/lib/territoires";
@@ -165,19 +166,24 @@ export default function Composeur({
   // Un kit au format court se suffit à lui-même : ses thèmes n'alimentent que la
   // brochure. Exiger une section remplie rendrait inutilisable un kit qui n'a
   // qu'un mail court (Carreleur, Paysagiste, Peintre, Plaquiste).
+  const [adapterOuvert, setAdapterOuvert] = useState(false);
+
   const contenuOk =
     !!metier &&
     (estMailCourt(metier) ||
       (metier.sections ?? []).some((s) => s.afficher && s.problemeMail?.trim()));
 
-  const ctx = prospect && metier && origin
-    ? { metier, prospect, personnalisation: perso, origin }
+  // Kit effectif : si ce prospect a un mail adapté, ses blocs priment sur le kit.
+  const metierRendu = metier && prospect ? metierPourProspect(metier, prospect) : metier;
+
+  const ctx = prospect && metierRendu && origin
+    ? { metier: metierRendu, prospect, personnalisation: perso, origin }
     : null;
 
   const promptRecherche = prospect ? construirePromptRecherche(prospect) : "";
   const html = ctx ? renderMailHtml(ctx) : "";
   const texte = ctx ? renderMailTexte(ctx) : "";
-  const sujet = prospect && metier ? sujetMail(metier, prospect) : "";
+  const sujet = prospect && metierRendu ? sujetMail(metierRendu, prospect) : "";
   const pret = !!ctx && contenuOk && !!blocage?.ok && !quotaAtteint;
 
   const basculer = (id: string) => {
@@ -635,6 +641,23 @@ export default function Composeur({
             )}
           </div>
 
+          {/* Réécrire le mail pour CETTE entreprise, à partir de l'étude ci-dessus */}
+          {prospect && metier && estMailCourt(metier) && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setAdapterOuvert(true)}
+                className="px-3 py-1.5 rounded-lg border text-xs font-medium hover:bg-gray-50 transition"
+              >
+                {prospect.mailPerso ? "Modifier le mail adapté" : "Adapter le mail à ce prospect"}
+              </button>
+              {prospect.mailPerso && (
+                <span className="text-[11px] bg-violet-50 text-violet-700 border border-violet-200 rounded-full px-2 py-0.5">
+                  Mail adapté — le kit métier n&apos;est pas utilisé pour lui
+                </span>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">
               Ligne de personnalisation <span className="text-gray-400">(recommandé)</span>
@@ -748,6 +771,15 @@ export default function Composeur({
           <div className="px-4 py-16 text-center text-sm text-gray-500">Aperçu indisponible.</div>
         )}
       </div>
+
+      {adapterOuvert && prospect && metier && (
+        <AdapterMailModal
+          prospect={prospect}
+          metier={metier}
+          onClose={() => setAdapterOuvert(false)}
+          onToast={onToast}
+        />
+      )}
     </div>
   );
 }

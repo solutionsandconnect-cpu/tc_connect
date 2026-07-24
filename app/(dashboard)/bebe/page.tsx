@@ -6,13 +6,16 @@ import { useBebe } from '@/hooks/useBebe'
 import { useBebeEvents } from '@/hooks/useBebeEvents'
 import { StoreGate } from '@/components/ui/StoreGate'
 import Modal from '@/components/ui/Modal'
-import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play, Gift, Users } from 'lucide-react'
+import { Trash2, Pencil, Plus, Star, Moon, CalendarDays, LayoutList, Camera, Play, Gift, Users, TrendingUp, Droplets, Thermometer, Syringe, HeartPulse } from 'lucide-react'
 import { Milk, Pill, Baby } from 'lucide-react'
+import AutoTextarea from '@/components/ui/AutoTextarea'
+import { GrowthChart, type GrowthPoint } from '@/components/bebe/GrowthChart'
+import { predireProchainSommeil } from '@/lib/bebeSommeil'
 import { Timestamp } from 'firebase/firestore'
 import { uploadImage } from '@/lib/uploadImage'
 import { ArrivalSection } from '@/components/bebe/ArrivalSection'
 import { ShareBabyModal } from '@/components/bebe/ShareBabyModal'
-import type { BebeEvent, BebeEventType, BebeDefauts, BebeBottleKind, BebeDiaperKind } from '@/types'
+import type { BebeEvent, BebeEventType, BebeDefauts, BebeJournee, BebeBottleKind, BebeDiaperKind } from '@/types'
 
 // ─── Icône couche (SVG custom rempli — aucun équivalent dans lucide) ──────────
 
@@ -33,13 +36,22 @@ const EVENT_ICONS: Record<BebeEventType, React.ElementType> = {
   diaper: DiaperIcon,
   sleep:  Moon,
   meds:   Pill,
+  growth: TrendingUp,
+  bath:    Droplets,
+  temp:    Thermometer,
+  vaccine: Syringe,
 }
 
 const EVENT_LABELS: Record<BebeEventType, string> = {
-  bottle: 'Biberon',
+  // « Repas » et non « Biberon » : le même événement couvre la tétée au sein
+  bottle: 'Repas',
   diaper: 'Couche',
   sleep:  'Sommeil',
   meds:   'Médicament',
+  growth: 'Mesure',
+  bath:    'Bain',
+  temp:    'Température',
+  vaccine: 'Vaccin',
 }
 
 const EVENT_COLORS: Record<BebeEventType, { bg: string; text: string }> = {
@@ -47,7 +59,53 @@ const EVENT_COLORS: Record<BebeEventType, { bg: string; text: string }> = {
   diaper: { bg: 'bg-teal-100',   text: 'text-teal-600'   },
   sleep:  { bg: 'bg-indigo-100', text: 'text-indigo-600' },
   meds:   { bg: 'bg-rose-100',   text: 'text-rose-600'   },
+  growth: { bg: 'bg-violet-100', text: 'text-violet-600' },
+  bath:    { bg: 'bg-cyan-100',    text: 'text-cyan-600'    },
+  temp:    { bg: 'bg-orange-100',  text: 'text-orange-600'  },
+  vaccine: { bg: 'bg-emerald-100', text: 'text-emerald-600' },
 }
+
+/**
+ * Calendrier vaccinal français du nourrisson (repères de saisie, PAS un rappel
+ * médical) — l'âge indiqué est l'usage courant, le médecin fait foi.
+ */
+const VACCINS_SUGGESTIONS = [
+  { name: 'Hexavalent (DTP-Coq-Hib-HépB)', age: '2 mois'      },
+  { name: 'Hexavalent (DTP-Coq-Hib-HépB)', age: '4 mois'      },
+  { name: 'Hexavalent (DTP-Coq-Hib-HépB)', age: '11 mois'     },
+  { name: 'Pneumocoque (Prevenar)',        age: '2 mois'      },
+  { name: 'Pneumocoque (Prevenar)',        age: '4 mois'      },
+  { name: 'Pneumocoque (Prevenar)',        age: '11 mois'     },
+  { name: 'Méningocoque B (Bexsero)',      age: '3 mois'      },
+  { name: 'Méningocoque B (Bexsero)',      age: '5 mois'      },
+  { name: 'Méningocoque B (Bexsero)',      age: '12 mois'     },
+  { name: 'Méningocoque ACWY',             age: '6 mois'      },
+  { name: 'Méningocoque ACWY',             age: '12 mois'     },
+  { name: 'Rotavirus (oral)',              age: '2 à 6 mois'  },
+  { name: 'ROR (rougeole-oreillons-rubéole)', age: '12 mois'  },
+  { name: 'ROR (rougeole-oreillons-rubéole)', age: '16-18 mois' },
+  { name: 'Grippe saisonnière',            age: 'dès 6 mois'  },
+]
+
+/** Seuil de fièvre (°C) — signalé dans la timeline, jamais interprété médicalement */
+const SEUIL_FIEVRE = 38
+
+/** Exemples d'observation propres à chaque saisie (texte grisé du champ) */
+const NOTE_PLACEHOLDERS: Record<BebeEventType, string> = {
+  bottle:  'a régurgité, n\'a pas fini, s\'endort en buvant…',
+  diaper:  'selles inhabituelles, rougeurs, fuite…',
+  sleep:   's\'est réveillé en pleurant, long à s\'endormir…',
+  meds:    'donné sur avis du médecin, en a recraché…',
+  growth:  'pesé habillé, mesuré à la maison, chez le pédiatre…',
+  bath:    'a adoré, eau trop chaude, premier bain…',
+  temp:    'prise en rectal, au réveil, après le biberon…',
+  vaccine: 'bien supporté, cuisse gauche, fièvre le soir…',
+}
+
+/** Couleurs des deux courbes (valeurs CSS : le SVG ne lit pas les classes Tailwind) */
+const COURBE_POIDS  = '#7c3aed' // violet-600
+const COURBE_TAILLE = '#0d9488' // teal-600
+const COURBE_PC     = '#d97706' // amber-600
 
 // Listes partagées entre les modales de saisie ET le réglage des valeurs par défaut
 const BOTTLE_KINDS: { v: BebeBottleKind; l: string }[] = [
@@ -65,13 +123,22 @@ const DIAPER_KINDS: { v: BebeDiaperKind; l: string }[] = [
 ]
 
 const BOTTLE_AMOUNTS = [60, 90, 120, 150, 180, 210]
+/** Durées de tétée proposées (minutes) */
+const TETEE_DUREES = [5, 10, 15, 20, 25, 30]
+
+/** Une tétée au sein se mesure en minutes et par côté, pas en ml */
+const estSein = (kind?: string): boolean => kind === 'sein_g' || kind === 'sein_d'
 
 /** Repli quand le bébé n'a rien réglé — valeurs historiques, comportement inchangé */
 const DEFAUTS_FALLBACK: Required<BebeDefauts> = {
   bottleKind: 'biberon',
   bottleAmount: 120,
+  bottleDurationMin: 15,
   diaperKind: 'urine',
 }
+
+/** Journée par défaut quand elle n'a pas été réglée pour ce bébé */
+const JOURNEE_FALLBACK: BebeJournee = { debut: '07:00', fin: '20:00' }
 
 const MEDS_SUGGESTIONS = [
   { name: 'Doliprane nourrisson',  dose: '2.5 ml' },
@@ -133,10 +200,18 @@ function nowTimeStr(): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-function timeStrToTs(s: string): Timestamp {
+/** « HH:MM » (+ jour optionnel « AAAA-MM-JJ ») → Timestamp */
+function timeStrToTs(s: string, dateStr?: string): Timestamp {
   const [h, m] = s.split(':').map(Number)
-  const d = new Date(); d.setHours(h, m, 0, 0)
+  const d = dateStr ? dateFromInput(dateStr) : new Date()
+  d.setHours(h, m, 0, 0)
   return Timestamp.fromDate(d)
+}
+
+/** « AAAA-MM-JJ » → Date locale (le constructeur Date() lirait de l'UTC et décalerait le jour) */
+function dateFromInput(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number)
+  return new Date(y, (m || 1) - 1, d || 1)
 }
 
 function addMin(s: string, minutes: number): string {
@@ -162,11 +237,15 @@ function dayLabel(d: Date): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function eventDescription(type: BebeEventType, data: Record<string, any>): string {
+function eventDescription(type: BebeEventType, data: Record<string, any>, journee?: BebeJournee): string {
   switch (type) {
     case 'bottle': {
       const k: Record<string, string> = { biberon: 'Biberon', sein_g: 'Sein G.', sein_d: 'Sein D.', tire_lait: 'Tire-lait' }
-      return [data.amount ? `${data.amount} ml` : null, data.kind ? k[data.kind] ?? data.kind : null].filter(Boolean).join(' · ') || 'Biberon'
+      // Au sein on mesure une DURÉE et un côté ; au biberon, un volume.
+      const mesure = estSein(data.kind)
+        ? (data.durationMin ? formatDuration(data.durationMin) : null)
+        : (data.amount ? `${data.amount} ml` : null)
+      return [mesure, data.kind ? k[data.kind] ?? data.kind : null].filter(Boolean).join(' · ') || 'Repas'
     }
     case 'diaper': {
       const k: Record<string, string> = { seche: 'Sèche', urine: 'Urine', selles: 'Selles', mixte: 'Mixte' }
@@ -174,12 +253,85 @@ function eventDescription(type: BebeEventType, data: Record<string, any>): strin
     }
     case 'sleep': {
       const dur   = data.durationMin ? formatDuration(data.durationMin) : null
-      const start = data.startTime   ? formatTime(data.startTime as Timestamp) : null
-      return dur && start ? `${dur} · depuis ${start}` : (dur ?? 'Sommeil')
+      const debut = data.startTime?.toDate?.() as Date | undefined
+      const start = debut ? formatTime(data.startTime as Timestamp) : null
+      // Sieste ou nuit : déterminé par l'heure de DÉBUT face aux bornes de journée
+      const nature = journee && debut ? (estNuit(debut, journee) ? 'Nuit' : 'Sieste') : null
+      return [nature, dur, start ? `depuis ${start}` : null].filter(Boolean).join(' · ') || 'Sommeil'
     }
     case 'meds':
       return [data.name, data.dose].filter(Boolean).join(' · ') || 'Médicament'
+    case 'growth':
+      return [
+        data.weightG ? formatKg(data.weightG) : null,
+        data.heightCm ? `${data.heightCm} cm` : null,
+        data.headCm ? `${data.headCm} cm PC` : null,
+      ].filter(Boolean).join(' · ') || 'Mesure'
+    case 'bath':
+      return ''
+    case 'temp': {
+      if (!data.tempC) return ''
+      const t = Number(data.tempC)
+      return `${t.toFixed(1).replace('.', ',')} °C${t >= SEUIL_FIEVRE ? ' · fièvre' : ''}`
+    }
+    case 'vaccine':
+      return data.name ?? ''
   }
+}
+
+/** Grammes → « 3,450 kg » */
+function formatKg(g: number): string {
+  return `${(g / 1000).toFixed(3).replace('.', ',')} kg`
+}
+
+/** Champ « 3,450 » (kg) → grammes, ou undefined si vide/invalide */
+function kgToGrams(s: string): number | undefined {
+  const v = parseFloat(s.replace(',', '.'))
+  return Number.isFinite(v) && v > 0 ? Math.round(v * 1000) : undefined
+}
+
+/** « HH:MM » → minutes depuis minuit */
+function hhmmToMin(s: string): number {
+  const [h, m] = s.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+/**
+ * Début de la JOURNÉE LOGIQUE contenant `d`.
+ * Avec une journée qui démarre à 7 h, un événement de 6 h 30 appartient encore
+ * à la veille — c'est ce qui rattache une nuit au bon jour.
+ */
+function debutJourLogique(d: Date, debut: string): Date {
+  const j = new Date(d)
+  const [h, m] = debut.split(':').map(Number)
+  j.setHours(h || 0, m || 0, 0, 0)
+  if (d.getTime() < j.getTime()) j.setDate(j.getDate() - 1)
+  return j
+}
+
+/**
+ * Date de RATTACHEMENT d'un événement. Pour un sommeil on prend son DÉBUT
+ * (l'événement est stocké à son heure de fin) : une nuit commencée à 20 h reste
+ * dans la journée du 20 h, pas dans celle du réveil.
+ */
+function dateRattachement(e: BebeEvent): Date | null {
+  if (e.type === 'sleep' && e.data?.startTime?.toDate) return e.data.startTime.toDate()
+  return e.timestamp?.toDate?.() ?? null
+}
+
+/**
+ * Un sommeil est-il une NUIT ? Vrai si son début tombe hors de la plage de
+ * journée (après l'heure de coucher, ou avant l'heure de réveil).
+ */
+function estNuit(debutSommeil: Date, j: BebeJournee): boolean {
+  const min = debutSommeil.getHours() * 60 + debutSommeil.getMinutes()
+  return min >= hhmmToMin(j.fin) || min < hhmmToMin(j.debut)
+}
+
+/** Date → « 2026-07-24 » pour un <input type="date"> */
+function dateInputStr(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
 // ─── Sous-composants ──────────────────────────────────────────────────────────
@@ -195,6 +347,36 @@ function StatCard({ icon: Icon, label, value, sub, bg, tc }: {
       <p className="text-xl font-bold text-gray-800 leading-tight">{value}</p>
       {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
       <p className="text-xs text-gray-400 mt-0.5">{label}</p>
+    </div>
+  )
+}
+
+/** Date + heure de l'événement — modifiable partout (on saisit souvent après coup) */
+function WhenField({ date, time, onDate, onTime, label = 'Date et heure' }: {
+  date: string; time: string; onDate: (v: string) => void; onTime: (v: string) => void; label?: string
+}) {
+  const cls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <div className="grid grid-cols-2 gap-3">
+        <input type="date" value={date} onChange={e => onDate(e.target.value)} className={cls} />
+        <input type="time" value={time} onChange={e => onTime(e.target.value)} className={cls} />
+      </div>
+    </div>
+  )
+}
+
+/** Observations libres — présent sur TOUS les types d'événement (stocké dans `data.note`) */
+function NoteField({ value, onChange, type }: {
+  value: string; onChange: (v: string) => void; type: BebeEventType
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">Observations</label>
+      <AutoTextarea value={value} onChange={onChange} minRows={2}
+        placeholder={`Facultatif — ${NOTE_PLACEHOLDERS[type]}`}
+        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
     </div>
   )
 }
@@ -279,7 +461,7 @@ export default function BebePage() {
   }
 
   // ── Vue ───────────────────────────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState<'dashboard' | 'planning' | 'arrival'>('dashboard')
+  const [viewMode, setViewMode] = useState<'dashboard' | 'planning' | 'growth' | 'arrival'>('dashboard')
   const [planningRange, setPlanningRange] = useState<'7j' | '30j'>('7j')
 
   // ── Timer sommeil actif ───────────────────────────────────────────────────
@@ -331,7 +513,10 @@ export default function BebePage() {
     name: '', birthDate: '',
     bottleKind: DEFAUTS_FALLBACK.bottleKind as BebeBottleKind,
     bottleAmount: String(DEFAUTS_FALLBACK.bottleAmount),
+    bottleDuration: String(DEFAUTS_FALLBACK.bottleDurationMin),
     diaperKind: DEFAUTS_FALLBACK.diaperKind as BebeDiaperKind,
+    journeeDebut: JOURNEE_FALLBACK.debut,
+    journeeFin: JOURNEE_FALLBACK.fin,
   })
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null)
   const [editPhotoPreview, setEditPhotoPreview] = useState<string>('')
@@ -345,7 +530,10 @@ export default function BebePage() {
       birthDate: b ? b.toISOString().split('T')[0] : '',
       bottleKind:   selectedBaby.defauts?.bottleKind   ?? DEFAUTS_FALLBACK.bottleKind,
       bottleAmount: String(selectedBaby.defauts?.bottleAmount ?? DEFAUTS_FALLBACK.bottleAmount),
+      bottleDuration: String(selectedBaby.defauts?.bottleDurationMin ?? DEFAUTS_FALLBACK.bottleDurationMin),
       diaperKind:   selectedBaby.defauts?.diaperKind   ?? DEFAUTS_FALLBACK.diaperKind,
+      journeeDebut: selectedBaby.journee?.debut || JOURNEE_FALLBACK.debut,
+      journeeFin:   selectedBaby.journee?.fin   || JOURNEE_FALLBACK.fin,
     })
     setEditPhotoFile(null)
     setEditPhotoPreview(selectedBaby.photoUrl ?? '')
@@ -368,8 +556,10 @@ export default function BebePage() {
         defauts: {
           bottleKind: editBabyForm.bottleKind,
           bottleAmount: Number(editBabyForm.bottleAmount) || DEFAUTS_FALLBACK.bottleAmount,
+          bottleDurationMin: Number(editBabyForm.bottleDuration) || DEFAUTS_FALLBACK.bottleDurationMin,
           diaperKind: editBabyForm.diaperKind,
         },
+        journee: { debut: editBabyForm.journeeDebut, fin: editBabyForm.journeeFin },
       })
       setShowEditBabyModal(false)
       setEditPhotoFile(null); setEditPhotoPreview('')
@@ -417,27 +607,66 @@ export default function BebePage() {
   const defauts: Required<BebeDefauts> = useMemo(() => ({
     bottleKind:   selectedBaby?.defauts?.bottleKind   ?? DEFAUTS_FALLBACK.bottleKind,
     bottleAmount: selectedBaby?.defauts?.bottleAmount ?? DEFAUTS_FALLBACK.bottleAmount,
+    bottleDurationMin: selectedBaby?.defauts?.bottleDurationMin ?? DEFAUTS_FALLBACK.bottleDurationMin,
     diaperKind:   selectedBaby?.defauts?.diaperKind   ?? DEFAUTS_FALLBACK.diaperKind,
   }), [selectedBaby])
 
-  const [bottleForm, setBottleForm] = useState({ amount: '120', kind: 'biberon' })
+  const [bottleForm, setBottleForm] = useState({ amount: '120', kind: 'biberon', duration: '15' })
+
+  // Dernière tétée au sein : sert à alterner les côtés (l'info que cherche un
+  // parent qui allaite, et qu'aucun écran ne donnait).
+  const derniereTetee = useMemo(() => {
+    const t = events
+      .filter(e => e.type === 'bottle' && estSein(e.data?.kind))
+      .sort((a, b) => (b.timestamp?.seconds ?? 0) - (a.timestamp?.seconds ?? 0))[0]
+    if (!t) return null
+    return { kind: t.data.kind as 'sein_g' | 'sein_d', at: t.timestamp }
+  }, [events])
   const [diaperForm, setDiaperForm] = useState({ kind: 'urine' })
   const [sleepForm,  setSleepForm]  = useState({ startTime: nowTimeStr(), endTime: nowTimeStr() })
   const [medsForm,   setMedsForm]   = useState({ name: '', dose: '' })
   const [medsSearch, setMedsSearch] = useState('')
+  // Une mesure porte une DATE (pesée à la PMI notée le soir), pas l'heure courante
+  const [growthForm, setGrowthForm] = useState({ weight: '', height: '', head: '', date: '' })
+  // Observations libres — commun à TOUS les types d'événement (`data.note`)
+  const [noteForm, setNoteForm] = useState('')
+  const [tempForm, setTempForm] = useState('')
+  // Quand l'événement a eu lieu — commun aux saisies « instantanées »
+  // (biberon, couche, médicament, bain, température) ; on note souvent après coup.
+  const [whenForm, setWhenForm] = useState({ date: '', time: '' })
+  // Vaccin : porte une date (souvent saisi le soir, après le rendez-vous)
+  const [vaccineForm, setVaccineForm] = useState({ name: '', date: '' })
 
   const openNewModal = (type: BebeEventType) => {
     setEditingEvent(null)
-    if (type === 'bottle') setBottleForm({ amount: String(defauts.bottleAmount), kind: defauts.bottleKind })
+    if (type === 'bottle') {
+      // Si le bébé est allaité, on propose le côté OPPOSÉ à la dernière tétée :
+      // l'alternance est la règle, et c'est ce qu'on oublie le plus vite la nuit.
+      const kind = estSein(defauts.bottleKind) && derniereTetee
+        ? (derniereTetee.kind === 'sein_g' ? 'sein_d' : 'sein_g')
+        : defauts.bottleKind
+      setBottleForm({ amount: String(defauts.bottleAmount), kind, duration: String(defauts.bottleDurationMin) })
+    }
     if (type === 'diaper') setDiaperForm({ kind: defauts.diaperKind })
     if (type === 'sleep')  setSleepForm({ startTime: nowTimeStr(), endTime: nowTimeStr() })
     if (type === 'meds')   { setMedsForm({ name: '', dose: '' }); setMedsSearch('') }
+    if (type === 'growth') setGrowthForm({ weight: '', height: '', head: '', date: dateInputStr(new Date()) })
+    if (type === 'temp')    setTempForm('')
+    if (type === 'vaccine') setVaccineForm({ name: '', date: dateInputStr(new Date()) })
+    setWhenForm({ date: dateInputStr(new Date()), time: nowTimeStr() })
+    setNoteForm('')
     setModalType(type)
   }
 
   const openEditModal = (event: BebeEvent) => {
     setEditingEvent(event)
-    if (event.type === 'bottle') setBottleForm({ amount: String(event.data?.amount ?? defauts.bottleAmount), kind: event.data?.kind ?? defauts.bottleKind })
+    if (event.type === 'bottle') {
+      setBottleForm({
+        amount: String(event.data?.amount ?? defauts.bottleAmount),
+        kind: event.data?.kind ?? defauts.bottleKind,
+        duration: String(event.data?.durationMin ?? 15),
+      })
+    }
     if (event.type === 'diaper') setDiaperForm({ kind: event.data?.kind ?? defauts.diaperKind })
     if (event.type === 'sleep') {
       const startStr = event.data?.startTime ? tsToTimeStr(event.data.startTime as Timestamp) : nowTimeStr()
@@ -445,6 +674,27 @@ export default function BebePage() {
       setSleepForm({ startTime: startStr, endTime: endStr })
     }
     if (event.type === 'meds') { setMedsForm({ name: event.data?.name ?? '', dose: event.data?.dose ?? '' }); setMedsSearch('') }
+    if (event.type === 'growth') {
+      setGrowthForm({
+        weight: event.data?.weightG ? (event.data.weightG / 1000).toFixed(3).replace('.', ',') : '',
+        height: event.data?.heightCm ? String(event.data.heightCm) : '',
+        head: event.data?.headCm ? String(event.data.headCm) : '',
+        date: dateInputStr(event.timestamp?.toDate?.() ?? new Date()),
+      })
+    }
+    if (event.type === 'temp') setTempForm(event.data?.tempC ? String(event.data.tempC) : '')
+    if (event.type === 'vaccine') {
+      setVaccineForm({
+        name: event.data?.name ?? '',
+        date: dateInputStr(event.timestamp?.toDate?.() ?? new Date()),
+      })
+    }
+    // Pour un sommeil, le « jour » est celui du COUCHER (l'événement est stocké à
+    // son heure de fin) : sans ça, rééditer une nuit la décalerait d'un jour.
+    const quand = (event.type === 'sleep' ? event.data?.startTime?.toDate?.() : null)
+      ?? event.timestamp?.toDate?.() ?? new Date()
+    setWhenForm({ date: dateInputStr(quand), time: tsToTimeStr(event.timestamp) })
+    setNoteForm(event.data?.note ?? '')
     setModalType(event.type)
   }
 
@@ -459,18 +709,59 @@ export default function BebePage() {
       let ts = Timestamp.now()
 
       if (modalType === 'bottle') {
-        data = { amount: Number(bottleForm.amount) || 0, kind: bottleForm.kind }
+        // Deux jeux de champs selon le mode : jamais de ml sur une tétée, jamais
+        // de durée sur un biberon — sinon les totaux mélangent des unités.
+        data = estSein(bottleForm.kind)
+          ? { kind: bottleForm.kind, durationMin: Number(bottleForm.duration) || 0 }
+          : { kind: bottleForm.kind, amount: Number(bottleForm.amount) || 0 }
       } else if (modalType === 'diaper') {
         data = { kind: diaperForm.kind }
       } else if (modalType === 'sleep') {
-        const startTs   = timeStrToTs(sleepForm.startTime)
-        const endTs     = timeStrToTs(sleepForm.endTime)
-        let durationMin = Math.floor((endTs.toMillis() - startTs.toMillis()) / 60_000)
-        if (durationMin < 0) durationMin += 24 * 60
+        const startTs = timeStrToTs(sleepForm.startTime, whenForm.date)
+        let endDate   = timeStrToTs(sleepForm.endTime, whenForm.date).toDate()
+        // Fin ≤ début ⇒ le sommeil a franchi minuit : la fin est le LENDEMAIN.
+        // (avant, seule la durée était corrigée, la date de fin restait au jour du début)
+        if (endDate.getTime() <= startTs.toMillis()) endDate = new Date(endDate.getTime() + 24 * 3600_000)
+        const endTs = Timestamp.fromDate(endDate)
+        const durationMin = Math.max(1, Math.floor((endTs.toMillis() - startTs.toMillis()) / 60_000))
         data = { startTime: startTs, durationMin }; ts = endTs
       } else if (modalType === 'meds') {
         data = { name: medsForm.name.trim(), dose: medsForm.dose.trim() }
+      } else if (modalType === 'growth') {
+        const weightG  = kgToGrams(growthForm.weight)
+        const heightCm = growthForm.height ? Number(growthForm.height) : undefined
+        const headCm   = growthForm.head ? Number(growthForm.head) : undefined
+        // Champ vide = clé absente : la courbe correspondante ignore le point,
+        // au lieu d'y lire un 0 qui écraserait l'échelle.
+        data = {
+          ...(weightG ? { weightG } : {}),
+          ...(heightCm ? { heightCm } : {}),
+          ...(headCm ? { headCm } : {}),
+        }
+        // Midi : évite qu'un décalage de fuseau fasse basculer la mesure de un jour
+        const [gy, gm, gd] = growthForm.date.split('-').map(Number)
+        ts = Timestamp.fromDate(new Date(gy, gm - 1, gd, 12, 0, 0))
+      } else if (modalType === 'bath') {
+        data = {}
+      } else if (modalType === 'temp') {
+        data = { tempC: Number(tempForm.replace(',', '.')) }
+      } else if (modalType === 'vaccine') {
+        data = { name: vaccineForm.name.trim() }
+        const [vy, vm, vd] = vaccineForm.date.split('-').map(Number)
+        ts = Timestamp.fromDate(new Date(vy, vm - 1, vd, 12, 0, 0))
       }
+
+      // Saisies « instantanées » : l'horodatage vient des champs date + heure
+      // (le sommeil pose le sien depuis ses bornes, mesure et vaccin depuis leur date).
+      if ((['bottle', 'diaper', 'meds', 'bath', 'temp'] as BebeEventType[]).includes(modalType)
+          && whenForm.date && whenForm.time) {
+        ts = timeStrToTs(whenForm.time, whenForm.date)
+      }
+
+      // Observations : commun à tous les types. Chaîne vide = clé absente, pour
+      // qu'une note effacée disparaisse vraiment au lieu de rester en `''`.
+      const note = noteForm.trim()
+      if (note) data.note = note
 
       if (editingEvent) {
         await updateEvent(editingEvent.id, { type: modalType, data, timestamp: ts, createdBy: currentUser.uid })
@@ -482,22 +773,53 @@ export default function BebePage() {
   }
 
   // ── Données calculées ─────────────────────────────────────────────────────
+  // Journée logique du bébé (réglable dans « Modifier »), avec repli 7 h → 20 h
+  const journee: BebeJournee = useMemo(() => ({
+    debut: selectedBaby?.journee?.debut || JOURNEE_FALLBACK.debut,
+    fin:   selectedBaby?.journee?.fin   || JOURNEE_FALLBACK.fin,
+  }), [selectedBaby])
+
+  // « Aujourd'hui » = la journée LOGIQUE en cours, pas la date civile : avant
+  // l'heure de réveil on est encore sur la journée de la veille (nuit en cours).
   const todayEvents = useMemo(() => {
-    const t = new Date(); t.setHours(0,0,0,0)
-    return events.filter(e => { const d = e.timestamp?.toDate?.(); return d && d >= t })
-  }, [events])
+    const debutJour = debutJourLogique(new Date(), journee.debut)
+    return events.filter(e => {
+      const d = dateRattachement(e)
+      return d && d >= debutJour
+    })
+  }, [events, journee])
 
   const todayStats = useMemo(() => {
     const b = todayEvents.filter(e => e.type === 'bottle')
     const d = todayEvents.filter(e => e.type === 'diaper')
     const s = todayEvents.filter(e => e.type === 'sleep')
+    const min = (list: BebeEvent[]) => list.reduce((n, e) => n + ((e.data?.durationMin as number) ?? 0), 0)
+    const nuits   = s.filter(e => { const d = dateRattachement(e); return d && estNuit(d, journee) })
+    const siestes = s.filter(e => !nuits.includes(e))
     return {
       bottleCount: b.length,
       bottleMl: b.reduce((n, e) => n + ((e.data?.amount as number) ?? 0), 0),
+      // Les tétées se totalisent en minutes : additionner des ml et des minutes
+      // donnerait un chiffre qui ne veut rien dire.
+      teteeMin: b.filter(e => estSein(e.data?.kind)).reduce((n, e) => n + ((e.data?.durationMin as number) ?? 0), 0),
       diaperCount: d.length,
-      sleepMin: s.reduce((n, e) => n + ((e.data?.durationMin as number) ?? 0), 0),
+      sleepMin: min(s),
+      siesteMin: min(siestes),
+      nuitMin: min(nuits),
+      siesteCount: siestes.length,
     }
-  }, [todayEvents])
+  }, [todayEvents, journee])
+
+  // Prédiction du prochain endormissement — cf. lib/bebeSommeil.ts (fenêtres d'éveil).
+  // Rien tant que le bébé dort : la fenêtre en cours n'a pas commencé.
+  const sleepPrediction = useMemo(() => {
+    if (selectedBaby?.activeSleep) return null
+    const termines = events
+      .filter(e => e.type === 'sleep' && e.data?.startTime?.toDate && e.timestamp?.toDate)
+      .map(e => ({ debut: e.data.startTime.toDate() as Date, fin: e.timestamp.toDate() as Date }))
+      .sort((a, b) => b.fin.getTime() - a.fin.getTime())
+    return predireProchainSommeil(termines, selectedBaby?.birthDate?.toDate?.() ?? null, new Date())
+  }, [events, selectedBaby])
 
   const bottlePrediction = useMemo(() => {
     const b = events.filter(e => e.type === 'bottle').sort((a, z) => (z.timestamp?.seconds ?? 0) - (a.timestamp?.seconds ?? 0))
@@ -509,20 +831,78 @@ export default function BebePage() {
     return { predictedAt: new Date(predictedMs), avgIntervalMin: avgMin, lastBottle: b[0], diffMin: Math.floor((predictedMs - Date.now()) / 60_000) }
   }, [events])
 
+  // ── Croissance ─────────────────────────────────────────────────────────────
+  // Les infos de naissance servent de PREMIER point : la courbe démarre à la
+  // naissance sans avoir à ressaisir ce qui est déjà dans le faire-part.
+  const mesures = useMemo(() => {
+    const liste = events
+      .filter(e => e.type === 'growth')
+      .map(e => ({
+        id: e.id,
+        date: e.timestamp?.toDate?.() ?? new Date(),
+        weightG: e.data?.weightG as number | undefined,
+        heightCm: e.data?.heightCm as number | undefined,
+        headCm: e.data?.headCm as number | undefined,
+        origine: false,
+        event: e as BebeEvent | null,
+      }))
+
+    const naissance = selectedBaby?.birthDate?.toDate?.()
+    if (naissance && (selectedBaby?.birthWeightG || selectedBaby?.birthHeightCm || selectedBaby?.birthHeadCm)) {
+      liste.push({
+        id: 'naissance',
+        date: naissance,
+        weightG: selectedBaby.birthWeightG,
+        heightCm: selectedBaby.birthHeightCm,
+        headCm: selectedBaby.birthHeadCm,
+        origine: true,
+        event: null,
+      })
+    }
+    return liste.sort((a, b) => a.date.getTime() - b.date.getTime())
+  }, [events, selectedBaby])
+
+  const pointsPoids: GrowthPoint[] = useMemo(
+    () => mesures.filter(m => m.weightG).map(m => ({ date: m.date, value: m.weightG! / 1000, origine: m.origine })),
+    [mesures],
+  )
+  const pointsTaille: GrowthPoint[] = useMemo(
+    () => mesures.filter(m => m.heightCm).map(m => ({ date: m.date, value: m.heightCm!, origine: m.origine })),
+    [mesures],
+  )
+  const pointsPC: GrowthPoint[] = useMemo(
+    () => mesures.filter(m => m.headCm).map(m => ({ date: m.date, value: m.headCm!, origine: m.origine })),
+    [mesures],
+  )
+
+  // Vaccins et températures : historique COMPLET (le planning ne remonte qu'à 30 j)
+  const vaccins = useMemo(
+    () => events.filter(e => e.type === 'vaccine')
+      .sort((a, b) => (b.timestamp?.seconds ?? 0) - (a.timestamp?.seconds ?? 0)),
+    [events],
+  )
+  const temperatures = useMemo(
+    () => events.filter(e => e.type === 'temp')
+      .sort((a, b) => (b.timestamp?.seconds ?? 0) - (a.timestamp?.seconds ?? 0)),
+    [events],
+  )
+
   // Planning : regroupement par jour
   const planningDays = useMemo(() => {
     const days = planningRange === '7j' ? 7 : 30
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days); cutoff.setHours(0,0,0,0)
-    const filtered = events.filter(e => { const d = e.timestamp?.toDate?.(); return d && d >= cutoff })
+    // Regroupement sur la journée LOGIQUE : une nuit à cheval sur minuit reste
+    // entière dans la journée où elle a commencé.
     const groups: Record<string, { label: string; date: Date; events: BebeEvent[] }> = {}
-    filtered.forEach(e => {
-      const d = e.timestamp?.toDate?.(); if (!d) return
-      const k = dayKey(d)
-      if (!groups[k]) groups[k] = { label: dayLabel(d), date: d, events: [] }
+    events.forEach(e => {
+      const d = dateRattachement(e); if (!d || d < cutoff) return
+      const jour = debutJourLogique(d, journee.debut)
+      const k = dayKey(jour)
+      if (!groups[k]) groups[k] = { label: dayLabel(jour), date: jour, events: [] }
       groups[k].events.push(e)
     })
     return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime())
-  }, [events, planningRange])
+  }, [events, planningRange, journee])
 
   const filteredMeds = MEDS_SUGGESTIONS.filter(m => !medsSearch.trim() || m.name.toLowerCase().includes(medsSearch.toLowerCase()))
 
@@ -641,8 +1021,8 @@ export default function BebePage() {
         </div>
 
         {/* Onglets vue */}
-        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">
-          {[{ key: 'dashboard', icon: LayoutList, label: "Aujourd'hui" }, { key: 'planning', icon: CalendarDays, label: 'Planning' }, { key: 'arrival', icon: Gift, label: 'Arrivée' }].map(v => {
+        <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-xl w-fit">
+          {[{ key: 'dashboard', icon: LayoutList, label: "Aujourd'hui" }, { key: 'planning', icon: CalendarDays, label: 'Planning' }, { key: 'growth', icon: HeartPulse, label: 'Santé' }, { key: 'arrival', icon: Gift, label: 'Arrivée' }].map(v => {
             const Icon = v.icon
             return (
               <button key={v.key} onClick={() => setViewMode(v.key as any)}
@@ -686,6 +1066,38 @@ export default function BebePage() {
               </div>
             )}
 
+            {/* Prochain endormissement estimé — indication, jamais une consigne */}
+            {sleepPrediction && (() => {
+              const { dansMin, prevuA, fenetre, dernierReveil } = sleepPrediction
+              const depasse = dansMin < 0
+              const proche  = !depasse && dansMin < 20
+              const msg = depasse ? `Fenêtre dépassée de ${formatDuration(-dansMin)}`
+                : dansMin < 5 ? 'Maintenant' : `Dans ${formatDuration(dansMin)}`
+              return (
+                <div className={`rounded-2xl border p-4 ${depasse ? 'bg-violet-50 border-violet-200' : proche ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100 shadow-sm'}`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center shrink-0">
+                      <Moon size={18} className="text-indigo-500" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-indigo-800">
+                        Prochain dodo — {msg}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        vers {prevuA.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                        {' · '}éveillé depuis {formatTime(Timestamp.fromDate(dernierReveil))}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {fenetre.source === 'mixte'
+                          ? `Fenêtre d'éveil ${formatDuration(fenetre.minutes)}, d'après ses ${fenetre.nbMesures} derniers réveils (repère de son âge : ${formatDuration(fenetre.minutesAge)})`
+                          : `Fenêtre d'éveil ${formatDuration(fenetre.minutes)}, repère de son âge — pas encore assez de sommeils notés pour se caler sur lui`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+
             {/* Prochain biberon */}
             {bottlePrediction && (() => {
               const { diffMin, predictedAt, avgIntervalMin, lastBottle } = bottlePrediction
@@ -702,7 +1114,7 @@ export default function BebePage() {
                       <Milk size={18} className={itc} />
                     </div>
                     <div>
-                      <p className={`text-sm font-semibold ${tc}`}>Prochain biberon — {msg}</p>
+                      <p className={`text-sm font-semibold ${tc}`}>Prochain repas — {msg}</p>
                       <p className="text-xs text-gray-500 mt-0.5">
                         Vers {predictedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                         {' · '}Moy. {formatDuration(avgIntervalMin)}
@@ -720,9 +1132,19 @@ export default function BebePage() {
                 {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
               </p>
               <div className="grid grid-cols-3 gap-3">
-                <StatCard icon={Milk}   label="Biberons" value={String(todayStats.bottleCount)} sub={todayStats.bottleMl > 0 ? `${todayStats.bottleMl} ml` : undefined} bg="bg-sky-100"    tc="text-sky-600" />
+                <StatCard icon={Milk} label="Repas" value={String(todayStats.bottleCount)}
+                  sub={[
+                    todayStats.bottleMl > 0 ? `${todayStats.bottleMl} ml` : null,
+                    todayStats.teteeMin > 0 ? formatDuration(todayStats.teteeMin) : null,
+                  ].filter(Boolean).join(' · ') || undefined}
+                  bg="bg-sky-100" tc="text-sky-600" />
                 <StatCard icon={DiaperIcon} label="Couches" value={String(todayStats.diaperCount)} bg="bg-teal-100" tc="text-teal-600" />
-                <StatCard icon={Moon}   label="Sommeil"  value={todayStats.sleepMin > 0 ? formatDuration(todayStats.sleepMin) : '—'} bg="bg-indigo-100" tc="text-indigo-600" />
+                <StatCard icon={Moon} label="Sommeil"
+                  value={todayStats.sleepMin > 0 ? formatDuration(todayStats.sleepMin) : '—'}
+                  sub={todayStats.sleepMin > 0
+                    ? `${formatDuration(todayStats.siesteMin)} sieste · ${formatDuration(todayStats.nuitMin)} nuit`
+                    : undefined}
+                  bg="bg-indigo-100" tc="text-indigo-600" />
               </div>
             </div>
 
@@ -730,7 +1152,7 @@ export default function BebePage() {
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Ajouter</p>
               <div className="grid grid-cols-4 gap-2">
-                {(['bottle', 'diaper', 'sleep', 'meds'] as BebeEventType[]).map(type => {
+                {(['bottle', 'diaper', 'sleep', 'meds', 'bath', 'temp', 'growth', 'vaccine'] as BebeEventType[]).map(type => {
                   const Icon = EVENT_ICONS[type]
                   const c    = EVENT_COLORS[type]
                   return (
@@ -776,9 +1198,12 @@ export default function BebePage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-800">
                             {EVENT_LABELS[event.type]}
-                            {' '}<span className="font-normal text-gray-500">{eventDescription(event.type, event.data ?? {})}</span>
+                            {' '}<span className="font-normal text-gray-500">{eventDescription(event.type, event.data ?? {}, journee)}</span>
                           </p>
                           <p className="text-xs text-gray-400">{formatTime(event.timestamp)} · {timeAgo(event.timestamp)}</p>
+                          {event.data?.note && (
+                            <p className="text-xs text-gray-500 italic mt-0.5 break-words">{event.data.note}</p>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button onClick={() => openEditModal(event)}
@@ -826,6 +1251,9 @@ export default function BebePage() {
                   const meds    = dayEvts.filter(e => e.type === 'meds')
                   const totalMl  = bottles.reduce((n, e) => n + ((e.data?.amount as number) ?? 0), 0)
                   const sleepMin = sleeps.reduce((n, e) => n + ((e.data?.durationMin as number) ?? 0), 0)
+                  const sleepSiesteMin = sleeps
+                    .filter(e => { const d = dateRattachement(e); return d && !estNuit(d, journee) })
+                    .reduce((n, e) => n + ((e.data?.durationMin as number) ?? 0), 0)
                   return (
                     <div key={dl} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                       <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
@@ -863,6 +1291,9 @@ export default function BebePage() {
                             <div>
                               <p className="text-xs text-gray-500">Sommeil</p>
                               <p className="text-sm font-semibold text-gray-800">{formatDuration(sleepMin)}</p>
+                              <p className="text-[11px] text-gray-400">
+                                {formatDuration(sleepSiesteMin)} sieste · {formatDuration(sleepMin - sleepSiesteMin)} nuit
+                              </p>
                             </div>
                           </div>
                         )}
@@ -892,7 +1323,7 @@ export default function BebePage() {
                                 <Icon size={12} className={c.text} />
                               </div>
                               <span className="text-xs text-gray-600 flex-1 min-w-0 truncate">
-                                {EVENT_LABELS[event.type]} · {eventDescription(event.type, event.data ?? {})}
+                                {EVENT_LABELS[event.type]} · {eventDescription(event.type, event.data ?? {}, journee)}
                               </span>
                               <div className="flex gap-1 shrink-0">
                                 <button onClick={() => openEditModal(event)} className="p-1 text-gray-300 hover:text-blue-500 transition"><Pencil size={12} /></button>
@@ -910,6 +1341,199 @@ export default function BebePage() {
           </>
         )}
 
+        {/* ═══ VUE CROISSANCE ═══ */}
+        {viewMode === 'growth' && (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                Croissance · {mesures.length} mesure{mesures.length !== 1 ? 's' : ''}
+              </p>
+              <button onClick={() => openNewModal('growth')}
+                className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium px-3 py-2 rounded-xl transition">
+                <Plus size={14} />Ajouter une mesure
+              </button>
+            </div>
+
+            {mesures.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
+                <TrendingUp size={32} className="text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-400">Aucune mesure enregistrée.</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Renseignez le poids et la taille de naissance dans l&apos;onglet Arrivée : ils
+                  serviront de premier point.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                    <p className="text-xs font-semibold text-gray-500 mb-1">Poids (kg)</p>
+                    <GrowthChart points={pointsPoids} unite="kg" couleur={COURBE_POIDS} decimales={3} />
+                  </div>
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                    <p className="text-xs font-semibold text-gray-500 mb-1">Taille (cm)</p>
+                    <GrowthChart points={pointsTaille} unite="cm" couleur={COURBE_TAILLE} decimales={0} />
+                  </div>
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                    <p className="text-xs font-semibold text-gray-500 mb-1">Périmètre crânien (cm)</p>
+                    <GrowthChart points={pointsPC} unite="cm" couleur={COURBE_PC} decimales={1} />
+                  </div>
+                </div>
+
+                {/* Historique — l'évolution depuis la mesure précédente est ce qui rassure */}
+                <div className="space-y-2">
+                  {[...mesures].reverse().map((m, i, arr) => {
+                    const prec = arr[i + 1] // liste inversée → l'élément suivant est le précédent dans le temps
+                    const dPoids  = m.weightG  && prec?.weightG  ? m.weightG  - prec.weightG  : null
+                    const dTaille = m.heightCm && prec?.heightCm ? m.heightCm - prec.heightCm : null
+                    const dPC     = m.headCm   && prec?.headCm   ? m.headCm   - prec.headCm   : null
+                    const jours = Math.round((m.date.getTime() - (selectedBaby?.birthDate?.toDate?.()?.getTime() ?? m.date.getTime())) / 86_400_000)
+                    return (
+                      <div key={m.id} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${m.origine ? 'bg-gray-100' : 'bg-violet-100'}`}>
+                          <TrendingUp size={16} className={m.origine ? 'text-gray-400' : 'text-violet-600'} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800">
+                            {[
+                              m.weightG ? formatKg(m.weightG) : null,
+                              m.heightCm ? `${m.heightCm} cm` : null,
+                              m.headCm ? `${m.headCm} cm PC` : null,
+                            ].filter(Boolean).join(' · ')}
+                            {(dPoids !== null || dTaille !== null || dPC !== null) && (
+                              <span className="font-normal text-xs text-green-600 ml-2">
+                                {[
+                                  dPoids  !== null ? `${dPoids  >= 0 ? '+' : '−'}${Math.abs(dPoids)} g`   : null,
+                                  dTaille !== null ? `${dTaille >= 0 ? '+' : '−'}${Math.abs(dTaille)} cm` : null,
+                                  dPC     !== null ? `${dPC     >= 0 ? '+' : '−'}${Math.abs(dPC)} cm PC`  : null,
+                                ].filter(Boolean).join(' · ')}
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {m.origine ? 'Naissance' : m.date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                            {!m.origine && jours > 0 && ` · J+${jours}`}
+                          </p>
+                        </div>
+                        {m.event && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => openEditModal(m.event!)}
+                              className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition"><Pencil size={14} /></button>
+                            <button onClick={() => setDeleteConfirm(m.event!.id)}
+                              className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition"><Trash2 size={14} /></button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* ── Vaccins ─────────────────────────────────────────────────── */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  Vaccins · {vaccins.length}
+                </p>
+                <button onClick={() => openNewModal('vaccine')}
+                  className="flex items-center gap-1 text-xs font-medium text-emerald-600 hover:text-emerald-700 transition">
+                  <Plus size={14} />Ajouter
+                </button>
+              </div>
+              {vaccins.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-6 text-center">
+                  <Syringe size={26} className="text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm text-gray-400">Aucun vaccin enregistré.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {vaccins.map(v => {
+                    const d = v.timestamp?.toDate?.()
+                    const jours = d && selectedBaby?.birthDate?.toDate?.()
+                      ? Math.round((d.getTime() - selectedBaby.birthDate.toDate().getTime()) / 86_400_000)
+                      : null
+                    return (
+                      <div key={v.id} className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
+                          <Syringe size={16} className="text-emerald-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 break-words">{v.data?.name}</p>
+                          <p className="text-xs text-gray-400">
+                            {d?.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                            {jours !== null && jours > 0 && ` · J+${jours}`}
+                          </p>
+                          {v.data?.note && <p className="text-xs text-gray-500 italic mt-0.5 break-words">{v.data.note}</p>}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => openEditModal(v)}
+                            className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition"><Pencil size={14} /></button>
+                          <button onClick={() => setDeleteConfirm(v.id)}
+                            className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition"><Trash2 size={14} /></button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ── Températures ────────────────────────────────────────────── */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  Températures · {temperatures.length}
+                </p>
+                <button onClick={() => openNewModal('temp')}
+                  className="flex items-center gap-1 text-xs font-medium text-orange-600 hover:text-orange-700 transition">
+                  <Plus size={14} />Ajouter
+                </button>
+              </div>
+              {temperatures.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-6 text-center">
+                  <Thermometer size={26} className="text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm text-gray-400">Aucune température relevée.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {temperatures.slice(0, 20).map(t => {
+                    const val = Number(t.data?.tempC)
+                    const fievre = val >= SEUIL_FIEVRE
+                    return (
+                      <div key={t.id} className={`rounded-xl border shadow-sm px-4 py-3 flex items-center gap-3 ${fievre ? 'bg-orange-50/60 border-orange-100' : 'bg-white border-gray-100'}`}>
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${fievre ? 'bg-orange-100' : 'bg-gray-100'}`}>
+                          <Thermometer size={16} className={fievre ? 'text-orange-600' : 'text-gray-400'} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium ${fievre ? 'text-orange-700' : 'text-gray-800'}`}>
+                            {val.toFixed(1).replace('.', ',')} °C{fievre && ' · fièvre'}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {t.timestamp?.toDate?.().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} à {formatTime(t.timestamp)}
+                          </p>
+                          {t.data?.note && <p className="text-xs text-gray-500 italic mt-0.5 break-words">{t.data.note}</p>}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => openEditModal(t)}
+                            className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition"><Pencil size={14} /></button>
+                          <button onClick={() => setDeleteConfirm(t.id)}
+                            className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition"><Trash2 size={14} /></button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {temperatures.length > 20 && (
+                    <p className="text-xs text-gray-400 text-center pt-1">
+                      20 dernières affichées sur {temperatures.length}.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
         {/* ═══ VUE ARRIVÉE DU BÉBÉ ═══ */}
         {viewMode === 'arrival' && selectedBaby && (
           <ArrivalSection baby={selectedBaby} updateBebe={updateBebe} />
@@ -918,22 +1542,10 @@ export default function BebePage() {
       </div>
 
       {/* ── Modale Biberon ──────────────────────────────────────────────────── */}
-      <Modal isOpen={modalType === 'bottle'} onClose={closeModal} title={editingEvent ? 'Modifier — Biberon' : 'Biberon'}>
+      <Modal isOpen={modalType === 'bottle'} onClose={closeModal} title={editingEvent ? 'Modifier — Repas' : 'Repas'}>
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Quantité (ml)</label>
-            <input type="number" min={0} step={5} value={bottleForm.amount}
-              onChange={e => setBottleForm(f => ({ ...f, amount: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <div className="flex gap-1.5 mt-2">
-              {BOTTLE_AMOUNTS.map(ml => (
-                <button key={ml} type="button" onClick={() => setBottleForm(f => ({ ...f, amount: String(ml) }))}
-                  className={`flex-1 text-xs py-1.5 rounded-lg border transition ${bottleForm.amount === String(ml) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
-                  {ml}
-                </button>
-              ))}
-            </div>
-          </div>
+          <WhenField date={whenForm.date} time={whenForm.time}
+            onDate={v => setWhenForm(f => ({ ...f, date: v }))} onTime={v => setWhenForm(f => ({ ...f, time: v }))} />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
             <div className="grid grid-cols-2 gap-2">
@@ -944,7 +1556,47 @@ export default function BebePage() {
                 </button>
               ))}
             </div>
+            {estSein(bottleForm.kind) && derniereTetee && (
+              <p className="text-xs text-gray-500 mt-2">
+                Dernière tétée : <strong>{derniereTetee.kind === 'sein_g' ? 'sein gauche' : 'sein droit'}</strong>
+                {' · '}{timeAgo(derniereTetee.at)}
+              </p>
+            )}
           </div>
+
+          {/* Sein → durée et côté ; biberon / tire-lait → volume */}
+          {estSein(bottleForm.kind) ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Durée (minutes)</label>
+              <input type="number" min={0} step={1} value={bottleForm.duration}
+                onChange={e => setBottleForm(f => ({ ...f, duration: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <div className="flex gap-1.5 mt-2">
+                {TETEE_DUREES.map(min => (
+                  <button key={min} type="button" onClick={() => setBottleForm(f => ({ ...f, duration: String(min) }))}
+                    className={`flex-1 text-xs py-1.5 rounded-lg border transition ${bottleForm.duration === String(min) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
+                    {min}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Quantité (ml)</label>
+              <input type="number" min={0} step={5} value={bottleForm.amount}
+                onChange={e => setBottleForm(f => ({ ...f, amount: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <div className="flex gap-1.5 mt-2">
+                {BOTTLE_AMOUNTS.map(ml => (
+                  <button key={ml} type="button" onClick={() => setBottleForm(f => ({ ...f, amount: String(ml) }))}
+                    className={`flex-1 text-xs py-1.5 rounded-lg border transition ${bottleForm.amount === String(ml) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
+                    {ml}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
           <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent} label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
         </div>
       </Modal>
@@ -952,6 +1604,8 @@ export default function BebePage() {
       {/* ── Modale Couche ───────────────────────────────────────────────────── */}
       <Modal isOpen={modalType === 'diaper'} onClose={closeModal} title={editingEvent ? 'Modifier — Couche' : 'Couche'}>
         <div className="space-y-4">
+          <WhenField date={whenForm.date} time={whenForm.time}
+            onDate={v => setWhenForm(f => ({ ...f, date: v }))} onTime={v => setWhenForm(f => ({ ...f, time: v }))} />
           <div className="grid grid-cols-2 gap-2">
             {DIAPER_KINDS.map(o => (
               <button key={o.v} type="button" onClick={() => setDiaperForm({ kind: o.v })}
@@ -960,6 +1614,7 @@ export default function BebePage() {
               </button>
             ))}
           </div>
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
           <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent} label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
         </div>
       </Modal>
@@ -983,6 +1638,12 @@ export default function BebePage() {
               </div>
             </>
           )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Jour</label>
+            <input type="date" value={whenForm.date} onChange={e => setWhenForm(f => ({ ...f, date: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <p className="text-xs text-gray-400 mt-1">Jour du COUCHER — une fin plus tôt que le début passe au lendemain.</p>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Début</label>
@@ -1023,6 +1684,7 @@ export default function BebePage() {
               </div>
             )
           })()}
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
           <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent} label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
         </div>
       </Modal>
@@ -1030,6 +1692,8 @@ export default function BebePage() {
       {/* ── Modale Médicament ───────────────────────────────────────────────── */}
       <Modal isOpen={modalType === 'meds'} onClose={closeModal} title={editingEvent ? 'Modifier — Médicament' : 'Médicament'}>
         <div className="space-y-4">
+          <WhenField date={whenForm.date} time={whenForm.time}
+            onDate={v => setWhenForm(f => ({ ...f, date: v }))} onTime={v => setWhenForm(f => ({ ...f, time: v }))} />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Suggestions</label>
             <input type="text" placeholder="Rechercher…" value={medsSearch} onChange={e => setMedsSearch(e.target.value)}
@@ -1052,7 +1716,126 @@ export default function BebePage() {
             <input type="text" placeholder="Dose (ex : 5 ml, 1 suppositoire…)" value={medsForm.dose} onChange={e => setMedsForm(f => ({ ...f, dose: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
           <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent} disabled={!medsForm.name.trim()} label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
+        </div>
+      </Modal>
+
+      {/* ── Modale Bain ─────────────────────────────────────────────────────── */}
+      <Modal isOpen={modalType === 'bath'} onClose={closeModal} title={editingEvent ? 'Modifier — Bain' : 'Bain'}>
+        <div className="space-y-4">
+          <WhenField date={whenForm.date} time={whenForm.time}
+            onDate={v => setWhenForm(f => ({ ...f, date: v }))} onTime={v => setWhenForm(f => ({ ...f, time: v }))} />
+          <p className="text-sm text-gray-500">
+            Ajoutez une observation si besoin (eau trop chaude, a pleuré, premier bain…).
+          </p>
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
+          <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent} label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
+        </div>
+      </Modal>
+
+      {/* ── Modale Température ──────────────────────────────────────────────── */}
+      <Modal isOpen={modalType === 'temp'} onClose={closeModal} title={editingEvent ? 'Modifier — Température' : 'Température'}>
+        <div className="space-y-4">
+          <WhenField date={whenForm.date} time={whenForm.time}
+            onDate={v => setWhenForm(f => ({ ...f, date: v }))} onTime={v => setWhenForm(f => ({ ...f, time: v }))} />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Température (°C)</label>
+            <input type="text" inputMode="decimal" placeholder="37,2" value={tempForm}
+              onChange={e => setTempForm(e.target.value.replace(/[^\d,.]/g, ''))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <div className="flex gap-1.5 mt-2">
+              {['36,5', '37,0', '37,5', '38,0', '38,5', '39,0'].map(t => (
+                <button key={t} type="button" onClick={() => setTempForm(t)}
+                  className={`flex-1 text-xs py-1.5 rounded-lg border transition ${tempForm === t ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          {Number(tempForm.replace(',', '.')) >= SEUIL_FIEVRE && (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5">
+              <p className="text-sm font-medium text-orange-700">Au-dessus de {SEUIL_FIEVRE} °C</p>
+              <p className="text-xs text-orange-600 mt-0.5">
+                Repère de saisie uniquement — en cas de doute, c&apos;est le médecin qui tranche.
+              </p>
+            </div>
+          )}
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
+          <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent}
+            disabled={!tempForm.trim()} label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
+        </div>
+      </Modal>
+
+      {/* ── Modale Vaccin ───────────────────────────────────────────────────── */}
+      <Modal isOpen={modalType === 'vaccine'} onClose={closeModal} title={editingEvent ? 'Modifier — Vaccin' : 'Vaccin'}>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+            <input type="date" value={vaccineForm.date}
+              onChange={e => setVaccineForm(f => ({ ...f, date: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Vaccin</label>
+            <div className="max-h-36 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-50 mb-2">
+              {VACCINS_SUGGESTIONS.map((v, i) => (
+                <button key={i} type="button" onClick={() => setVaccineForm(f => ({ ...f, name: v.name }))}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-left hover:bg-blue-50 transition ${vaccineForm.name === v.name ? 'bg-blue-50' : ''}`}>
+                  <span className="text-sm text-gray-800">{v.name}</span>
+                  <span className="text-xs text-gray-400 ml-2 shrink-0">{v.age}</span>
+                </button>
+              ))}
+            </div>
+            <input type="text" placeholder="ou saisir un autre vaccin" value={vaccineForm.name}
+              onChange={e => setVaccineForm(f => ({ ...f, name: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <p className="text-xs text-gray-400 mt-1.5">
+              Les âges affichés sont les repères usuels du calendrier français — le médecin fait foi.
+            </p>
+          </div>
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
+          <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent}
+            disabled={!vaccineForm.name.trim() || !vaccineForm.date} label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
+        </div>
+      </Modal>
+
+      {/* ── Modale Mesure (poids / taille) ──────────────────────────────────── */}
+      <Modal isOpen={modalType === 'growth'} onClose={closeModal} title={editingEvent ? 'Modifier — Mesure' : 'Mesure'}>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Date de la mesure</label>
+            <input type="date" value={growthForm.date}
+              onChange={e => setGrowthForm(f => ({ ...f, date: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Poids (kg)</label>
+              <input type="text" inputMode="decimal" placeholder="0,000" value={growthForm.weight}
+                onChange={e => setGrowthForm(f => ({ ...f, weight: e.target.value.replace(/[^\d,.]/g, '') }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Taille (cm)</label>
+              <input type="number" min={0} step={0.5} placeholder="50" value={growthForm.height}
+                onChange={e => setGrowthForm(f => ({ ...f, height: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Périmètre crânien (cm)</label>
+              <input type="number" min={0} step={0.5} placeholder="35" value={growthForm.head}
+                onChange={e => setGrowthForm(f => ({ ...f, head: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <p className="text-xs text-gray-400">
+            Une seule des trois valeurs suffit — une pesée sans taille reste utile à la courbe de poids.
+          </p>
+          <NoteField value={noteForm} onChange={setNoteForm} type={modalType ?? 'bottle'} />
+          <ModalFooter onCancel={closeModal} onSave={handleSaveEvent} saving={savingEvent}
+            disabled={!growthForm.date || (!growthForm.weight.trim() && !growthForm.height.trim() && !growthForm.head.trim())}
+            label={editingEvent ? 'Enregistrer' : 'Ajouter'} />
         </div>
       </Modal>
 
@@ -1095,6 +1878,31 @@ export default function BebePage() {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
 
+          {/* Journée du bébé — sépare siestes et nuit, et rattache une nuit au bon jour */}
+          <div className="border-t border-dashed border-gray-200 pt-4 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Journée du bébé</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Sert à distinguer les siestes de la nuit et à rattacher une nuit à la bonne
+                journée — sans ça, un sommeil à cheval sur minuit est compté sur deux jours.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Réveil habituel</label>
+                <input type="time" value={editBabyForm.journeeDebut}
+                  onChange={e => setEditBabyForm(f => ({ ...f, journeeDebut: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Coucher habituel</label>
+                <input type="time" value={editBabyForm.journeeFin}
+                  onChange={e => setEditBabyForm(f => ({ ...f, journeeFin: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+          </div>
+
           {/* Valeurs par défaut — pré-cochées à chaque nouvelle saisie pour CE bébé */}
           <div className="border-t border-dashed border-gray-200 pt-4 space-y-3">
             <div>
@@ -1114,20 +1922,41 @@ export default function BebePage() {
                 ))}
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Quantité (ml)</label>
-              <input type="number" min={0} step={5} value={editBabyForm.bottleAmount}
-                onChange={e => setEditBabyForm(f => ({ ...f, bottleAmount: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <div className="flex gap-1.5 mt-2">
-                {BOTTLE_AMOUNTS.map(ml => (
-                  <button key={ml} type="button" onClick={() => setEditBabyForm(f => ({ ...f, bottleAmount: String(ml) }))}
-                    className={`flex-1 text-xs py-1.5 rounded-lg border transition ${editBabyForm.bottleAmount === String(ml) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
-                    {ml}
-                  </button>
-                ))}
+            {/* Le réglage suit le mode choisi : des ml pour un biberon, des minutes pour une tétée */}
+            {estSein(editBabyForm.bottleKind) ? (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Durée de tétée (minutes)</label>
+                <input type="number" min={0} step={1} value={editBabyForm.bottleDuration}
+                  onChange={e => setEditBabyForm(f => ({ ...f, bottleDuration: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <div className="flex gap-1.5 mt-2">
+                  {TETEE_DUREES.map(min => (
+                    <button key={min} type="button" onClick={() => setEditBabyForm(f => ({ ...f, bottleDuration: String(min) }))}
+                      className={`flex-1 text-xs py-1.5 rounded-lg border transition ${editBabyForm.bottleDuration === String(min) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
+                      {min}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Le côté proposé alterne automatiquement avec la dernière tétée enregistrée.
+                </p>
               </div>
-            </div>
+            ) : (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantité (ml)</label>
+                <input type="number" min={0} step={5} value={editBabyForm.bottleAmount}
+                  onChange={e => setEditBabyForm(f => ({ ...f, bottleAmount: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <div className="flex gap-1.5 mt-2">
+                  {BOTTLE_AMOUNTS.map(ml => (
+                    <button key={ml} type="button" onClick={() => setEditBabyForm(f => ({ ...f, bottleAmount: String(ml) }))}
+                      className={`flex-1 text-xs py-1.5 rounded-lg border transition ${editBabyForm.bottleAmount === String(ml) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}>
+                      {ml}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Couche</label>
               <div className="grid grid-cols-2 gap-2">
